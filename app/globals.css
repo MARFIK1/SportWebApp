@@ -25,3 +25,18 @@ body {
     text-wrap: balance;
   }
 }
+
+@keyframes slide-in {
+  from {
+    transform: translateY(40%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animated-div {
+  animation: slide-in 0.5s ease;
+}

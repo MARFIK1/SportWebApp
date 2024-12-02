@@ -25,7 +25,8 @@ export default async function SearchBar() {
             <div className="w-4/6 flex justify-center items-center">
                 <SearchBarForm teamsData={teamsData} />
             </div>
-            <div className="w-1/6"></div>
+            <div className="w-1/6">
+            </div>
         </div>
     )
 }

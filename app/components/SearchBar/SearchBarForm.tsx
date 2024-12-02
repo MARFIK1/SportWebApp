@@ -1,4 +1,4 @@
-'use client'
+"use client"
 import { Team } from "@/types";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -26,7 +26,7 @@ export default function SearchBarForm({
     }
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-        if (event.key === 'ArrowDown') {
+        if (event.key === "ArrowDown") {
             let length = 0;
             if (filteredTeams.length > 10) {
                 length = 10;
@@ -37,21 +37,21 @@ export default function SearchBarForm({
             console.log(focusedIndex)
             setFocusedIndex(prevIndex => (prevIndex < length - 1 ? prevIndex + 1 : prevIndex));
         } 
-        else if (event.key === 'ArrowUp') {
+        else if (event.key === "ArrowUp") {
             event.preventDefault();
             setFocusedIndex(prevIndex => (prevIndex > 0 ? prevIndex - 1 : prevIndex));
         } 
-        else if (event.key === 'Enter') {
+        else if (event.key === "Enter") {
             if (focusedIndex !== -1) {
                 const teamId = filteredTeams[focusedIndex].team.id;
                 router.push(`/team/${teamId}`);
-                setSearchTerm('');
+                setSearchTerm("");
             }
         }
     }
 
     const handleTeamItemClick = () => {
-        setSearchTerm('');
+        setSearchTerm("");
     }
 
     const teamListRef = useRef<HTMLDivElement>(null);
@@ -63,10 +63,10 @@ export default function SearchBarForm({
     }
 
     useEffect(() => {
-        document.addEventListener('click', handleOutsideClick);
+        document.addEventListener("click", handleOutsideClick);
 
         return () => {
-            document.removeEventListener('click', handleOutsideClick);
+            document.removeEventListener("click", handleOutsideClick);
         }
     }, [])
 
@@ -94,7 +94,7 @@ export default function SearchBarForm({
                             <Link
                                 href={`/team/${standing.team.id}`}
                                 key={standing.team.id}
-                                className={`p-2 text-neutral-100 ${i === focusedIndex ? 'bg-neutral-100/40' : ''}`}
+                                className={`p-2 text-neutral-100 ${i === focusedIndex ? "bg-neutral-100/40" : ""}`}
                                 onClick={() => handleTeamItemClick()}
                             >
                                 {standing.team.name}

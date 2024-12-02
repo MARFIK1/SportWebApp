@@ -14,7 +14,7 @@ export default async function getStandings(): Promise<Standing[]> {
     const month = currentTime.month();
     let year;
 
-    if (month < 6) {
+    if (month <= 6) {
         year = currentTime.year() - 1;
     }
     else {
@@ -37,11 +37,11 @@ export default async function getStandings(): Promise<Standing[]> {
     const standings: Standing[] = [];
     
     const leagues = [
-        {name: 'Premier League', id: 39},
-        {name: 'La Liga', id: 140},
-        {name: 'Bundesliga', id: 78},
-        {name: 'Serie A', id: 135},
-        {name: 'Ligue 1', id: 61},
+        {name: "Premier League", id: 39},
+        {name: "La Liga", id: 140},
+        {name: "Bundesliga", id: 78},
+        {name: "Serie A", id: 135},
+        {name: "Ligue 1", id: 61},
     ]
 
     for (const league of leagues) {

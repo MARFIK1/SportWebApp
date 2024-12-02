@@ -1,15 +1,18 @@
-'use client'
-import { Standing } from "@/types"
+"use client"
+import { AllFixtures, Standing } from "@/types"
 import { useState, useRef, useEffect } from "react"
 import Link from "next/link"
+import FixturesByLeague from "./FixturesByLeague"
 
 export default function StandingsAndFixtures({
-    standingsData
+    standingsData,
+    filteredFixtures
 }: {
     standingsData: Standing[]
+    filteredFixtures: AllFixtures[]
 }) {
 
-    const menuItems = ['Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1'];
+    const menuItems = ["Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1"];
     const [activeTab, setActiveTab] = useState(0);
     const menuRef = useRef<HTMLDivElement>(null);
 
@@ -17,7 +20,7 @@ export default function StandingsAndFixtures({
         const container = menuRef.current;
         if (container) {
             const tab = container.children[index] as HTMLElement;
-            tab?.scrollIntoView({behavior: 'smooth', block: 'nearest', inline: 'center'});
+            tab?.scrollIntoView({behavior: "smooth", block: "nearest", inline: "center"});
         }
     }
 
@@ -34,12 +37,12 @@ export default function StandingsAndFixtures({
         };
         const container = menuRef.current;
         if (container) {
-            container.addEventListener('wheel', handleWheel, {passive: false});
+            container.addEventListener("wheel", handleWheel, {passive: false});
         }
 
         return () => {
             if (container) {
-                container.removeEventListener('wheel', handleWheel);
+                container.removeEventListener("wheel", handleWheel);
             }
         }
     }, [])
@@ -58,7 +61,7 @@ export default function StandingsAndFixtures({
                                     <button
                                         key={i}
                                         className={`w-full p-4 rounded-t-lg md:text-base text-xs font-bold 
-                                        ${i === activeTab ? 'text-neutral-100' : 'text-gray-400 bg-black/70'}`}
+                                        ${i === activeTab ? "text-neutral-100" : "text-gray-400 bg-black/70"}`}
                                         onClick={() => handleTabClick(i)}
                                     >
                                         {a}
@@ -100,7 +103,7 @@ export default function StandingsAndFixtures({
                                                         href = {`/team/${team.team.id}`}
                                                         key = {j + team.team.name}
                                                         className = {`flex w-full p-1 hover:bg-red-800/50 
-                                                        ${j % 2 === 0 ? 'bg-black/40)' : ''}`}
+                                                        ${j % 2 === 0 ? "bg-black/40)" : ""}`}
                                                     >
                                                         <div className="w-1/12 flex px-2 justify-center items-center">
                                                             {j + 1}
@@ -120,11 +123,11 @@ export default function StandingsAndFixtures({
                                                         </div>
                                                         <div className="w-2/12 flex justify-center items-center">
                                                             {
-                                                                team.form?.split('').map((char, i) => (
+                                                                team.form?.split("").map((char, i) => (
                                                                     <div 
                                                                         key = {char + i}
                                                                         className={`opactity-80 w-3 h-3 m-[1px] rounded-full
-                                                                        ${char === 'L' ? 'bg-red-500' : char === 'D' ? 'bg-gray-500' : 'bg-green-500'}`}
+                                                                        ${char === "L" ? "bg-red-500" : char === "D" ? "bg-gray-500" : "bg-green-500"}`}
                                                                     >
                                                                     </div>
                                                                 ))
@@ -142,7 +145,30 @@ export default function StandingsAndFixtures({
                 </div>
             </div>
             <div className="flex justify-center items-center lg:w-2/5 pt-10 lg:pr-10 pb-10 lg:pl-0">
-
+                <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl h-full">
+                    <div className="w-full flex flex-col justify-center items-center">
+                        <div className="p-2 font-bold">
+                            Upcoming Matches
+                        </div>
+                        <div className="flex flex-col w-full justify-center items-center pb-5 overflow-hidden">
+                            {
+                                menuItems.map((leagueName, i) => {
+                                    return (
+                                        activeTab === i && (
+                                            filteredFixtures.map((league, j) => {
+                                                if (league.name === leagueName) {
+                                                    return (
+                                                        <FixturesByLeague fixturesData={league.fixtures} key={league.name + j}/>
+                                                    )
+                                                }
+                                            })
+                                        )
+                                    )
+                                })
+                            }
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     )
