@@ -44,7 +44,7 @@ type Games = {
     }
 }
 
-type Fixtures = {
+type FixtureInfo = {
     id: number;
     referee: string;
     timezone: string;

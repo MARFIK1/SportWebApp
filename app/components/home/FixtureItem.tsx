@@ -3,6 +3,7 @@ import { Fixture } from "@/types"
 import moment from "moment"
 import Link from "next/link"
 import Image from "next/image"
+import LocalTime from "../LocalTime"
 
 type PageProps = {
     match: Fixture;
@@ -31,6 +32,22 @@ export default function FixtureItem({
                     height={70}
                 />
                 {match.teams.home.name}
+            </div>
+            <div className="w-1/3 flex flex-col justify-center items-center h-full">
+                <div className="h-1/3 text-xs text-center">
+                    <LocalTime fixture={match} />
+                </div>
+                <div className="h-1/3 text-center">vs</div>
+                <div className="h-1/3"></div>
+            </div>
+            <div className="w-1/3 flex flex-col justify-center items-center text-center">
+                <Image
+                    src={match.teams.away.logo}
+                    alt="HomeLogo"
+                    width={70}
+                    height={70}
+                />
+                {match.teams.away.name}
             </div>
         </Link>
     ) : null;

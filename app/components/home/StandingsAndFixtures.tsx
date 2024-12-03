@@ -158,7 +158,10 @@ export default function StandingsAndFixtures({
                                             filteredFixtures.map((league, j) => {
                                                 if (league.name === leagueName) {
                                                     return (
-                                                        <FixturesByLeague fixturesData={league.fixtures} key={league.name + j}/>
+                                                        <FixturesByLeague
+                                                            fixturesData={league.fixtures}
+                                                            key={league.name + j}
+                                                        />
                                                     )
                                                 }
                                             })

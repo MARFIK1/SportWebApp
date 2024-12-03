@@ -56,8 +56,7 @@ async function fetchFixturesByLeague(year: number, league: number): Promise<Fixt
         })
         .catch(error => {
             console.error(`Error fetching ${league} fixtures on year ${year}: ${error}`);
-            return [];
-        })
+        });
     return [];
 }
 
@@ -94,7 +93,7 @@ export default async function getFixtures(): Promise<AllFixtures[]> {
                 });
                 const existingData = allFixturesByLeague.find((data) => data.name === league.name);
                 if (existingData) {
-                    existingData.fixtures.push(...await fetchFixturesByLeague(year, league.league));
+                    existingData.fixtures.push(...(await fetchFixturesByLeague(year, league.league)));
                 }
                 else {
                     allFixturesByLeague.push({

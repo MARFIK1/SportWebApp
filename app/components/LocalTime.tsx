@@ -1,0 +1,33 @@
+"use client"
+import { Fixture } from "@/types"
+import moment from "moment"
+import { useState, useEffect } from "react"
+
+type PageProps = {
+    fixture: Fixture;
+}
+
+export default function LocalTime({
+    fixture
+}: PageProps) {
+    const [formattedTime, setFormattedTime] = useState("");
+
+    useEffect(() => {
+        function formatToLocalTime(timeUTC: string):string {
+            const newTime = moment(timeUTC);
+            const localDateString = newTime.format("dddd, LL");
+            const localTimeString = newTime.format("LT");
+            return `${localDateString} ${localTimeString}`;
+        }
+
+        const fixtureTime = fixture.fixture.date;
+        const formattedTime = formatToLocalTime(fixtureTime);
+        setFormattedTime(formattedTime);
+    },[])
+
+    return (
+        <div className="flex justify-center items-center text-center">
+            {formattedTime}
+        </div>
+    )
+}
