@@ -34,7 +34,6 @@ export default function SearchBarForm({
             else {
                 length = filteredTeams.length;
             }
-            console.log(focusedIndex)
             setFocusedIndex(prevIndex => (prevIndex < length - 1 ? prevIndex + 1 : prevIndex));
         } 
         else if (event.key === "ArrowUp") {
