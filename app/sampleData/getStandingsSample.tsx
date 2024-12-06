@@ -108,7 +108,6 @@ export default function getStandingSample(): Standing[] {
     `
 
     let standingsSampleJson: Standing[] = [];
-
     try {
         const jsonData = JSON.parse(standingsSample);
         standingsSampleJson = jsonData;

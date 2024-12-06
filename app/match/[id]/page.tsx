@@ -2,11 +2,11 @@ import getFixtureByFixtureId from "@/app/util/getFixtureByFixtureId";
 import { Fixture } from "@/types";
 import Link from "next/link";
 import Image from "next/image";
-import LocalTime from "@/app/components/LocalTime"
+import LocalTime from "@/app/components/LocalTime";
 
 type PageProps = {
     params: {
-        id: string;
+        id: string
     }
 }
 
@@ -15,7 +15,6 @@ export default async function Match( {
 } : PageProps) { 
 
     let fixtureByFixtureId: Fixture | undefined = await getFixtureByFixtureId(parseInt(params.id));
-
     if (!fixtureByFixtureId) {
         return (
             <div className="flex w-full justify-center items-center py-5">
@@ -43,45 +42,47 @@ export default async function Match( {
                 </div>
                 <div className="w-1/3 flex justify-center items-center flex-col h-56">
                     <div className="h-1/5 flex justify-center items-center text-sm md:text-xl text-center">
-                        <LocalTime fixture={fixtureByFixtureId}/>
+                        <LocalTime 
+                            fixture={fixtureByFixtureId}
+                        />
                     </div>
                     <div className="h-3/5 flex justify-center items-center md:text-5xl text-2xl">
                         <div className="flex flex-col justify-center items-center">
                             {fixtureByFixtureId.score.fulltime.home}
-                            {
-                                fixtureByFixtureId.score.penalty.home !== null ?
-                                    <div className="flex flex-col justify-center items-center text-sm">
-                                        <div>
-                                            (et. ) {fixtureByFixtureId.score.extratime.home}
-                                        </div>
-                                        <div>
-                                            (pen. ) {fixtureByFixtureId.score.penalty.home}
-                                        </div>
-                                    </div> : fixtureByFixtureId.score.extratime.home !== null ?
-                                        <div className="text-sm">
-                                            (et. ) {fixtureByFixtureId.score.extratime.home}
-                                        </div> : null
-                            }
+                                {
+                                    fixtureByFixtureId.score.penalty.home !== null ?
+                                        <div className="flex flex-col justify-center items-center text-sm">
+                                            <div>
+                                                (et. ) {fixtureByFixtureId.score.extratime.home}
+                                            </div>
+                                            <div>
+                                                (pen. ) {fixtureByFixtureId.score.penalty.home}
+                                            </div>
+                                        </div> : fixtureByFixtureId.score.extratime.home !== null ?
+                                            <div className="text-sm">
+                                                (et. ) {fixtureByFixtureId.score.extratime.home}
+                                            </div> : null
+                                }
                         </div>
                         <div>
                             -
                         </div>  
                         <div className="flex flex-col justify-center items-center">
                             {fixtureByFixtureId.score.fulltime.away}
-                            {
-                                fixtureByFixtureId.score.penalty.away !== null ?
-                                    <div className="flex flex-col justify-center items-center text-sm">
-                                        <div>
-                                            (et. ) {fixtureByFixtureId.score.extratime.away}
-                                        </div>
-                                        <div>
-                                            (pen. ) {fixtureByFixtureId.score.penalty.away}
-                                        </div>
-                                    </div> : fixtureByFixtureId.score.extratime.home !== null ?
-                                        <div className="text-sm">
-                                            (et. ) {fixtureByFixtureId.score.extratime.away}
-                                        </div> : null
-                            }
+                                {
+                                    fixtureByFixtureId.score.penalty.away !== null ?
+                                        <div className="flex flex-col justify-center items-center text-sm">
+                                            <div>
+                                                (et. ) {fixtureByFixtureId.score.extratime.away}
+                                            </div>
+                                            <div>
+                                                (pen. ) {fixtureByFixtureId.score.penalty.away}
+                                            </div>
+                                        </div> : fixtureByFixtureId.score.extratime.home !== null ?
+                                            <div className="text-sm">
+                                                (et. ) {fixtureByFixtureId.score.extratime.away}
+                                            </div> : null
+                                }
                         </div>
                     </div>
                         <div className="h-1/5 flex justify-center items-center">

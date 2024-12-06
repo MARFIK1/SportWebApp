@@ -1,20 +1,18 @@
-"use client"
+"use client";
 import { Team } from "@/types";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-export default function SearchBarForm({
+export default function SearchBarForm( {
     teamsData
-}:{
+} : {
     teamsData: Team[];
 }) {
     const [searchTerm, setSearchTerm] = useState("");
     const [focusedIndex, setFocusedIndex] = useState(-1);
     const [showFilteredBox, setShowFilteredBox] = useState(false);
-
     let router = useRouter();
-
     const filteredTeams = teamsData.filter(team => 
         team.team.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -34,11 +32,15 @@ export default function SearchBarForm({
             else {
                 length = filteredTeams.length;
             }
-            setFocusedIndex(prevIndex => (prevIndex < length - 1 ? prevIndex + 1 : prevIndex));
+            setFocusedIndex(prevIndex => (
+                prevIndex < length - 1 ? prevIndex + 1 : prevIndex
+            ));
         } 
         else if (event.key === "ArrowUp") {
             event.preventDefault();
-            setFocusedIndex(prevIndex => (prevIndex > 0 ? prevIndex - 1 : prevIndex));
+            setFocusedIndex(prevIndex => (
+                prevIndex > 0 ? prevIndex - 1 : prevIndex
+            ));
         } 
         else if (event.key === "Enter") {
             if (focusedIndex !== -1) {
@@ -77,10 +79,7 @@ export default function SearchBarForm({
                 onChange={handleSearchChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Search"
-                className="w-full bg-gradient-to-r from-neutral-100/60 to-black/25
-                bg-transparent p-2 outline-none border-neutral-100/60 border-[1px]
-                rounded-xl hover:border-blue-400 focus:border-blue-400
-                focus:from-blue-400/60 text-neutral-100 placeholder:text-neutral-100/70"
+                className="w-full bg-gradient-to-b from-neutral-100/60 to-black/25 bg-transparent p-2 outline-none border-neutral-100/60 border-[1px] rounded-xl hover:border-blue-400 focus:border-blue-400 focus:from-blue-400/60 text-neutral-100 placeholder:text-neutral-100/70"
             />
             {
                 searchTerm && filteredTeams.length > 0 && showFilteredBox ? (
@@ -90,14 +89,14 @@ export default function SearchBarForm({
                     >
                         {
                             filteredTeams.slice(0, 10).map((standing, i) => (
-                            <Link
-                                href={`/team/${standing.team.id}`}
-                                key={standing.team.id}
-                                className={`p-2 text-neutral-100 ${i === focusedIndex ? "bg-neutral-100/40" : ""}`}
-                                onClick={() => handleTeamItemClick()}
-                            >
-                                {standing.team.name}
-                            </Link>
+                                <Link
+                                    href={`/team/${standing.team.id}`}
+                                    key={standing.team.id}
+                                    className={`p-2 text-neutral-100 ${i === focusedIndex ? "bg-neutral-100/40" : ""}`}
+                                    onClick={() => handleTeamItemClick()}
+                                >
+                                    {standing.team.name}
+                                </Link>
                             ))
                         }
                     </div>

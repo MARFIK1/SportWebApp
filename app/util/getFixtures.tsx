@@ -4,7 +4,6 @@ import moment from "moment";
 import getFixturesSample from "../sampleData/getFixturesSample";
 
 const API_KEY = process.env.API_KEY as string;
-
 const leagues = [
     {league: 39, name: "Premier League"},
     {league: 140, name: "La Liga"},
@@ -30,38 +29,36 @@ const leagues = [
 ]
 
 async function fetchFixturesByLeague(year: number, league: number): Promise<Fixture[]> {
-
     const url = `https://api-football-v1.p.rapidapi.com/v3/fixtures?league=${league}&season=${year}`;
     const options = {
         method: 'GET',
         headers: {
-        'x-rapidapi-key': API_KEY,
-        'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
+            'x-rapidapi-key': API_KEY,
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
         next: {
             revalidate: 60 * 60 * 24
         }
     }
 
-    await fetch(url, options)
-        .then(response => response.json())
-        .then(data => {
-            const fixtures: Fixture[] = data.response;
-            if (fixtures === null || fixtures === undefined) {
-                return [];
-            }
-            else {
-                return fixtures;
-            }
-        })
-        .catch(error => {
-            console.error(`Error fetching ${league} fixtures on year ${year}: ${error}`);
-        });
-    return [];
+    try {
+        const response = await fetch(url, options);
+        const data = await response.json();
+        const fixtures: Fixture[] = data.response;
+        if (fixtures === null || fixtures === undefined) {
+            return [];
+        }
+        else {
+            return fixtures;
+        }
+    }
+    catch (error) {
+        console.log(`Error while fetching ${league} fixtures in year ${year}: ${error}`);
+        return [];
+    }
 }
 
 export default async function getFixtures(): Promise<AllFixtures[]> {
-
     if (USE_SAMPLE) {
         return getFixturesSample();
     }
@@ -70,24 +67,22 @@ export default async function getFixtures(): Promise<AllFixtures[]> {
         const currentTime = moment();
         const year = currentTime.year();
         const month = currentTime.month();
-
         const allFixturesByLeague: AllFixtures[] = [];
-        
         for (const league of leagues) {
             if (month <= 5) {
-                allFixturesByLeague.push({
+                allFixturesByLeague.push( {
                     name: league.name,
                     fixtures: await fetchFixturesByLeague(year - 1, league.league)
                 });
             }
             else if (month >= 8) {
-                allFixturesByLeague.push({
+                allFixturesByLeague.push( {
                     name: league.name,
                     fixtures: await fetchFixturesByLeague(year, league.league)
                 });
             }
             else {
-                allFixturesByLeague.push({
+                allFixturesByLeague.push( {
                     name: league.name,
                     fixtures: await fetchFixturesByLeague(year - 1, league.league)
                 });
@@ -96,7 +91,7 @@ export default async function getFixtures(): Promise<AllFixtures[]> {
                     existingData.fixtures.push(...(await fetchFixturesByLeague(year, league.league)));
                 }
                 else {
-                    allFixturesByLeague.push({
+                    allFixturesByLeague.push( {
                         name: league.name,
                         fixtures: await fetchFixturesByLeague(year, league.league)
                     })

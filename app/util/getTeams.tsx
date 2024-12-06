@@ -5,9 +5,7 @@ import { Standing, Team } from "@/types";
 export default async function getTeams(): Promise<Team[]> {
     try {
         const standings: Standing[] = await getStandings();
-
         const teams: Team[] = [];
-
         for (const league of standings) {
             for (const standing of league.league.standings) {
                 if (Array.isArray(standing)) {

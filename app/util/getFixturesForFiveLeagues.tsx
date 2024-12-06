@@ -18,14 +18,13 @@ export default async function getFixturesForFiveLeagues(): Promise<AllFixtures[]
             }
         }
 
-        const filteredFixtures: AllFixtures[] = fixturesForFiveLeagues.filter(
-            (league) => {
-                league.fixtures = league.fixtures.filter((fixture) => {
-                    return moment(fixture.fixture.date).isAfter(moment().subtract(1, "day"), "day");
-                }).slice(0, 5);
-                return league.fixtures.length > 0;
-            }
-        )
+        const filteredFixtures: AllFixtures[] = fixturesForFiveLeagues.filter((league) => {
+            league.fixtures = league.fixtures.filter((fixture) => {
+                return moment(fixture.fixture.date).isAfter(moment().subtract(1, "day"), "day");
+            }).slice(0, 5);
+
+            return league.fixtures.length > 0;
+        })
 
         return filteredFixtures;
     }

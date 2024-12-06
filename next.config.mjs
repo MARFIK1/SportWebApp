@@ -2,12 +2,25 @@
 const nextConfig = {
     reactStrictMode: true,
     images: {
-        domains: [
-            'media-1.api-sports.io',
-            'media-2.api-sports.io',
-            'media-3.api-sports.io',
-        ]
-    }
+        remotePatterns: [
+            {
+                protocol: 'https',
+                hostname: 'media-1.api-sports.io',
+            },
+            {
+                protocol: 'https',
+                hostname: 'media-2.api-sports.io',
+            },
+            {
+                protocol: 'https',
+                hostname: 'media-3.api-sports.io',
+            },
+            {
+                protocol: 'https',
+                hostname: 'media.api-sports.io',
+            },
+        ],
+    },
 };
 
 export default nextConfig;

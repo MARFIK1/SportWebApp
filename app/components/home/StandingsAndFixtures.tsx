@@ -1,26 +1,28 @@
-"use client"
-import { AllFixtures, Standing } from "@/types"
-import { useState, useRef, useEffect } from "react"
-import Link from "next/link"
-import FixturesByLeague from "./FixturesByLeague"
+"use client";
+import { AllFixtures, Standing } from "@/types";
+import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
+import FixturesByLeague from "./FixturesByLeague";
 
-export default function StandingsAndFixtures({
+export default function StandingsAndFixtures( {
     standingsData,
     filteredFixtures
-}: {
-    standingsData: Standing[]
+} : {
+    standingsData: Standing[],
     filteredFixtures: AllFixtures[]
 }) {
-
     const menuItems = ["Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1"];
     const [activeTab, setActiveTab] = useState(0);
     const menuRef = useRef<HTMLDivElement>(null);
-
     const scrollToTab = (index: number) => {
         const container = menuRef.current;
         if (container) {
             const tab = container.children[index] as HTMLElement;
-            tab?.scrollIntoView({behavior: "smooth", block: "nearest", inline: "center"});
+            tab?.scrollIntoView( {
+                behavior: "smooth",
+                block: "nearest",
+                inline: "center"
+            });
         }
     }
 
@@ -48,7 +50,7 @@ export default function StandingsAndFixtures({
     }, [])
 
     return (
-        <div className="flex flex-col w-full max-w-7xl bg-gradient-to-br from gray-800/75 to-gray-800/20 lg:flex-row">
+        <div className="flex flex-col w-full max-w-7xl bg-gradient-to-b from gray-800/75 to-gray-800/20 lg:flex-row">
             <div className="flex justify-center items-center lg:w-3/5 md:p-10 py-5">
                 <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl">
                     <div className="w-full flex flex-col justify-center items-center">
@@ -60,8 +62,7 @@ export default function StandingsAndFixtures({
                                 menuItems.map((a, i) => (
                                     <button
                                         key={i}
-                                        className={`w-full p-4 rounded-t-lg md:text-base text-xs font-bold 
-                                        ${i === activeTab ? "text-neutral-100" : "text-gray-400 bg-black/70"}`}
+                                        className={`w-full p-4 rounded-t-lg md:text-base text-xs font-bold ${i === activeTab ? "text-neutral-100" : "text-gray-400 bg-black/70"}`}
                                         onClick={() => handleTabClick(i)}
                                     >
                                         {a}
@@ -102,8 +103,7 @@ export default function StandingsAndFixtures({
                                                     <Link
                                                         href = {`/team/${team.team.id}`}
                                                         key = {j + team.team.name}
-                                                        className = {`flex w-full p-1 hover:bg-gray-800/50 
-                                                        ${j % 2 === 0 ? "bg-black/40)" : ""}`}
+                                                        className = {`flex w-full p-1 hover:bg-blue-800/50 ${j % 2 === 0 ? "bg-black/40)" : ""}`}
                                                     >
                                                         <div className="w-1/12 flex px-2 justify-center items-center">
                                                             {j + 1}
@@ -126,8 +126,7 @@ export default function StandingsAndFixtures({
                                                                 team.form?.split("").map((char, i) => (
                                                                     <div 
                                                                         key = {char + i}
-                                                                        className={`opactity-80 w-3 h-3 m-[1px] rounded-full
-                                                                        ${char === "L" ? "bg-red-500" : char === "D" ? "bg-gray-500" : "bg-green-500"}`}
+                                                                        className={`opactity-80 w-3 h-3 m-[1px] rounded-full ${char === "L" ? "bg-red-500" : char === "D" ? "bg-gray-500" : "bg-green-500"}`}
                                                                     >
                                                                     </div>
                                                                 ))

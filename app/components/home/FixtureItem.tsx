@@ -1,19 +1,19 @@
-"use client"
-import { Fixture } from "@/types"
-import moment from "moment"
-import Link from "next/link"
-import Image from "next/image"
-import LocalTime from "../LocalTime"
+"use client";
+import { Fixture } from "@/types";
+import moment from "moment";
+import Link from "next/link";
+import Image from "next/image";
+import LocalTime from "../LocalTime";
 
 type PageProps = {
-    match: Fixture;
-    index: number;
+    match: Fixture,
+    index: number
 }
 
-export default function FixtureItem({
+export default function FixtureItem( {
     match,
     index
-}: PageProps) {
+} : PageProps) {
     const today = moment();
     const matchDate = moment(match.fixture.date);
 
@@ -21,32 +21,42 @@ export default function FixtureItem({
         <Link
             href={`/match/${match.fixture.id}`}
             key={match.fixture.id}
-            className={`flex w-full p-2 justify-center items-center h-36 hover:bg-gray-800/50
-            ${index % 2 === 0 ? "bg-black/40" : ""} animated-div`}
+            className={`flex w-full p-2 justify-center items-center h-36 hover:bg-blue-800/50 ${index % 2 === 0 ? "bg-black/40" : ""} animated-div`}
         >
             <div className="w-1/3 flex flex-col justify-center items-center text-center">
-                <Image
-                    src={match.teams.home.logo}
-                    alt="HomeLogo"
-                    width={70}
-                    height={70}
-                />
+                <div className="w-20 h-20 flex justify-center items-center overflow-hidden">
+                    <Image
+                        src={match.teams.home.logo}
+                        alt="HomeLogo"
+                        width={70}
+                        height={70}
+                        className="object-contain"
+                    />
+                </div>
                 {match.teams.home.name}
             </div>
             <div className="w-1/3 flex flex-col justify-center items-center h-full">
                 <div className="h-1/3 text-xs text-center">
-                    <LocalTime fixture={match} />
+                    <LocalTime 
+                        fixture={match} 
+                    />
                 </div>
-                <div className="h-1/3 text-center">vs</div>
-                <div className="h-1/3"></div>
+                <div className="h-1/3 text-center">
+                    vs
+                </div>
+                <div className="h-1/3">
+                </div>
             </div>
             <div className="w-1/3 flex flex-col justify-center items-center text-center">
-                <Image
-                    src={match.teams.away.logo}
-                    alt="HomeLogo"
-                    width={70}
-                    height={70}
-                />
+                <div className="w-20 h-20 flex justify-center items-center overflow-hidden">
+                    <Image
+                        src={match.teams.away.logo}
+                        alt="AwayLogo"
+                        width={70}
+                        height={70}
+                        className="object-contain"
+                    />
+                </div>
                 {match.teams.away.name}
             </div>
         </Link>

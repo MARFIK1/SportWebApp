@@ -1,12 +1,12 @@
 import getTeamInfoByTeamId from "@/app/util/getTeamInfoByTeamId";
-import { Team, Fixture } from "@/types";
+import type { Team, Fixture } from "@/types";
 import Image from "next/image";
 import Fixtures from "./components/Fixtures";
-import getFixturesByTeamId from "@/app/util/getFixtureByTeamId";
+import getFixturesByTeamId from "@/app/util/getFixturesByTeamId";
 
 type PageProps = {
     params: {
-        id: string;
+        id: string
     }
 }
 
@@ -16,7 +16,6 @@ export default async function Team( {
 
     let teamInfo: Team | undefined = await getTeamInfoByTeamId(parseInt(params.id));
     let fixturesByTeamId: Fixture[] = await getFixturesByTeamId(parseInt(params.id));
-
     if (!teamInfo) {
         return (
             <div className="flex w-full justify-center items-center py-5">
@@ -30,7 +29,7 @@ export default async function Team( {
     return (
         <div className="flex justify-center items-center text-neutral-100 py-5">
             <div className="flex flex-col max-w-7xl p-5 w-full md:flex-row">
-                <div className="flex flex-col md:w-1/3 justify-center items-center bg-gradient-to-r from-black/60 to-gray-800/80 h-[500px]">
+                <div className="flex flex-col md:w-1/3 justify-center items-center bg-gradient-to-b from-black/60 to-gray-800/80 h-[500px]">
                     <Image 
                         src={teamInfo.team.logo}
                         alt="TeamLogo"
@@ -54,11 +53,10 @@ export default async function Team( {
                             </div>
                             <div className="flex justify-center items-center">
                                 {
-                                    teamInfo.form.split("").map((char, i) => (
+                                    teamInfo.form?.split("").map((char, i) => (
                                         <div
                                             key={char + i}
-                                            className={`opacity-80 w-3 h-3 m-1 rounded-full
-                                            ${char === "L" ? "bg-red-500" : char === "D" ? "bg-gray-500" : "bg-green-500"}`}
+                                            className={`opacity-80 w-3 h-3 m-1 rounded-full ${char === "L" ? "bg-red-500" : char === "D" ? "bg-gray-500" : "bg-green-500"}`}
                                         />
                                     ))
                                 }
@@ -88,8 +86,10 @@ export default async function Team( {
                         </div>
                     </div>
                 </div>
-                <div className="flex flex-col md:w-1/3 justify-center items-center">
-                    <Fixtures fixturesByTeamId={fixturesByTeamId} teamId={parseInt(params.id)} />
+                <div className="flex flex-col md:w-2/3 justify-center items-center">
+                    <Fixtures 
+                        fixturesByTeamId={fixturesByTeamId} teamId={parseInt(params.id)} 
+                    />
                 </div>
             </div>
         </div>

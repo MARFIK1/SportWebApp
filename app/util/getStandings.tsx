@@ -5,7 +5,6 @@ import { USE_SAMPLE } from "../sampleData/useSample";
 import getStandingsSample from "../sampleData/getStandingsSample";
 
 export default async function getStandings(): Promise<Standing[]> {
-
     if (USE_SAMPLE) {
         return getStandingsSample();
     }
@@ -13,7 +12,6 @@ export default async function getStandings(): Promise<Standing[]> {
     const currentTime = moment();
     const month = currentTime.month();
     let year;
-
     if (month <= 6) {
         year = currentTime.year() - 1;
     }
@@ -22,7 +20,6 @@ export default async function getStandings(): Promise<Standing[]> {
     }
 
     const API_KEY: string = process.env.API_KEY as string;
-
     const options = {
         method: 'GET',
         headers: {
@@ -35,27 +32,23 @@ export default async function getStandings(): Promise<Standing[]> {
     }
 
     const standings: Standing[] = [];
-    
     const leagues = [
         {name: "Premier League", id: 39},
         {name: "La Liga", id: 140},
         {name: "Bundesliga", id: 78},
         {name: "Serie A", id: 135},
-        {name: "Ligue 1", id: 61},
+        {name: "Ligue 1", id: 61}
     ]
 
     for (const league of leagues) {
         let url = `https://api-football-v1.p.rapidapi.com/v3/standings?league=${league.id}&season=${year}`;
-
-        await fetch(url, options)
-            .then(response => response.json())
-            .then(data => {
-                const standing = data.response[0];
-                if (standing) {
-                    standings.push(standing);
-                }
-            })
-            .catch(error => console.error(`Error fetching ${league.name} standings: ${error}`));
+        await fetch(url, options) .then(response => response.json()) .then(data => {
+            const standing = data.response[0];
+            if (standing) {
+                standings.push(standing);
+            }
+        })
+        .catch(error => console.error(`Error fetching ${league.name} standings: ${error}`));
     }
 
     return standings;
