@@ -2,7 +2,7 @@ import getTeams from "@/app/util/getTeams";
 import SearchBarForm from "./SearchBarForm";
 import { Team } from "@/types";
 
-export default async function SearchBar() {
+export default async function Navbar() {
     let teamsData: Team[] = await getTeams();
 
     return (

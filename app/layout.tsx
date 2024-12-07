@@ -1,7 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import SearchBar from "./components/SearchBar/SearchBar";
+import Navbar from "./components/Navbar/Navbar";
 
 const inter = Inter( { 
     subsets: ["latin"] 
@@ -22,7 +22,7 @@ export default function RootLayout( {
             <body className={`${inter.className} bg-white`}>
                 <div className="relative">
                     <div className="relative bg-gray-800">
-                        <SearchBar />
+                        <Navbar />
                         {children}
                     </div>
                 </div>

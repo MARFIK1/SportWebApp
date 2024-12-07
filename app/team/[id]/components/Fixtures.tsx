@@ -87,6 +87,7 @@ export default function Fixtures( {
                                             alt="HomeLogo"
                                             width={70}
                                             height={70}
+                                            style={{ width: "70px", height: "70px" }}
                                         />
                                         <div className="text-center">
                                             {fixture.teams.home.name}
@@ -151,6 +152,7 @@ export default function Fixtures( {
                                             alt="AwayLogo"
                                             width={70}
                                             height={70}
+                                            style={{ width: "70px", height: "70px" }}
                                         />
                                         <div className="text-center">
                                             {fixture.teams.away.name}
@@ -190,6 +192,7 @@ export default function Fixtures( {
                                         alt="HomeLogo"
                                         width={70}
                                         height={70}
+                                        style={{ width: "70px", height: "70px" }}
                                     />
                                     <div className="text-center">
                                         {fixture.teams.home.name}
@@ -257,6 +260,7 @@ export default function Fixtures( {
                                         alt="AwayLogo"
                                         width={70}
                                         height={70}
+                                        style={{ width: "70px", height: "70px" }}
                                     />
                                     <div className="text-center">
                                         {fixture.teams.away.name}

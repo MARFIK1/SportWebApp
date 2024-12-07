@@ -3,6 +3,9 @@ import { AllFixtures, Standing } from "@/types";
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import FixturesByLeague from "./FixturesByLeague";
+import LeagueMenu from "./LeagueMenu";
+import Image from "next/image";
+import { ChevronDoubleRightIcon } from "@heroicons/react/20/solid";
 
 export default function StandingsAndFixtures( {
     standingsData,
@@ -11,8 +14,9 @@ export default function StandingsAndFixtures( {
     standingsData: Standing[],
     filteredFixtures: AllFixtures[]
 }) {
-    const menuItems = ["Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1"];
+    const menuItems = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"];
     const [activeTab, setActiveTab] = useState(0);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const scrollToTab = (index: number) => {
         const container = menuRef.current;
@@ -31,6 +35,10 @@ export default function StandingsAndFixtures( {
         scrollToTab(index);
     }
 
+    const toggleMenu = () => {
+        setIsMenuOpen(!isMenuOpen);
+    }
+
     useEffect(() => {
         const handleWheel = (event: WheelEvent) => {
             if (event.shiftKey) {
@@ -39,7 +47,7 @@ export default function StandingsAndFixtures( {
         };
         const container = menuRef.current;
         if (container) {
-            container.addEventListener("wheel", handleWheel, {passive: false});
+            container.addEventListener("wheel", handleWheel, { passive: false });
         }
 
         return () => {
@@ -50,124 +58,146 @@ export default function StandingsAndFixtures( {
     }, [])
 
     return (
-        <div className="flex flex-col w-full max-w-7xl bg-gradient-to-b from gray-800/75 to-gray-800/20 lg:flex-row">
-            <div className="flex justify-center items-center lg:w-3/5 md:p-10 py-5">
-                <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl">
-                    <div className="w-full flex flex-col justify-center items-center">
-                        <div className="p-2 font-bold">
-                            STANDING
-                        </div>
-                        <div className="flex justify-center w-full">
-                            {
-                                menuItems.map((a, i) => (
-                                    <button
-                                        key={i}
-                                        className={`w-full p-4 rounded-t-lg md:text-base text-xs font-bold ${i === activeTab ? "text-neutral-100" : "text-gray-400 bg-black/70"}`}
-                                        onClick={() => handleTabClick(i)}
-                                    >
-                                        {a}
-                                    </button>
-                                ))
-                            }
-                        </div>
-                        <div 
-                            ref={menuRef}
-                            className="w-full flex overflow-x-hidden snap-x scrollbar-none scroll-smooth text-xs md:text-sm"
-                        >
-                            {
-                                standingsData.map((responseData, i) => (
-                                    <div
-                                        key = {responseData.league.id}
-                                        className="flex-shrink-0 w-full snap-center flex justify-center items-center"
-                                    >
-                                        <div className="flex flex-col justify-between p-2 w-full">
-                                            <div className="flex w-full p-1">
-                                                <div className="w-1/12"></div>
-                                                <div className="w-3/12"></div>
-                                                <div className="w-6/12 flex justify-evenly">
-                                                    <div className="w-full text-center">M</div>
-                                                    <div className="w-full text-center">W</div>
-                                                    <div className="w-full text-center">D</div>
-                                                    <div className="w-full text-center">L</div>
-                                                    <div className="w-full text-center font-bold">P</div>
-                                                    <div className="w-full text-center">GF</div>
-                                                    <div className="w-full text-center">GA</div>
-                                                    <div className="w-full text-center">GD</div>
-                                                </div>
-                                                <div className="w-2/12 text-center">
-                                                    Form
-                                                </div>
-                                            </div>
-                                            {
-                                                responseData.league.standings[0].map((team, j) => (
-                                                    <Link
-                                                        href = {`/team/${team.team.id}`}
-                                                        key = {j + team.team.name}
-                                                        className = {`flex w-full p-1 hover:bg-blue-800/50 ${j % 2 === 0 ? "bg-black/40)" : ""}`}
-                                                    >
-                                                        <div className="w-1/12 flex px-2 justify-center items-center">
-                                                            {j + 1}
-                                                        </div>
-                                                        <div className="w-3/12 flex text-xs items-center">
-                                                            {team.team.name}
-                                                        </div>
-                                                        <div className="w-6/12 flex justify-center items-center">
-                                                            <div className="w-full text-center">{team.all.played}</div>
-                                                            <div className="w-full text-center">{team.all.win}</div>
-                                                            <div className="w-full text-center">{team.all.draw}</div>
-                                                            <div className="w-full text-center">{team.all.lose}</div>
-                                                            <div className="w-full text-center font-bold">{team.points}</div>
-                                                            <div className="w-full text-center">{team.all.goals.for}</div>
-                                                            <div className="w-full text-center">{team.all.goals.against}</div>
-                                                            <div className="w-full text-center">{team.goalsDiff}</div>
-                                                        </div>
-                                                        <div className="w-2/12 flex justify-center items-center">
-                                                            {
-                                                                team.form?.split("").map((char, i) => (
-                                                                    <div 
-                                                                        key = {char + i}
-                                                                        className={`opactity-80 w-3 h-3 m-[1px] rounded-full ${char === "L" ? "bg-red-500" : char === "D" ? "bg-gray-500" : "bg-green-500"}`}
-                                                                    >
-                                                                    </div>
-                                                                ))
-                                                            }
-                                                        </div>
-                                                    </Link>
-                                                ))
-                                            }
-                                        </div>
-                                    </div>
-                                ))
-                            }
-                        </div>
-                    </div>
+        <div className="flex w-full max-w-7xl">
+            <div
+                className={`fixed top-30 left-0 h-full bg-gray-800 text-white p-6 transition-transform duration-300 ${isMenuOpen ? "translate-x-0" : "-translate-x-full"}`}
+                style={{ zIndex: 50, width: "250px" }}
+            >
+                <div>
+                    <LeagueMenu
+                        menuItems={menuItems}
+                        activeTab={activeTab}
+                        onTabClick={handleTabClick}
+                    />
                 </div>
             </div>
-            <div className="flex justify-center items-center lg:w-2/5 pt-10 lg:pr-10 pb-10 lg:pl-0">
-                <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl h-full">
-                    <div className="w-full flex flex-col justify-center items-center">
-                        <div className="p-2 font-bold">
-                            Upcoming Matches
+            <button
+                className={`fixed top-1/2 transform -translate-y-1/2 z-50 bg-blue-600 text-white px-3 py-2 rounded-r ${isMenuOpen ? "left-[250px]" : "left-0"} transition-all duration-300`}
+                onClick={toggleMenu}
+            >
+                <ChevronDoubleRightIcon
+                    className={`h-6 w-6 transform ${isMenuOpen ? "rotate-180" : ""} transition-transform duration-300`}
+                />
+            </button>
+            <div className="w-full flex flex-col ml-auto">
+                <div className="flex flex-row w-full max-w-full bg-gradient-to-b from-gray-800/75 to-gray-800/20">
+                    <div
+                        className="flex justify-center items-center w-1/2 p-5"
+                        style={{ alignItems: "flex-start"}}
+                    >
+                        <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl h-auto">
+                            <div className="w-full flex flex-col justify-center items-center">
+                                <div className="p-2 font-bold">
+                                    Upcoming Matches
+                                </div>
+                                <div className="flex flex-col w-full justify-center items-center pb-5 overflow-hidden">
+                                    {
+                                        menuItems.map((leagueName, i) => {
+                                            return (
+                                                activeTab === i && (
+                                                    filteredFixtures.map((league, j) => {
+                                                        if (league.name === leagueName) {
+                                                            return (
+                                                                <FixturesByLeague
+                                                                    fixturesData={league.fixtures}
+                                                                    key={league.name + j}
+                                                                />
+                                                            );
+                                                        }
+                                                    })
+                                                )
+                                            );
+                                        })
+                                    }
+                                </div>
+                            </div>
                         </div>
-                        <div className="flex flex-col w-full justify-center items-center pb-5 overflow-hidden">
-                            {
-                                menuItems.map((leagueName, i) => {
-                                    return (
-                                        activeTab === i && (
-                                            filteredFixtures.map((league, j) => {
-                                                if (league.name === leagueName) {
-                                                    return (
-                                                        <FixturesByLeague
-                                                            fixturesData={league.fixtures}
-                                                            key={league.name + j}
-                                                        />
-                                                    )
-                                                }
-                                            })
-                                        )
-                                    )
-                                })
-                            }
+                    </div>
+                    <div
+                        className="flex justify-center items-center w-1/2 p-5"
+                        style={{ marginLeft: "100px" }}
+                    >
+                        <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl h-full" style={{ width: "150%", marginLeft: "100px" }}>
+                            <div className="w-full flex flex-col justify-center items-center">
+                                <div
+                                    ref={menuRef}
+                                    className="w-full flex overflow-x-hidden snap-x scrollbar-none scroll-smooth text-xs md:text-sm"
+                                >
+                                    {
+                                        standingsData.map((responseData, i) => (
+                                            <div
+                                                key={responseData.league.id}
+                                                className="flex-shrink-0 w-full snap-center flex justify-center items-center"
+                                            >
+                                                <div className="flex flex-col justify-between p-2 w-full">
+                                                    <div className="flex w-full p-1">
+                                                        <div className="w-1/12 text-center font-bold">Rank</div>
+                                                        <div className="w-3/12 text-left pl-2 font-bold">Club</div>
+                                                        <div className="w-6/12 flex justify-evenly">
+                                                            <div className="w-full text-center">M</div>
+                                                            <div className="w-full text-center">W</div>
+                                                            <div className="w-full text-center">D</div>
+                                                            <div className="w-full text-center">L</div>
+                                                            <div className="w-full text-center font-bold">P</div>
+                                                            <div className="w-full text-center">GF</div>
+                                                            <div className="w-full text-center">GA</div>
+                                                            <div className="w-full text-center">GD</div>
+                                                        </div>
+                                                        <div className="w-2/12 text-center">
+                                                            Form
+                                                        </div>
+                                                    </div>
+                                                    {
+                                                        responseData.league.standings[0].map((team, j) => (
+                                                            <Link
+                                                                href={`/team/${team.team.id}`}
+                                                                key={j + team.team.name}
+                                                                className={`flex w-full p-1 hover:bg-blue-800/50 ${j % 2 === 0 ? "bg-black/40" : ""} h-12`}
+                                                            >
+                                                                <div className="w-1/12 flex px-2 justify-center items-center">
+                                                                    {j + 1}
+                                                                </div>
+                                                                    <div className="w-3/12 flex text-xs items-center">
+                                                                        <Image
+                                                                            src={team.team.logo}
+                                                                            alt={team.team.name}
+                                                                            width={20}
+                                                                            height={20}
+                                                                            className="object-contain"
+                                                                            style={{ width: "20px", height: "20px" }}
+                                                                        />
+                                                                        <span className="ml-1">{team.team.name}</span>
+                                                                    </div>
+                                                                <div className="w-6/12 flex justify-center items-center">
+                                                                    <div className="w-full text-center">{team.all.played}</div>
+                                                                    <div className="w-full text-center">{team.all.win}</div>
+                                                                    <div className="w-full text-center">{team.all.draw}</div>
+                                                                    <div className="w-full text-center">{team.all.lose}</div>
+                                                                    <div className="w-full text-center font-bold">{team.points}</div>
+                                                                    <div className="w-full text-center">{team.all.goals.for}</div>
+                                                                    <div className="w-full text-center">{team.all.goals.against}</div>
+                                                                    <div className="w-full text-center">{team.goalsDiff}</div>
+                                                                </div>
+                                                                <div className="w-2/12 flex justify-center items-center">
+                                                                    {
+                                                                        team.form?.split("").map((char, i) => (
+                                                                            <div
+                                                                                key={char + i}
+                                                                                className={`opactity-80 w-3 h-3 m-[1px] rounded-full ${char === "L" ? "bg-red-500" : char === "D" ? "bg-gray-500" : "bg-green-500"}`}
+                                                                            >
+                                                                            </div>
+                                                                        ))
+                                                                    }
+                                                                </div>
+                                                            </Link>
+                                                        ))
+                                                    }
+                                                </div>
+                                            </div>
+                                        ))
+                                    }
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -175,4 +205,3 @@ export default function StandingsAndFixtures( {
         </div>
     )
 }
-
