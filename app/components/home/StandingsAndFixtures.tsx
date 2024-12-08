@@ -6,6 +6,7 @@ import FixturesByLeague from "./FixturesByLeague";
 import LeagueMenu from "./LeagueMenu";
 import Image from "next/image";
 import { ChevronDoubleRightIcon } from "@heroicons/react/20/solid";
+import { getRowClass, getLegend } from "../../util/leagueRules";
 
 export default function StandingsAndFixtures( {
     standingsData,
@@ -58,9 +59,9 @@ export default function StandingsAndFixtures( {
     }, [])
 
     return (
-        <div className="flex w-full max-w-7xl">
+        <div className="flex w-full max-w-7xl mx-auto">
             <div
-                className={`fixed top-30 left-0 h-full bg-gray-800 text-white p-6 transition-transform duration-300 ${isMenuOpen ? "translate-x-0" : "-translate-x-full"}`}
+                className={`fixed top-[125px] left-0 h-full bg-gray-800 text-white p-6 transition-transform duration-300 ${isMenuOpen ? "translate-x-0" : "-translate-x-full"}`}
                 style={{ zIndex: 50, width: "250px" }}
             >
                 <div>
@@ -69,6 +70,23 @@ export default function StandingsAndFixtures( {
                         activeTab={activeTab}
                         onTabClick={handleTabClick}
                     />
+                </div>
+                <div className="mt-4">
+                    <div className="flex flex-col justify-center items-center text-lg p-2 font-bold">
+                        Legend
+                    </div>
+                    {
+                        getLegend(standingsData[activeTab]?.league.id).map((item, index) => (
+                            <div key={index} className="flex items-center mb-1">
+                                <div
+                                    className={`flex-shrink-0 w-4 h-4 rounded-full mr-2`}
+                                    style={{ backgroundColor: item.color, minWidth: "16px", minHeight: "16px" }}
+                                >
+                                </div>
+                                <span>{item.description}</span>
+                            </div>
+                        ))
+                    }
                 </div>
             </div>
             <button
@@ -81,10 +99,7 @@ export default function StandingsAndFixtures( {
             </button>
             <div className="w-full flex flex-col ml-auto">
                 <div className="flex flex-row w-full max-w-full bg-gradient-to-b from-gray-800/75 to-gray-800/20">
-                    <div
-                        className="flex justify-center items-center w-1/2 p-5"
-                        style={{ alignItems: "flex-start"}}
-                    >
+                    <div className="flex justify-center items-center w-1/2 p-4 relative -left-[250px]">
                         <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl h-auto">
                             <div className="w-full flex flex-col justify-center items-center">
                                 <div className="p-2 font-bold">
@@ -99,7 +114,7 @@ export default function StandingsAndFixtures( {
                                                         if (league.name === leagueName) {
                                                             return (
                                                                 <FixturesByLeague
-                                                                    fixturesData={league.fixtures}
+                                                                    fixturesData={league.fixtures.slice(0, 7)}
                                                                     key={league.name + j}
                                                                 />
                                                             );
@@ -113,12 +128,12 @@ export default function StandingsAndFixtures( {
                             </div>
                         </div>
                     </div>
-                    <div
-                        className="flex justify-center items-center w-1/2 p-5"
-                        style={{ marginLeft: "100px" }}
-                    >
+                    <div className="flex justify-center items-center w-1/2 p-4 relative -left-[150px]">
                         <div className="flex flex-col justify-center items-center bg-gradient-to-b from-black/40 w-full text-neutral-100 rounded-3xl h-full" style={{ width: "150%", marginLeft: "100px" }}>
                             <div className="w-full flex flex-col justify-center items-center">
+                                <div className="p-2 font-bold">
+                                    {standingsData[activeTab]?.league.name} Table
+                                </div>
                                 <div
                                     ref={menuRef}
                                     className="w-full flex overflow-x-hidden snap-x scrollbar-none scroll-smooth text-xs md:text-sm"
@@ -152,22 +167,22 @@ export default function StandingsAndFixtures( {
                                                             <Link
                                                                 href={`/team/${team.team.id}`}
                                                                 key={j + team.team.name}
-                                                                className={`flex w-full p-1 hover:bg-blue-800/50 ${j % 2 === 0 ? "bg-black/40" : ""} h-12`}
+                                                                className={`flex w-full p-1 hover:bg-blue-800/50 ${j % 2 === 0 ? "bg-black/40" : ""} h-12 ${getRowClass(responseData.league.id, j + 1)}`}
                                                             >
                                                                 <div className="w-1/12 flex px-2 justify-center items-center">
                                                                     {j + 1}
                                                                 </div>
-                                                                    <div className="w-3/12 flex text-xs items-center">
-                                                                        <Image
-                                                                            src={team.team.logo}
-                                                                            alt={team.team.name}
-                                                                            width={20}
-                                                                            height={20}
-                                                                            className="object-contain"
-                                                                            style={{ width: "20px", height: "20px" }}
-                                                                        />
-                                                                        <span className="ml-1">{team.team.name}</span>
-                                                                    </div>
+                                                                <div className="w-3/12 flex text-xs items-center">
+                                                                    <Image
+                                                                        src={team.team.logo}
+                                                                        alt={team.team.name}
+                                                                        width={20}
+                                                                        height={20}
+                                                                        className="object-contain"
+                                                                        style={{ width: "20px", height: "20px" }}
+                                                                    />
+                                                                    <span className="ml-1">{team.team.name}</span>
+                                                                </div>
                                                                 <div className="w-6/12 flex justify-center items-center">
                                                                     <div className="w-full text-center">{team.all.played}</div>
                                                                     <div className="w-full text-center">{team.all.win}</div>

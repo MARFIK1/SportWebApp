@@ -17,7 +17,7 @@ export default function FixtureItem( {
     const today = moment();
     const matchDate = moment(match.fixture.date);
 
-    return today.isBefore(matchDate) ? (
+    return today.isSameOrBefore(matchDate) ? (
         <Link
             href={`/match/${match.fixture.id}`}
             key={match.fixture.id}
@@ -31,6 +31,7 @@ export default function FixtureItem( {
                         width={70}
                         height={70}
                         className="object-contain"
+                        style={{ width: "70px", height: "70px" }}
                     />
                 </div>
                 {match.teams.home.name}
@@ -55,6 +56,7 @@ export default function FixtureItem( {
                         width={70}
                         height={70}
                         className="object-contain"
+                        style={{ width: "70px", height: "70px" }}
                     />
                 </div>
                 {match.teams.away.name}

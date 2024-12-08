@@ -18,9 +18,9 @@ export default function Fixtures( {
 } : PageProps) {
 
     const [currentIndex, setCurrentIndex] = useState(0);
-    const [visibleItemsCount, setVisibleItemsCount] = useState(3);
+    const [visibleItemsCount, setVisibleItemsCount] = useState(5);
     const handleShowMore = () => {
-        setVisibleItemsCount((prevCount) => prevCount + 3);
+        setVisibleItemsCount((prevCount) => prevCount + 5);
     }
 
     const today = moment().format("YYYY-MM-DD");
@@ -36,7 +36,7 @@ export default function Fixtures( {
 
     const fixturesFuture = fixturesByTeamId.filter(fixture => {
         const fixtureDate = moment(fixture.fixture.date).format("YYYY-MM-DD");
-        return fixtureDate > today;
+        return fixtureDate >= today;
     })
 
     const firstItemsFixturesFuture = fixturesFuture.slice(0, 5);

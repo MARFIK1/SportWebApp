@@ -18,7 +18,6 @@ export default async function Navbar() {
                         className="w-24 object-cover rounded-full"
                     />
                     <div className="px-2 md:block hidden font-bold text-xl">
-                        FootballTennisApp
                     </div>
                 </a>
             </div>

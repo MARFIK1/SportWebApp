@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Navbar from "./components/Navbar/Navbar";
 
-const inter = Inter( { 
-    subsets: ["latin"] 
+const inter = Inter( {
+    subsets: ["latin"]
 })
 
 export const metadata: Metadata = {
@@ -19,12 +19,12 @@ export default function RootLayout( {
 }) {
     return (
         <html lang="en">
-            <body className={`${inter.className} bg-white`}>
+            <body className={`${inter.className}`}>
                 <div className="relative">
-                    <div className="relative bg-gray-800">
-                        <Navbar />
+                    <Navbar />
+                    <main className="bg-gray-800 relative">
                         {children}
-                    </div>
+                    </main>
                 </div>
             </body>
         </html>

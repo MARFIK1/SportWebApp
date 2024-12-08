@@ -9,7 +9,7 @@ export default function FixturesByLeague( {
     fixturesData
 } : PageProps) {
     if (fixturesData.length > 0) {
-        return fixturesData.slice(0, 4).map((match, i) => {
+        return fixturesData.slice(0, 7).map((match, i) => {
             return <FixtureItem
                         match={match} 
                         index={i} 
