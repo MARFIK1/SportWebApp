@@ -93,9 +93,9 @@ export default function SearchBarForm( {
                                     <Image
                                         src={standing.team.logo}
                                         alt={`${standing.team.name} logo`}
-                                        width={20}
-                                        height={20}
-                                        style={{ width: "20px", height: "20px" }}
+                                        width={25}
+                                        height={25}
+                                        style={{ width: "25px", height: "25px" }}
                                         className="mr-2"
                                     />
                                     <span>{standing.team.name}</span>
