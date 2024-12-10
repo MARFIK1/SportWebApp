@@ -14,8 +14,8 @@ export default function LocalTime({ fixture } : PageProps) {
     useEffect(() => {
         function formatToLocalTime(timeUTC: string) : string {
             const newTime = moment(timeUTC);
-            const localDateString = newTime.format("dddd, LL");
-            const localTimeString = newTime.format("LT");
+            const localDateString = newTime.format("DD.MM.YYYY");
+            const localTimeString = newTime.format("HH:mm");
             return `${localDateString} ${localTimeString}`;
         }
 

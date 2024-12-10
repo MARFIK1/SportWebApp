@@ -27,9 +27,13 @@ export default async function Team({ params } : PageProps) {
         .sort((a, b) => moment(a.fixture.date).diff(moment(b.fixture.date)));
 
     const teamFixtures = {
-        past: allFixtures.filter((fixture) => moment(fixture.fixture.date).isBefore(moment(), "day")),
-        future: allFixtures.filter((fixture) => moment(fixture.fixture.date).isSameOrAfter(moment(), "day"))
-    }
+        past: allFixtures
+            .filter((fixture) => moment(fixture.fixture.date).isBefore(moment(), "day"))
+            .sort((a, b) => moment(b.fixture.date).diff(moment(a.fixture.date))),
+        future: allFixtures
+            .filter((fixture) => moment(fixture.fixture.date).isSameOrAfter(moment(), "day"))
+            .sort((a, b) => moment(a.fixture.date).diff(moment(b.fixture.date)))
+    }        
 
     if (!teamInfo) {
         return (

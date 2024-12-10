@@ -50,6 +50,9 @@ export default function Fixtures({ fixturesByTeamId, pastFixtures, showFullNames
                                     </span>
                                 </div>
                                 <div className="w-1/3 text-center text-sm">
+                                    <div className="text-xs text-gray-400">
+                                        {fixture.league.name}
+                                    </div>
                                     <LocalTime
                                         fixture={fixture}
                                     />
@@ -96,6 +99,9 @@ export default function Fixtures({ fixturesByTeamId, pastFixtures, showFullNames
                                     </span>
                                 </div>
                                 <div className="w-1/3 text-center text-sm">
+                                    <div className="text-xs text-gray-400">
+                                        {fixture.league.name}
+                                    </div>
                                     {fixture.score.fulltime.home} - {fixture.score.fulltime.away}
                                 </div>
                                 <div className="flex items-center w-1/3 justify-end">
