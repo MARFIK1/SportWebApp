@@ -1,10 +1,10 @@
 import "server-only";
 import { Fixture } from "@/types";
-import getFixtures from "./getFixtures";
+import { getFixtures } from "@/app/util/fetchData";
 
-export default async function getFixtureByFixtureId(id: number): Promise<Fixture | undefined> {
+export default async function getFixtureByFixtureId(id: number, season: number) : Promise<Fixture | undefined> {
     try {
-        const allFixturesByLeague = await getFixtures();
+        const allFixturesByLeague = await getFixtures(season);
         for (const league of allFixturesByLeague) {
             for (const fixture of league.fixtures) {
                 if (fixture.fixture.id === id) {
@@ -15,7 +15,7 @@ export default async function getFixtureByFixtureId(id: number): Promise<Fixture
 
         return undefined;
     }
-    catch(error) {
+    catch (error) {
         console.error("Error while fetching fixture by id", error);
     }
 }

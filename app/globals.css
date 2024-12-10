@@ -61,3 +61,33 @@ html, body {
     animation: logo-pop-right 0.8s ease;
     transform: translateY(0px) rotateY(-50deg);
 }
+
+@keyframes slide-left {
+    0% {
+        transform: translateX(100%);
+        opacity: 0.3;
+    }
+    100% {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slide-right {
+    0% {
+        transform: translateX(-100%);
+        opacity: 0.3;
+    }
+    100% {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.slide-in-left {
+    animation: slide-left 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.slide-in-right {
+    animation: slide-right 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}

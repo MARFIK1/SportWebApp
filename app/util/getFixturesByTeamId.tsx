@@ -1,11 +1,12 @@
 import "server-only";
-import { Fixture } from "@/types";
-import getFixtures from "./getFixtures";
 import moment from "moment";
 
-export default async function getFixturesByTeamId(id: number): Promise<Fixture[]> {
+import { Fixture } from "@/types";
+import { getFixtures } from "@/app/util/fetchData";
+
+export default async function getFixturesByTeamId(id: number, season: number) : Promise<Fixture[]> {
     try {
-        const allFixturesByLeague = await getFixtures();
+        const allFixturesByLeague = await getFixtures(season);
         const fixturesByTeamId: Fixture[] = [];
         for (const league of allFixturesByLeague) {
             for (const fixture of league.fixtures) {

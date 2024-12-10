@@ -1,32 +1,25 @@
-import getTeams from "@/app/util/getTeams";
-import SearchBarForm from "./SearchBarForm";
 import { Team } from "@/types";
+import SearchBarForm from "./SearchBarForm";
 
-export default async function Navbar() {
-    let teamsData: Team[] = await getTeams();
-
+export default function Navbar({ teamsData } : { teamsData: Team[] }) {
     return (
-        <div className="flex justify-center items-center w-full p-3 bg-gray/40">
-            <div className="w-1/6 flex justify-center items-center text-neutral-100">
+        <div className="flex justify-between items-center w-full">
+            <div className="flex items-center">
                 <a
-                    href={"/"}
-                    className="flex justify-center items-center"
+                    href="/"
+                    className="flex items-center"
                 >
                     <img
                         src="/logo.png"
                         alt="logo"
                         className="w-24 object-cover rounded-full"
                     />
-                    <div className="px-2 md:block hidden font-bold text-xl">
-                    </div>
                 </a>
             </div>
-            <div className="w-4/6 flex justify-center items-center">
+            <div className="flex-1 mx-4">
                 <SearchBarForm 
-                    teamsData={teamsData} 
+                    teamsData={teamsData}
                 />
-            </div>
-            <div className="w-1/6">
             </div>
         </div>
     )

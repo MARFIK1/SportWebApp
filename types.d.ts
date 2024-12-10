@@ -116,4 +116,16 @@ type AllFixtures = {
     fixtures: Fixture[];
 }
 
-export { Standing, Team, AllFixtures, Fixture };
+type Player = {
+    id: number;
+    name: string;
+    position: string;
+    number: number;
+    nationality: string;
+    age: number;
+    photo: string;
+    injured: boolean;
+    captain: boolean;
+}
+
+export { Standing, Team, AllFixtures, Fixture, Player };

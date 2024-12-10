@@ -1,10 +1,11 @@
-import { AllFixtures } from "@/types";
-import getFixtures from "./getFixtures";
 import moment from "moment";
 
-export default async function getFixturesForFiveLeagues(): Promise<AllFixtures[]> {
+import { AllFixtures } from "@/types";
+import { getFixtures } from "@/app/util/fetchData";
+
+export default async function getFixturesForFiveLeagues(season: number) : Promise<AllFixtures[]> {
     try {
-        const allFixturesByLeague = await getFixtures();
+        const allFixturesByLeague = await getFixtures(season);
         const fixturesForFiveLeagues: AllFixtures[] = [];
         for (const league of allFixturesByLeague) {
             if (
@@ -17,7 +18,7 @@ export default async function getFixturesForFiveLeagues(): Promise<AllFixtures[]
                 fixturesForFiveLeagues.push(league);
             }
         }
-
+        
         const filteredFixtures: AllFixtures[] = fixturesForFiveLeagues.filter((league) => {
             league.fixtures = league.fixtures.filter((fixture) => {
                 return moment(fixture.fixture.date).isAfter(moment().subtract(1, "day"), "day");

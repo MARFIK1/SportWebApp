@@ -1,8 +1,9 @@
-import getFixtureByFixtureId from "@/app/util/getFixtureByFixtureId";
-import { Fixture } from "@/types";
 import Link from "next/link";
 import Image from "next/image";
+
+import { getCurrentSeason } from "@/app/util/season";
 import LocalTime from "@/app/components/LocalTime";
+import getFixtureByFixtureId from "@/app/util/getFixtureByFixtureId";
 
 type PageProps = {
     params: {
@@ -10,11 +11,10 @@ type PageProps = {
     }
 }
 
-export default async function Match( {
-    params
-} : PageProps) { 
+export default async function Match({ params } : PageProps) { 
+    const season = getCurrentSeason();
+    const fixtureByFixtureId = await getFixtureByFixtureId(parseInt(params.id), season);
 
-    let fixtureByFixtureId: Fixture | undefined = await getFixtureByFixtureId(parseInt(params.id));
     if (!fixtureByFixtureId) {
         return (
             <div className="flex w-full justify-center items-center py-5">
@@ -85,9 +85,8 @@ export default async function Match( {
                                 }
                         </div>
                     </div>
-                        <div className="h-1/5 flex justify-center items-center">
-                        
-                        </div>
+                    <div className="h-1/5 flex justify-center items-center">
+                    </div>
                 </div>
                 <div className="w-1/3 flex justify-center rounded-full animate-logo-pop-right logo-shadow">
                     <Link

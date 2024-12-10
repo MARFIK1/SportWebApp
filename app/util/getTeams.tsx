@@ -1,10 +1,10 @@
 import "server-only";
-import getStandings from "./getStandings";
+import { getStandings } from "@/app/util/fetchData";
 import { Standing, Team } from "@/types";
 
-export default async function getTeams(): Promise<Team[]> {
+export default async function getTeams(season: number) : Promise<Team[]> {
     try {
-        const standings: Standing[] = await getStandings();
+        const standings: Standing[] = await getStandings(season);
         const teams: Team[] = [];
         for (const league of standings) {
             for (const standing of league.league.standings) {
@@ -20,7 +20,7 @@ export default async function getTeams(): Promise<Team[]> {
         }
         return teams;
     }
-    catch(error) {
+    catch (error) {
         console.error("Error fetching teams: ", error);
         throw error;
     }

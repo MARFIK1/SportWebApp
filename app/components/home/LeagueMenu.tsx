@@ -1,16 +1,12 @@
 "use client";
 
 interface PageProps {
-    menuItems: string[];
-    activeTab: number;
-    onTabClick: (index: number) => void;
+    menuItems: string[],
+    activeTab: number,
+    onTabClick: (index: number) => void
 }
 
-export default function LeagueMenu( {
-    menuItems,
-    activeTab,
-    onTabClick
-} : PageProps) {
+export default function LeagueMenu({ menuItems, activeTab, onTabClick } : PageProps) {
     return (
         <div className="flex flex-col h-full p-4 gap-2 text-neutral-100 bg-gray-800">
             <div className="flex flex-col justify-center items-center text-lg p-2 font-bold">

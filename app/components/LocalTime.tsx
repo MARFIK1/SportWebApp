@@ -1,15 +1,14 @@
 "use client";
-import { Fixture } from "@/types";
-import moment from "moment";
 import { useState, useEffect } from "react";
+import moment from "moment";
+
+import { Fixture } from "@/types";
 
 type PageProps = {
     fixture: Fixture
 }
 
-export default function LocalTime( {
-    fixture
-} : PageProps) {
+export default function LocalTime({ fixture } : PageProps) {
     const [formattedTime, setFormattedTime] = useState("");
 
     useEffect(() => {
@@ -23,7 +22,7 @@ export default function LocalTime( {
         const fixtureTime = fixture.fixture.date;
         const formatted = formatToLocalTime(fixtureTime);
         setFormattedTime(formatted);
-    }, []);
+    }, [])
 
     return (
         <div className="flex justify-center items-center text-center">

@@ -1,8 +1,9 @@
 "use client";
-import { Fixture } from "@/types";
 import moment from "moment";
 import Link from "next/link";
 import Image from "next/image";
+
+import { Fixture } from "@/types";
 import LocalTime from "../LocalTime";
 
 type PageProps = {
@@ -10,20 +11,21 @@ type PageProps = {
     index: number
 }
 
-export default function FixtureItem( {
-    match,
-    index
-} : PageProps) {
+export default function FixtureItem({ match, index } : PageProps) {
     const today = moment();
     const matchDate = moment(match.fixture.date);
 
-    return today.isSameOrBefore(matchDate) ? (
+    if (today.isAfter(matchDate)) {
+        return null;
+    }
+
+    return (
         <Link
             href={`/match/${match.fixture.id}`}
             key={match.fixture.id}
-            className={`flex w-full p-2 justify-center items-center h-36 hover:bg-blue-800/50 ${index % 2 === 0 ? "bg-black/40" : ""} animated-div`}
+            className={`flex w-full p-4 justify-between items-center h-32 hover:bg-blue-800/50 ${index % 2 === 0 ? "bg-black/40" : ""} animated-div`}
         >
-            <div className="w-1/3 flex flex-col justify-center items-center text-center">
+            <div className="flex-1 flex flex-col justify-center items-center text-center">
                 <div className="w-20 h-20 flex justify-center items-center overflow-hidden">
                     <Image
                         src={match.teams.home.logo}
@@ -34,21 +36,22 @@ export default function FixtureItem( {
                         style={{ width: "70px", height: "70px" }}
                     />
                 </div>
-                {match.teams.home.name}
+                <span>
+                    {match.teams.home.name}
+                </span>
             </div>
-            <div className="w-1/3 flex flex-col justify-center items-center h-full">
+            <div className="flex-1 flex flex-col justify-center items-center h-full">
                 <div className="h-1/3 text-xs text-center">
                     <LocalTime 
-                        fixture={match} 
+                        fixture={match}
                     />
                 </div>
                 <div className="h-1/3 text-center">
                     vs
                 </div>
-                <div className="h-1/3">
-                </div>
+                <div className="h-1/3"></div>
             </div>
-            <div className="w-1/3 flex flex-col justify-center items-center text-center">
+            <div className="flex-1 flex flex-col justify-center items-center text-center">
                 <div className="w-20 h-20 flex justify-center items-center overflow-hidden">
                     <Image
                         src={match.teams.away.logo}
@@ -59,8 +62,10 @@ export default function FixtureItem( {
                         style={{ width: "70px", height: "70px" }}
                     />
                 </div>
-                {match.teams.away.name}
+                <span>
+                    {match.teams.away.name}
+                </span>
             </div>
         </Link>
-    ) : null;
+    )
 }

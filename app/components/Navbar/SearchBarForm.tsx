@@ -1,22 +1,18 @@
 "use client";
-import { Team } from "@/types";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 
-export default function SearchBarForm( {
-    teamsData
-} : {
-    teamsData: Team[];
-}) {
+import { Team } from "@/types";
+
+export default function SearchBarForm({ teamsData } : { teamsData: Team[] }) {
+    let router = useRouter();
     const [searchTerm, setSearchTerm] = useState("");
     const [focusedIndex, setFocusedIndex] = useState(-1);
     const [showFilteredBox, setShowFilteredBox] = useState(false);
-    let router = useRouter();
-    const filteredTeams = teamsData.filter(team =>
-        team.team.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+
+    const filteredTeams = teamsData.filter(team => team.team.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         setSearchTerm(event.target.value);
@@ -27,15 +23,11 @@ export default function SearchBarForm( {
     const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
         if (event.key === "ArrowDown") {
             let length = filteredTeams.length > 10 ? 10 : filteredTeams.length;
-            setFocusedIndex(prevIndex =>
-                prevIndex < length - 1 ? prevIndex + 1 : prevIndex
-            )
+            setFocusedIndex(prevIndex => prevIndex < length - 1 ? prevIndex + 1 : prevIndex);
         } 
         else if (event.key === "ArrowUp") {
             event.preventDefault();
-            setFocusedIndex(prevIndex =>
-                prevIndex > 0 ? prevIndex - 1 : prevIndex
-            )
+            setFocusedIndex(prevIndex => prevIndex > 0 ? prevIndex - 1 : prevIndex);
         } 
         else if (event.key === "Enter") {
             if (focusedIndex !== -1) {
@@ -63,7 +55,7 @@ export default function SearchBarForm( {
 
         return () => {
             document.removeEventListener("click", handleOutsideClick);
-        }
+        };
     }, [])
 
     return (
@@ -74,7 +66,7 @@ export default function SearchBarForm( {
                 onChange={handleSearchChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Search"
-                className="w-full bg-gradient-to-b from-neutral-100/60 to-black/25 bg-transparent p-2 outline-none border-neutral-100/60 border-[1px] rounded-xl hover:border-blue-400 focus:border-blue-400 focus:from-blue-400/60 text-neutral-100 placeholder:text-neutral-100/70"
+                className="w-full bg-gray-700 p-2 text-white rounded-lg outline-none placeholder-gray-400"
             />
             {
                 searchTerm && filteredTeams.length > 0 && showFilteredBox ? (
@@ -98,7 +90,9 @@ export default function SearchBarForm( {
                                         style={{ width: "25px", height: "25px" }}
                                         className="mr-2"
                                     />
-                                    <span>{standing.team.name}</span>
+                                    <span>
+                                        {standing.team.name}
+                                    </span>
                                 </Link>
                             ))
                         }
