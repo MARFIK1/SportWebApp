@@ -7,6 +7,10 @@ const nextConfig = {
                 protocol: "https",
                 hostname: "**.api-sports.io",
             },
+            {
+                protocol: "https",
+                hostname: "flagcdn.com",
+            }
         ],
     },
 };

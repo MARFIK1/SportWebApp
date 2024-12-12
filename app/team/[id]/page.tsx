@@ -5,6 +5,7 @@ import type { Team, Player } from "@/types";
 import { fetchTeamSquad, getFixtures } from "@/app/util/fetchData";
 import { getCurrentSeason } from "@/app/util/season";
 import getTeamInfoByTeamId from "@/app/util/getTeamInfoByTeamId";
+import ScrollToTop from "@/app/components/ScrollToTop";
 import Fixtures from "./components/Fixtures";
 import Players from "./components/Players";
 
@@ -12,6 +13,10 @@ type PageProps = {
     params: {
         id: string
     }
+}
+
+export async function getTeamInfo(teamId: number, season: number) : Promise<Team | undefined> {
+    return await getTeamInfoByTeamId(teamId, season);
 }
 
 export default async function Team({ params } : PageProps) {
@@ -47,6 +52,7 @@ export default async function Team({ params } : PageProps) {
 
     return (
         <div className="flex justify-center items-center min-h-screen text-neutral-100 py-5">
+            <ScrollToTop />
             <div className="flex max-w-7xl w-full flex-col md:flex-row">
                 <div className="flex flex-col w-full md:w-4/7 p-5">
                     <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-6 rounded-lg mb-6 text-center">

@@ -11,7 +11,7 @@ import FixturesByLeague from "./FixturesByLeague";
 import LeagueMenu from "./LeagueMenu";
 
 export default function MainPage({ standingsData, filteredFixtures } : { standingsData: Standing[], filteredFixtures: AllFixtures[] }) {
-    const menuItems = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"];
+    const menuItems = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1", "UEFA Champions League", "UEFA Europa League", "UEFA Conference League"];
     const [activeTab, setActiveTab] = useState(0);
     const [previousTab, setPreviousTab] = useState(0);
     const [isMenuOpen, setIsMenuOpen] = useState(false);

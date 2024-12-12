@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 import { Player } from "@/types";
 
@@ -36,9 +37,10 @@ export default function Players({ players } : { players: Player[] }) {
                             <div className="grid grid-cols-3 md:grid-cols-4 gap-4 justify-items-center">
                                 {
                                     positionPlayers.map((player) => (
-                                        <div
+                                        <Link
                                             key={player.id}
-                                            className="bg-gray-800 w-32 h-44 flex flex-col items-center justify-between p-2 rounded-lg"
+                                            href={{ pathname: `/player/${player.id}`, query: { number: player.number }}}
+                                            className="bg-gray-800 w-32 h-44 flex flex-col items-center justify-between p-2 rounded-lg hover:bg-gray-700 transition"
                                         >
                                             <Image
                                                 src={player.photo || "/default-logo.png"}
@@ -53,7 +55,7 @@ export default function Players({ players } : { players: Player[] }) {
                                             <div className="text-xs text-gray-400 text-center leading-tight break-words h-8 flex items-center justify-center">
                                                 Age: {player.age} | No: {player.number || "N/A"}
                                             </div>
-                                        </div>
+                                        </Link>
                                     ))
                                 }
                             </div>

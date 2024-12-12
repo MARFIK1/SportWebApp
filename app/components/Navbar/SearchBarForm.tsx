@@ -88,9 +88,9 @@ export default function SearchBarForm({ teamsData } : { teamsData: Team[] }) {
                                         width={25}
                                         height={25}
                                         style={{ width: "25px", height: "25px" }}
-                                        className="mr-2"
+                                        className="object-contain"
                                     />
-                                    <span>
+                                    <span className="ml-2">
                                         {standing.team.name}
                                     </span>
                                 </Link>

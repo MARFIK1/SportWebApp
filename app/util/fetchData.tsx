@@ -1,6 +1,7 @@
 import "server-only";
 import moment from "moment";
-import { Player, Standing, AllFixtures } from "@/types";
+
+import { Player, Standing, AllFixtures, PlayerExtended } from "@/types";
 import { USE_SAMPLE } from "../sampleData/useSample";
 import getStandingsSample from "../sampleData/getStandingsSample";
 import getFixturesSample from "../sampleData/getFixturesSample";
@@ -50,7 +51,7 @@ async function getStandings(season: number): Promise<Standing[]> {
         const url = `https://api-football-v1.p.rapidapi.com/v3/standings?league=${league.id}&season=${season}`;
         try {
             const data = await fetchWithRetry(url, options);
-            const standing = data.response[0];
+            const standing = data.response?.[0];
             if (standing) {
                 standings.push(standing);
             }
@@ -73,9 +74,9 @@ async function getFixtures(season: number): Promise<AllFixtures[]> {
         method: 'GET',
         headers: {
             'x-rapidapi-key': API_KEY,
-            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 },
+        next: { revalidate: 3600 }
     };
 
     const fixturesByLeague = await Promise.all(
@@ -184,9 +185,9 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
         method: 'GET',
         headers: {
             'x-rapidapi-key': API_KEY,
-            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com',
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 },
+        next: { revalidate: 3600 }
     };
 
     try {
@@ -200,18 +201,124 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
         return data.response[0].players.map((player: any) => ({
             id: player.id,
             name: player.name,
-            position: player.position || "Unknown",
-            number: player.number || 0,
-            nationality: player.nationality || "Unknown",
             age: player.age || 0,
+            number: player.number || "N/A",
+            position: player.position || "Unknown",
             photo: player.photo || "",
-            injured: player.injured || false,
-            captain: player.captain || false
         }));
     }
     catch (error) {
         console.error(`Error fetching squad for team ${teamId}:`, error);
         return [];
+    }
+}
+async function fetchPlayerDetails(playerId: string, season: number, teamSquadNumber?: number): Promise<PlayerExtended> {
+    if (USE_SAMPLE) {
+        return [] as unknown as PlayerExtended;
+    }
+
+    const url = `https://api-football-v1.p.rapidapi.com/v3/players?id=${playerId}&season=${season}`;
+    const options = {
+        method: 'GET',
+        headers: {
+            'x-rapidapi-key': API_KEY,
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
+        },
+        next: { revalidate: 3600 }
+    };
+
+    try {
+        const response = await fetchWithRetry(url, options);
+        const data = response.response;
+
+        if (!Array.isArray(data) || data.length === 0) {
+            throw new Error(`No player data found for player ID ${playerId}`);
+        }
+
+        const playerData = data[0];
+        const statistics = playerData.statistics.map((stat: any) => ({
+            team: {
+                id: stat.team.id,
+                name: stat.team.name,
+                logo: stat.team.logo || ""
+            },
+            league: {
+                id: stat.league.id,
+                name: stat.league.name,
+                country: stat.league.country || "Unknown",
+                logo: stat.league.logo || ""
+            },
+            games: {
+                appearences: stat.games.appearences || 0,
+                lineups: stat.games.lineups || 0,
+                minutes: stat.games.minutes || 0,
+                rating: stat.games.rating || "N/A",
+                position: stat.games.position || "N/A"
+            },
+            substitutes: {
+                in: stat.substitutes?.in || 0,
+                out: stat.substitutes?.out || 0,
+                bench: stat.substitutes?.bench || 0
+            },
+            shots: {
+                total: stat.shots?.total || 0,
+                on: stat.shots?.on || 0
+            },
+            goals: {
+                total: stat.goals.total || 0,
+                conceded: stat.goals.conceded || 0,
+                assists: stat.goals.assists || 0,
+                saves: stat.goals.saves || 0
+            },
+            passes: {
+                total: stat.passes?.total || 0,
+                key: stat.passes?.key || 0,
+                accuracy: stat.passes?.accuracy || 0
+            },
+            tackles: {
+                total: stat.tackles?.total || 0,
+                blocks: stat.tackles?.blocks || 0,
+                interceptions: stat.tackles?.interceptions || 0
+            },
+            duels: {
+                total: stat.duels?.total || 0,
+                won: stat.duels?.won || 0
+            },
+            dribbles: {
+                attempts: stat.dribbles?.attempts || 0,
+                success: stat.dribbles?.success || 0,
+                past: stat.dribbles?.past || 0
+            },
+            fouls: {
+                drawn: stat.fouls?.drawn || 0,
+                committed: stat.fouls?.committed || 0
+            },
+            cards: {
+                yellow: stat.cards?.yellow || 0,
+                yellowred: stat.cards?.yellowred || 0,
+                red: stat.cards?.red || 0
+            },
+            penalty: {
+                won: stat.penalty?.won || 0,
+                commited: stat.penalty?.commited || 0,
+                scored: stat.penalty?.scored || 0,
+                missed: stat.penalty?.missed || 0,
+                saved: stat.penalty?.saved || 0
+            },
+        }))
+
+        const position = statistics[0]?.games?.position || "N/A";
+
+        return {
+            ...playerData.player,
+            number: playerData.player.number || teamSquadNumber || "N/A",
+            position,
+            statistics
+        };
+    }
+    catch (error) {
+        console.error("Error fetching player details:", error);
+        throw error;
     }
 }
 
@@ -228,8 +335,9 @@ async function fetchWithRetry(url: string, options: any, retries = 3): Promise<a
             console.warn(`Retrying... ${retries} attempts left for URL: ${url}`);
             return fetchWithRetry(url, options, retries - 1);
         }
+        console.error("Final failure after retries:", error);
         throw error;
     }
 }
 
-export { getStandings, getFixtures, getPlayers, fetchTeamSquad };
+export { getStandings, getFixtures, getPlayers, fetchTeamSquad, fetchPlayerDetails };

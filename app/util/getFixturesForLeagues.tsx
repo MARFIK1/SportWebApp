@@ -3,23 +3,26 @@ import moment from "moment";
 import { AllFixtures } from "@/types";
 import { getFixtures } from "@/app/util/fetchData";
 
-export default async function getFixturesForFiveLeagues(season: number) : Promise<AllFixtures[]> {
+export default async function getFixturesForLeagues(season: number) : Promise<AllFixtures[]> {
     try {
         const allFixturesByLeague = await getFixtures(season);
-        const fixturesForFiveLeagues: AllFixtures[] = [];
+        const fixturesForLeagues: AllFixtures[] = [];
         for (const league of allFixturesByLeague) {
             if (
                 league.name === "Premier League" ||
                 league.name === "La Liga" ||
                 league.name === "Bundesliga" ||
                 league.name === "Serie A" ||
-                league.name === "Ligue 1"
+                league.name === "Ligue 1" ||
+                league.name === "UEFA Champions League" ||
+                league.name === "UEFA Europa League" ||
+                league.name === "UEFA Conference League"
             ) {
-                fixturesForFiveLeagues.push(league);
+                fixturesForLeagues.push(league);
             }
         }
         
-        const filteredFixtures: AllFixtures[] = fixturesForFiveLeagues.filter((league) => {
+        const filteredFixtures: AllFixtures[] = fixturesForLeagues.filter((league) => {
             league.fixtures = league.fixtures.filter((fixture) => {
                 return moment(fixture.fixture.date).isAfter(moment().subtract(1, "day"), "day");
             }).slice(0, 7);
