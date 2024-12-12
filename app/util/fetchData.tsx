@@ -212,6 +212,7 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
         return [];
     }
 }
+
 async function fetchPlayerDetails(playerId: string, season: number, teamSquadNumber?: number): Promise<PlayerExtended> {
     if (USE_SAMPLE) {
         return [] as unknown as PlayerExtended;

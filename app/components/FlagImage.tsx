@@ -18,17 +18,20 @@ export default function FlagImage({ countryCode, alt } : PageProps) {
             setSrc(`https://flagcdn.com/h80/${mappedCode.toLowerCase()}.png`);
         }
         else {
-            setSrc("/default-flag.png");
+            setSrc(null);
         }
     }, [countryCode])
     
+    if (!src) {
+        return null;
+    }
+
     return (
         <Image
-            src={src || "/default-flag.png"}
+            src={src}
             alt={alt}
             width={40}
             height={30}
-            onError={() => setSrc("/default-flag.png")}
             priority
         />
     )
