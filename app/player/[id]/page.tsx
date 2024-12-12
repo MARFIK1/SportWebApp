@@ -41,47 +41,43 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
     const filterStatsByPosition = (position: string, stat: any) => {
         if (position === "Goalkeeper") {
             return {
-                saves: stat.goals.saves,
-                conceded: stat.goals.conceded,
-                minutes: stat.games.minutes,
-                appearances: stat.games.appearences,
-                rating: stat.games.rating,
+                GoalSaves: stat.goals.saves,
+                GoalsConceded: stat.goals.conceded,
+                PenaltySaved: stat.penalty.saved,
             };
         }
         if (position === "Defender") {
             return {
-                tackles: stat.tackles.total,
-                interceptions: stat.tackles.interceptions,
-                blocks: stat.tackles.blocks,
-                duelsWon: stat.duels.won,
-                appearances: stat.games.appearences,
-                minutes: stat.games.minutes,
+                TotalTackles: stat.tackles.total,
+                TotalBlocks: stat.tackles.blocks,
+                Interceptions: stat.tackles.interceptions,
+                TotalDuels: stat.duels.total,
+                DuelsWon: stat.duels.won,
+                PenaltyCommited: stat.penalty.commited,
             };
         }
         if (position === "Midfielder") {
             return {
-                assists: stat.goals.assists,
-                keyPasses: stat.passes.key,
-                totalPasses: stat.passes.total,
-                duelsWon: stat.duels.won,
-                appearances: stat.games.appearences,
-                minutes: stat.games.minutes,
+                TotalPasses: stat.passes.total,
+                KeyPasses: stat.passes.key,
+                PassAccuracy: stat.passes.accuracy,
+                TotalDribbles: stat.dribbles.attempts,
+                DribblesSuccess: stat.dribbles.success,
+                DribblesPast: stat.dribbles.past,
             };
         }
         if (position === "Attacker") {
             return {
-                goals: stat.goals.total,
-                shotsOnTarget: stat.shots.on,
-                dribbles: stat.dribbles.success,
-                totalShots: stat.shots.total,
-                appearances: stat.games.appearences,
-                minutes: stat.games.minutes,
+                TotalShots: stat.shots.total,
+                ShotsOnTarget: stat.shots.on,
+                PenaltyScored: stat.penalty.scored,
+                PenaltyMissed: stat.penalty.missed,
+                TotalDribbles: stat.dribbles.attempts,
+                DribblesSuccess: stat.dribbles.success,
             };
         }
         return {
-            appearances: stat.games.appearences,
-            minutes: stat.games.minutes,
-            rating: stat.games.rating,
+            null: "N/A"
         };
     }
 
@@ -111,7 +107,7 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
                                     height={50}
                                     className="object-contain"
                                 />
-                                <p className="text-lg font-bold text-yellow-400 text-center">
+                                <p className="text-lg font-bold text-gray-300 text-center">
                                     {player.statistics[0]?.team.name || "Unknown"}
                                 </p>
                             </div>
@@ -213,15 +209,97 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
                                     </div>
                                     <div className="grid grid-cols-4 gap-4">
                                         {
-                                            Object.entries(filterStatsByPosition(player.position, stat)).map(([key, value]) => (
-                                                <div 
-                                                    key={key}
+                                            [
+                                                { label: "Matches", value: player.statistics[0]?.games.appearences },
+                                                { label: "Goals", value: player.statistics[0]?.goals.total },
+                                                { label: "Assists", value: player.statistics[0]?.goals.assists },
+                                                {
+                                                    label: "Rating",
+                                                    value: player.statistics[0]?.games.rating
+                                                        ? parseFloat(String(player.statistics[0]?.games.rating)).toFixed(2)
+                                                        : "N/A",
+                                                    className: getRatingColor(parseFloat(String(player.statistics[0]?.games.rating || 0))),
+                                                }
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className={`text-xl font-bold ${stat.className || "text-red-400"}`}>
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {
+                                            [
+                                                { label: "Appearances", value: player.statistics[0]?.games.appearences },
+                                                { label: "Lineups", value: player.statistics[0]?.games.lineups },
+                                                { label: "Minutes", value: player.statistics[0]?.games.minutes },
+                                                { label: "Substitutes In", value: player.statistics[0]?.substitutes.in },
+                                                { label: "Substitutes Out", value: player.statistics[0]?.substitutes.out },
+                                                { label: "Bench", value: player.statistics[0]?.substitutes.bench }
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className="text-xl font-bold text-yellow-400">
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {
+                                            [
+                                                { label: "Fouls Drawn", value: player.statistics[0]?.fouls.drawn },
+                                                { label: "Fouls Committed", value: player.statistics[0]?.fouls.committed },
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className="text-xl font-bold text-cyan-400">
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {
+                                            [
+                                                { label: "Yellow Cards", value: player.statistics[0]?.cards.yellow },
+                                                { label: "Yellow-Red Cards", value: player.statistics[0]?.cards.yellowred },
+                                                { label: "Red Cards", value: player.statistics[0]?.cards.red },
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className="text-xl font-bold text-cyan-400">
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {
+                                            Object.entries(filterStatsByPosition(player.position, player.statistics[0])).map(([key, value], index) => (
+                                                <div
+                                                    key={index}
+                                                    className="flex flex-col items-center"
                                                 >
                                                     <p className="text-sm text-gray-400">
                                                         {key.replace(/([A-Z])/g, " $1")}
                                                     </p>
                                                     <p className="text-xl font-bold text-green-400">
-                                                        {value}
+                                                        {value || "N/A"}
                                                     </p>
                                                 </div>
                                             ))
@@ -253,17 +331,99 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
                                             {stat.league.name}
                                         </h3>
                                     </div>
+                                    <div className="grid grid-cols-4 gap-4">
+                                        {
+                                            [
+                                                { label: "Matches", value: stat.games.appearences },
+                                                { label: "Goals", value: stat.goals.total },
+                                                { label: "Assists", value: stat.goals.assists },
+                                                {
+                                                    label: "Rating",
+                                                    value: stat.games.rating
+                                                        ? parseFloat(String(stat.games.rating)).toFixed(2)
+                                                        : "N/A",
+                                                    className: getRatingColor(parseFloat(String(stat.games.rating || 0))),
+                                                }
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className={`text-xl font-bold ${stat.className || "text-red-400"}`}>
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {
+                                            [
+                                                { label: "Appearances", value: stat.games.appearences },
+                                                { label: "Lineups", value: stat.games.lineups },
+                                                { label: "Minutes", value: stat.games.minutes },
+                                                { label: "Substitutes In", value: stat.substitutes.in },
+                                                { label: "Substitutes Out", value: stat.substitutes.out },
+                                                { label: "Bench", value: stat.substitutes.bench }
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className="text-xl font-bold text-yellow-400">
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         {
-                                            Object.entries(filterStatsByPosition(player.position, stat)).map(([key, value]) => (
-                                                <div 
-                                                    key={key}
+                                            [
+                                                { label: "Fouls Drawn", value: stat.fouls.drawn },
+                                                { label: "Fouls Committed", value: stat.fouls.committed },
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className="text-xl font-bold text-cyan-400">
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {
+                                            [
+                                                { label: "Yellow Cards", value: stat.cards.yellow },
+                                                { label: "Yellow-Red Cards", value: stat.cards.yellowred },
+                                                { label: "Red Cards", value: stat.cards.red },
+                                            ].map((stat, index) => (
+                                                <div key={index} className="flex flex-col items-center">
+                                                    <p className="text-sm text-gray-400">
+                                                        {stat.label}
+                                                    </p>
+                                                    <p className="text-xl font-bold text-cyan-400">
+                                                        {stat.value || "N/A"}
+                                                    </p>
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {
+                                            Object.entries(filterStatsByPosition(player.position, stat)).map(([key, value], index) => (
+                                                <div
+                                                    key={index}
+                                                    className="flex flex-col items-center"
                                                 >
                                                     <p className="text-sm text-gray-400">
                                                         {key.replace(/([A-Z])/g, " $1")}
                                                     </p>
                                                     <p className="text-xl font-bold text-green-400">
-                                                        {value}
+                                                        {value || "N/A"}
                                                     </p>
                                                 </div>
                                             ))
