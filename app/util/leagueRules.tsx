@@ -41,19 +41,19 @@ const leagueRules: Record<number, LeagueRules> = {
         relegation: [17, 20],
     },
     2: { // UEFA Champions League
-        championsLeague: [1, 8],
+        championsLeague: [0, 0],
         relegation: [0, 0],
         nextround: [1, 8],
         playoff: [9, 24],
     },
     3: { // UEFA Europa League
-        championsLeague: [1, 8],
+        championsLeague: [0, 0],
         relegation: [0, 0],
         nextround: [1, 8],
         playoff: [9, 24],
     },
     848: { // UEFA Conference League
-        championsLeague: [1, 8],
+        championsLeague: [0, 0],
         relegation: [0, 0],
         nextround: [1, 8],
         playoff: [9, 24],
@@ -93,8 +93,11 @@ export function getLegend(leagueId: number) : { color: string; description: stri
     if (!rules) return [];
 
     const legend = [];
-    legend.push({ color: "bg-cyan-800/60", description: "Champions League – Group Stage" });
+    const isUEFACompetition = [2, 3, 848].includes(leagueId);
 
+    if (!isUEFACompetition) {
+        legend.push({ color: "bg-cyan-800/60", description: "Champions League – Group Stage" });
+    }
     if (rules.europaLeague) {
         legend.push({ color: "bg-orange-800/60", description: "Europa League – Group Stage" });
     }
@@ -104,13 +107,14 @@ export function getLegend(leagueId: number) : { color: string; description: stri
     if (rules.relegationPlayoff) {
         legend.push({ color: "bg-yellow-600/40", description: "Relegation Play-off" });
     }
-    legend.push({ color: "bg-red-800/60", description: "Relegation" });
-
     if (rules.nextround) {
         legend.push({ color: "bg-cyan-800/60", description: "Next Round" });
     }
     if (rules.playoff) {
         legend.push({ color: "bg-orange-800/60", description: "Play-off" });
+    }
+    if (!isUEFACompetition) {
+        legend.push({ color: "bg-red-800/60", description: "Relegation" });
     }
 
     return legend;
