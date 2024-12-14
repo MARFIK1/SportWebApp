@@ -20,7 +20,7 @@ html, body {
 }
 
 .animated-div {
-    animation: slide-in 0.5s ease;
+    animation: slide-in 0.5s ease-in-out;
 }
 
 .perspective {

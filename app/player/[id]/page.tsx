@@ -99,9 +99,9 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
                             <Image
                                 src={player.photo}
                                 alt={`${player.firstname} ${player.lastname} photo`}
-                                width={200}
-                                height={200}
-                                className="rounded-full"
+                                width={178}
+                                height={178}
+                                className="rounded-full object-contain w-1/3"
                             />
                             <div className="text-3xl font-bold mt-4 text-gray-300">
                                 {`${player.firstname} ${player.lastname}`}

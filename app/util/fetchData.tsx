@@ -145,6 +145,48 @@ async function getPlayers(season: number): Promise<{ league: string; teams: { id
     return results;
 }
 
+async function getTopScorers(leagueId: number, season: number): Promise<Player[]> {
+    const url = `https://api-football-v1.p.rapidapi.com/v3/players/topscorers?league=${leagueId}&season=${season}`;
+    const options = {
+        method: 'GET',
+        headers: {
+            'x-rapidapi-key': API_KEY,
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
+        },
+        next: { revalidate: 3600 }
+    };
+
+    try {
+        const data = await fetchWithRetry(url, options);
+        return data.response.slice(0, 5);
+    }
+    catch (error) {
+        console.error(`Error fetching top scorers for league ${leagueId}:`, error);
+        return [];
+    }
+}
+
+async function getTopAssistants(leagueId: number, season: number): Promise<Player[]> {
+    const url = `https://api-football-v1.p.rapidapi.com/v3/players/topassists?league=${leagueId}&season=${season}`;
+    const options = {
+        method: 'GET',
+        headers: {
+            'x-rapidapi-key': API_KEY,
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
+        },
+        next: { revalidate: 3600 }
+    };
+
+    try {
+        const data = await fetchWithRetry(url, options);
+        return data.response.slice(0, 5);
+    }
+    catch (error) {
+        console.error(`Error fetching top assistants for league ${leagueId}:`, error);
+        return [];
+    }
+}
+
 async function fetchTeamsByLeague(leagueId: number, season: number) {
     if (USE_SAMPLE) {
         return [];
@@ -341,4 +383,4 @@ async function fetchWithRetry(url: string, options: any, retries = 3): Promise<a
     }
 }
 
-export { getStandings, getFixtures, getPlayers, fetchTeamSquad, fetchPlayerDetails };
+export { getStandings, getFixtures, getPlayers, getTopScorers, getTopAssistants, fetchTeamSquad, fetchPlayerDetails };
