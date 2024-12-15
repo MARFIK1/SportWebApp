@@ -8,7 +8,7 @@ interface PageProps {
 
 export default function LeagueMenu({ menuItems, activeTab, onTabClick } : PageProps) {
     return (
-        <div className="flex flex-col h-full p-4 gap-2 text-neutral-100 bg-gray-800">
+        <div className="flex flex-col h-full p-4 gap-2 text-neutral-100 bg-gray-800 z-50">
             <div className="flex flex-col justify-center items-center text-lg p-2 font-bold">
                 Leagues
             </div>

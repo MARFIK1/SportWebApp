@@ -2,7 +2,7 @@ import "server-only";
 import { getStandings } from "@/app/util/fetchData";
 import { Standing, Team } from "@/types";
 
-export default async function getTeams(season: number) : Promise<Team[]> {
+export default async function getSearchData(season: number) : Promise<Team[]> {
     try {
         const standings: Standing[] = await getStandings(season);
 

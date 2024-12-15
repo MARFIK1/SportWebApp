@@ -236,7 +236,6 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
         const response = await fetch(url, options);
         const data = await response.json();
         if (!data.response || !data.response[0] || !data.response[0].players) {
-            console.warn(`No players found for team ${teamId}`);
             return [];
         }
 

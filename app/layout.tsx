@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 
 import { getCurrentSeason } from "@/app/util/season";
-import getTeams from "@/app/util/getTeams";
+import getSearchData from "./util/getSearchData";
 import Navbar from "./components/Navbar/Navbar";
 
 const inter = Inter({ subsets: ["latin"] })
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children } : { children: React.ReactNode }) {
     const season = getCurrentSeason();
-    const teamsData = await getTeams(season);
+    const teamsData = await getSearchData(season);
 
     return (
         <html lang="en">

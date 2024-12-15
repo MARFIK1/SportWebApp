@@ -72,7 +72,7 @@ export default function SearchBarForm({ teamsData } : { teamsData: Team[] }) {
                 searchTerm && filteredTeams.length > 0 && showFilteredBox ? (
                     <div
                         ref={teamListRef}
-                        className="absolute top-full left-2 w-full max-w-md bg-black/80 z-20 flex flex-col"
+                        className="absolute top-full left-2 w-full max-w-md bg-black/80 z-[100] flex flex-col"
                     >
                         {
                             filteredTeams.slice(0, 10).map((standing, i) => (
