@@ -1,5 +1,5 @@
-import { getCurrentSeason } from "@/app/util/season";
-import { getStandings, getFixtures, getTopScorers, getTopAssistants } from "@/app/util/fetchData";
+import { getCurrentSeason } from "@/app/util/league/season";
+import { getStandings, getFixtures, getTopScorers, getTopAssistants } from "@/app/util/dataFetch/fetchData";
 import MainPage from "./components/home/MainPage";
 
 export default async function Home() {

@@ -2,10 +2,10 @@ import "server-only";
 import moment from "moment";
 
 import { Player, Standing, AllFixtures, PlayerExtended } from "@/types";
-import { USE_SAMPLE } from "../sampleData/useSample";
-import getStandingsSample from "../sampleData/getStandingsSample";
-import getFixturesSample from "../sampleData/getFixturesSample";
-import getPlayersSample from "../sampleData/getPlayersSample";
+import { USE_SAMPLE } from "../mockData/useSample";
+import getStandingsSample from "../mockData/getStandingsSample";
+import getFixturesSample from "../mockData/getFixturesSample";
+import getPlayersSample from "../mockData/getPlayersSample";
 
 const API_KEY = process.env.API_KEY as string;
 const leagues = [
@@ -44,7 +44,7 @@ async function getStandings(season: number): Promise<Standing[]> {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 }
+        next: { revalidate: 3600 * 60 }
     };
 
     for (const league of leagues) {
@@ -76,7 +76,7 @@ async function getFixtures(season: number): Promise<AllFixtures[]> {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 }
+        next: { revalidate: 3600 * 60 }
     };
 
     const fixturesByLeague = await Promise.all(
@@ -153,7 +153,7 @@ async function getTopScorers(leagueId: number, season: number): Promise<Player[]
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 }
+        next: { revalidate: 3600 * 60 }
     };
 
     try {
@@ -174,7 +174,7 @@ async function getTopAssistants(leagueId: number, season: number): Promise<Playe
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 }
+        next: { revalidate: 3600 * 60 }
     };
 
     try {
@@ -199,7 +199,7 @@ async function fetchTeamsByLeague(leagueId: number, season: number) {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 }
+        next: { revalidate: 3600 * 60 }
     };
 
     try {
@@ -229,7 +229,7 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 }
+        next: { revalidate: 3600 * 60 }
     };
 
     try {
@@ -266,7 +266,7 @@ async function fetchPlayerDetails(playerId: string, season: number, teamSquadNum
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 }
+        next: { revalidate: 3600 * 60 }
     };
 
     try {

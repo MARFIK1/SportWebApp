@@ -1,6 +1,6 @@
 import "server-only";
 import { Team } from "@/types";
-import { getStandings } from "@/app/util/fetchData";
+import { getStandings } from "@/app/util/dataFetch/fetchData";
 
 export default async function getTeamInfoByTeamId(id: number, season: number) : Promise<Team | undefined> {
     try {

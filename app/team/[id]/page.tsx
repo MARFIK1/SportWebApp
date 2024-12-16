@@ -2,10 +2,10 @@ import moment from "moment";
 import Image from "next/image";
 
 import type { Team, Player } from "@/types";
-import { fetchTeamSquad, getFixtures } from "@/app/util/fetchData";
-import { getCurrentSeason } from "@/app/util/season";
-import getTeamInfoByTeamId from "@/app/util/getTeamInfoByTeamId";
-import ScrollToTop from "@/app/components/ScrollToTop";
+import { fetchTeamSquad, getFixtures } from "@/app/util/dataFetch/fetchData";
+import { getCurrentSeason } from "@/app/util/league/season";
+import getTeamInfoByTeamId from "@/app/util/dataFetch/getTeamInfoByTeamId";
+import ScrollToTop from "@/app/components/common/ScrollToTop";
 import Fixtures from "./components/Fixtures";
 import Players from "./components/Players";
 

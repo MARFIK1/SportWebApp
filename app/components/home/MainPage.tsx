@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 
 import { AllFixtures, Standing } from "@/types";
-import { getRowClass, getLegend } from "../../util/leagueRules";
+import { getRowClass, getLegend } from "../../util/league/leagueRules";
 import FixturesByLeague from "./FixturesByLeague";
 import LeagueMenu from "./LeagueMenu";
 

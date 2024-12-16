@@ -2,9 +2,9 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 
-import { getCurrentSeason } from "@/app/util/season";
-import getSearchData from "./util/getSearchData";
-import Navbar from "./components/Navbar/Navbar";
+import { getCurrentSeason } from "@/app/util/league/season";
+import getSearchData from "./util/dataFetch/getSearchData";
+import Navbar from "./components/common/Navbar";
 
 const inter = Inter({ subsets: ["latin"] })
 

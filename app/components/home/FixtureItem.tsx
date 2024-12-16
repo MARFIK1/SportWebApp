@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 
 import { Fixture } from "@/types";
-import LocalTime from "../LocalTime";
+import LocalTime from "../common/LocalTime";
 
 type PageProps = {
     match: Fixture,

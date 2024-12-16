@@ -1,10 +1,10 @@
 import Image from "next/image";
 
-import { fetchPlayerDetails } from "@/app/util/fetchData";
-import { getCurrentSeason } from "@/app/util/season";
+import { fetchPlayerDetails } from "@/app/util/dataFetch/fetchData";
+import { getCurrentSeason } from "@/app/util/league/season";
 import type { PlayerExtended } from "@/types";
-import FlagImage from "@/app/components/FlagImage";
-import ScrollToTop from "@/app/components/ScrollToTop";
+import FlagImage from "@/app/components/common/FlagImage";
+import ScrollToTop from "@/app/components/common/ScrollToTop";
 
 type PageProps = {
     params: {
@@ -99,9 +99,10 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
                             <Image
                                 src={player.photo}
                                 alt={`${player.firstname} ${player.lastname} photo`}
-                                width={178}
-                                height={178}
+                                width={150}
+                                height={150}
                                 className="rounded-full object-contain w-1/3"
+                                style={{ width: "150px", height: "150px" }}
                             />
                             <div className="text-3xl font-bold mt-4 text-gray-300">
                                 {`${player.firstname} ${player.lastname}`}

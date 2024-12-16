@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 
-import { countryCodeMapping } from "../util/countryCodes";
+import { countryCodeMapping } from "../../util/helpers/countryCodes";
 
 type PageProps = {
     countryCode: string,

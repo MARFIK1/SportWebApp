@@ -1,6 +1,6 @@
 import "server-only";
 import { Fixture } from "@/types";
-import { getFixtures } from "@/app/util/fetchData";
+import { getFixtures } from "@/app/util/dataFetch/fetchData";
 
 export default async function getFixtureByFixtureId(id: number, season: number) : Promise<Fixture | undefined> {
     try {

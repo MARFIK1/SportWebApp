@@ -1,9 +1,9 @@
 import Link from "next/link";
 import Image from "next/image";
 
-import { getCurrentSeason } from "@/app/util/season";
-import LocalTime from "@/app/components/LocalTime";
-import getFixtureByFixtureId from "@/app/util/getFixtureByFixtureId";
+import { getCurrentSeason } from "@/app/util/league/season";
+import LocalTime from "@/app/components/common/LocalTime";
+import getFixtureByFixtureId from "@/app/util/dataFetch/getFixtureByFixtureId";
 
 type PageProps = {
     params: {

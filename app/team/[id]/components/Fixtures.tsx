@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 
 import { Fixture } from "@/types";
-import LocalTime from "@/app/components/LocalTime";
+import LocalTime from "@/app/components/common/LocalTime";
 
 type PageProps = {
     fixturesByTeamId: Fixture[],
