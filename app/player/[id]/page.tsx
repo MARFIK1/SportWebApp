@@ -10,9 +10,6 @@ type PageProps = {
     params: {
         id: string
     }
-    searchParams: {
-        number?: string
-    }
 }
 
 function getRatingColor(rating: number): string {
@@ -24,15 +21,12 @@ function getRatingColor(rating: number): string {
     return "text-red-500";
 }
 
-export default async function PlayerPage({ params, searchParams } : PageProps) {
-    const playerId = params.id;
-    const squadNumber = searchParams.number;
+export default async function PlayerPage({ params } : PageProps) {
     const season = getCurrentSeason();
 
     const player: PlayerExtended = await fetchPlayerDetails(
-        playerId,
-        season,
-        Number(squadNumber)
+        params.id,
+        season
     )
 
     const clubStats = player.statistics.filter((stat) => stat.team?.id && stat.league.country !== "World" || ["UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League", "Friendlies Clubs", "Premier League International Cup"].includes(stat.league.name));
@@ -91,10 +85,10 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
     }
 
     return (
-        <div className="flex flex-col items-center min-h-screen text-neutral-100 py-5">
+        <div className="flex flex-col items-center text-neutral-100 py-5">
             <ScrollToTop />
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-9xl w-full px-10">
-                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg custom-width text-center">
+                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg text-center max-h-fit">
                         <div className="flex flex-col items-center mb-6">
                             <Image
                                 src={player.photo}
@@ -196,7 +190,7 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
                             </div>
                         </div>
                     </div>
-                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg custom-width">
+                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg text-center max-h-fit">
                         <h2 className="text-2xl font-bold mb-4 text-center text-gray-300">
                             Club Statistics
                         </h2>
@@ -330,7 +324,7 @@ export default async function PlayerPage({ params, searchParams } : PageProps) {
                             ))
                         }
                     </div>
-                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg custom-width">
+                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg text-center max-h-fit">
                         <h2 className="text-2xl font-bold mb-4 text-center text-gray-300">
                             National Team Statistics
                         </h2>

@@ -324,7 +324,7 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
     }
 }
 
-async function fetchPlayerDetails(playerId: string, season: number, teamSquadNumber?: number): Promise<PlayerExtended> {
+async function fetchPlayerDetails(playerId: string, season: number): Promise<PlayerExtended> {
     if (USE_SAMPLE) {
         return [] as unknown as PlayerExtended;
     }
@@ -419,12 +419,20 @@ async function fetchPlayerDetails(playerId: string, season: number, teamSquadNum
             },
         }))
 
-        const position = statistics[0]?.games?.position || "N/A";
+        let playerNumber = playerData.player.number || "N/A";
+        if (playerNumber === "N/A") {
+            const teamId = playerData.statistics[0]?.team?.id;
+            if (teamId) {
+                const squad = await fetchTeamSquad(teamId);
+                const playerFromSquad = squad.find((p) => p.id === Number(playerId));
+                playerNumber = playerFromSquad?.number || "N/A";
+            }
+        }
 
         return {
             ...playerData.player,
-            number: playerData.player.number || teamSquadNumber || "N/A",
-            position,
+            number: playerNumber,
+            position: statistics[0]?.games?.position || "N/A",
             statistics
         };
     }

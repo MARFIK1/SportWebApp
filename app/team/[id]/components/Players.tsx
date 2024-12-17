@@ -39,11 +39,11 @@ export default function Players({ players } : { players: Player[] }) {
                                     positionPlayers.map((player) => (
                                         <Link
                                             key={player.id}
-                                            href={{ pathname: `/player/${player.id}`, query: { number: player.number }}}
+                                            href={`/player/${player.id}`}
                                             className="bg-gray-800 w-32 h-44 flex flex-col items-center justify-between p-2 rounded-lg hover:bg-gray-700 transition"
                                         >
                                             <Image
-                                                src={player.photo || "/default-logo.png"}
+                                                src={player.photo || "/default-player.png"}
                                                 alt={player.name}
                                                 width={64}
                                                 height={64}
