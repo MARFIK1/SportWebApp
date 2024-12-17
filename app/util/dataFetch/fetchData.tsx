@@ -1,7 +1,7 @@
 import "server-only";
 import moment from "moment";
 
-import { Player, Standing, AllFixtures, PlayerExtended } from "@/types";
+import { Player, Standing, AllFixtures, PlayerExtended, Fixture } from "@/types";
 import { USE_SAMPLE } from "../mockData/useSample";
 import getStandingsSample from "../mockData/getStandingsSample";
 import getFixturesSample from "../mockData/getFixturesSample";
@@ -108,6 +108,76 @@ async function getFixtures(season: number): Promise<AllFixtures[]> {
     )
 
     return fixturesByLeague;
+}
+
+export async function getFixtureDetails(fixtureId: number): Promise<Fixture | null> {
+    if (USE_SAMPLE) {
+        return null;
+    }
+
+    const url = `https://api-football-v1.p.rapidapi.com/v3/fixtures?id=${fixtureId}`;
+    const options = {
+        method: 'GET',
+        headers: {
+            'x-rapidapi-key': API_KEY,
+            'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
+        }
+    };
+
+    try {
+        const response = await fetchWithRetry(url, options);
+        const data = response.response?.[0];
+        if (!data) {
+            return null;
+        }
+
+        const fixture: Fixture = {
+            fixture: {
+                id: data.fixture.id,
+                referee: data.fixture.referee,
+                timezone: data.fixture.timezone,
+                date: data.fixture.date,
+                timestamp: data.fixture.timestamp,
+                periods: data.fixture.periods,
+                venue: {
+                    id: data.fixture.venue.id,
+                    name: data.fixture.venue.name,
+                    city: data.fixture.venue.city
+                },
+                status: data.fixture.status
+            },
+            league: data.league,
+            teams: data.teams,
+            goals: data.goals,
+            score: {
+                ...data.score,
+                penalties: data.score.penalties || data.score.penalty
+            },
+            statistics: data.statistics,
+            events: data.events?.map((event: any) => ({
+                time: event.time,
+                team: event.team,
+                player: event.player,
+                assist: event.assist,
+                type: event.type,
+                detail: event.detail
+            })),
+            lineups: data.lineups?.map((lineup: any) => ({
+                team: lineup.team,
+                formation: lineup.formation || "Unknown",
+                coach: lineup.coach || null,
+                startXI: lineup.startXI.map((player: any) => ({
+                    player: player.player
+                }))
+            }))
+        }
+
+        return fixture;
+    }
+    catch (error) {
+        console.error("Error fetching fixture details:", error);
+        return null;
+    }
 }
 
 async function getPlayers(season: number): Promise<{ league: string; teams: { id: number; name: string; players: Player[] }[] }[]> {
@@ -235,7 +305,7 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
     try {
         const response = await fetch(url, options);
         const data = await response.json();
-        if (!data.response || !data.response[0] || !data.response[0].players) {
+        if (!data.response || !data.response[0]?.players) {
             return [];
         }
 

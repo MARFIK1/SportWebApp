@@ -24,7 +24,7 @@ type Team = {
     points: number;
     goalsDiff: number;
     group: string;
-    form: string;
+    form?: string;
     status: string;
     description: string;
     all: Games;
@@ -42,6 +42,86 @@ type Games = {
         for: number;
         against: number;
     }
+}
+
+type LeagueFixtures = {
+    id: number;
+    name: string;
+    country: string;
+    logo: string;
+    flag: string;
+    season: number;
+    round: string;
+}
+
+type Teams = {
+    home: {
+        id: number;
+        name: string;
+        logo: string;
+        winner: boolean;
+        form?: string;
+    }
+    away: {
+        id: number;
+        name: string;
+        logo: string;
+        winner: boolean;
+        form?: string;
+    }
+}
+
+type Goals = {
+    home: number;
+    away: number;
+}
+
+type Score = {
+    halftime: Goals;
+    fulltime: Goals;
+    extratime: Goals;
+    penalty: Goals;
+    penalties?: Goals;
+}
+
+type Statistic = {
+    team: {
+        id: number;
+        name: string;
+        logo: string;
+    }
+    statistics: Array<{
+        type: string;
+        value: string | number | null;
+    }>
+}
+
+type Fixture = {
+    fixture: FixtureInfo;
+    league: LeagueFixtures;
+    teams: Teams;
+    goals: Goals;
+    score: Score;
+    statistics?: Statistic[];
+    events?:
+        Array<{
+            time: { elapsed: number };
+            team: { id: number; name: string };
+            player: { id: number; name: string };
+            assist?: { id: number; name: string } | null;
+            type: string;
+            detail?: string;
+        }>
+
+    lineups?:
+        Array<{
+            team: { id: number; name: string; logo: string };
+            formation: string;
+            startXI:
+                Array<{
+                    player: Player;
+                }>
+        }>
 }
 
 type FixtureInfo = {
@@ -64,51 +144,6 @@ type FixtureInfo = {
         short: string;
         elapsed: number;
     }
-}
-
-type LeagueFixtures = {
-    id: number;
-    name: string;
-    country: string;
-    logo: string;
-    flag: string;
-    season: number;
-    round: string;
-}
-
-type Teams = {
-    home: {
-        id: number;
-        name: string;
-        logo: string;
-        winner: boolean;
-    }
-    away: {
-        id: number;
-        name: string;
-        logo: string;
-        winner: boolean;
-    }
-}
-
-type Goals = {
-    home: number;
-    away: number;
-}
-
-type Score = {
-    halftime: Goals;
-    fulltime: Goals;
-    extratime: Goals;
-    penalty: Goals;
-}
-
-type Fixture = {
-    fixture: FixtureInfo;
-    league: LeagueFixtures;
-    teams: Teams;
-    goals: Goals;
-    score: Score;
 }
 
 type AllFixtures = {
