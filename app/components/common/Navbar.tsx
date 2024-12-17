@@ -1,10 +1,10 @@
 "use client";
 import { useRouter } from "next/navigation";
 
-import { Team } from "@/types";
+import { Team, Player } from "@/types";
 import SearchBarForm from "./SearchBarForm";
 
-export default function Navbar({ teamsData } : { teamsData: Team[] }) {
+export default function Navbar({ teamsData, playersData } : { teamsData: Team[], playersData: Player[] }) {
     const router = useRouter();
 
     const handleLoginClick = () => {
@@ -28,6 +28,7 @@ export default function Navbar({ teamsData } : { teamsData: Team[] }) {
             <div className="flex-1 mx-4">
                 <SearchBarForm 
                     teamsData={teamsData}
+                    playersData={playersData}
                 />
             </div>
             <div className="flex items-center">
