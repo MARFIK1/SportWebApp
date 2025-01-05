@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { generateToken } from "@/app/util/helpers/jwt";
-import pool from "@/app/util/helpers/database";
 import bcrypt from "bcryptjs";
+
+import pool from "@/app/util/helpers/database";
 
 export async function POST(req: Request) {
     try {
@@ -22,17 +22,23 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Invalid password." }, { status: 401 });
         }
 
-        const token = generateToken({ id: user.id, email: user.email, nickname: user.nickname });
-
-        return NextResponse.json({
-            message: "Login successful!",
-            user: {
-                id: user.id,
-                nickname: user.nickname,
-                email: user.email
+        return NextResponse.json(
+            {
+                message: "Login successful!",
+                user: {
+                    id: user.id,
+                    nickname: user.nickname,
+                    email: user.email,
+                    profile_picture: user.profile_picture || "/default-avatar.png",
+                    role: user.role
+                }
             },
-            token: token
-        });
+            {
+                headers: {
+                    "Set-Cookie": `user=${user.id}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600`
+                }
+            }
+        )
     }
     catch (error) {
         console.error("Error during login:", error);

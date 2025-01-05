@@ -243,4 +243,25 @@ type PlayerExtended = Player & {
     }>
 }
 
+export interface Article {
+    id: string;
+    title: string;
+    content: string;
+    image?: string;
+    tags: string[];
+    created_at: string;
+    author: string;
+    author_picture?: string;
+}
+
+export interface Comment {
+    id: string;
+    article_id: string;
+    user_id: string;
+    content: string;
+    created_at: string;
+    author: string;
+    profile_picture: string;
+}
+
 export { Standing, Team, AllFixtures, Fixture, Player, PlayerExtended };

@@ -2,26 +2,32 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-interface LoginFormProps {
-    onSwitchView: (view: "login" | "register" | "reset") => void;
-}
+import { useUser } from "@/app/util/UserContext";
 
-export default function LoginForm({ onSwitchView } : LoginFormProps) {
+export default function LoginForm({ onSwitchView } : { onSwitchView: (view: "login" | "register" | "reset") => void }) {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
+    const { setUser } = useUser();
     const router = useRouter();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-
-        const response = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+        const response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email, password })
-        });
+        })
 
         if (response.ok) {
+            const data = await response.json();
+            setUser({
+                id: data.user.id,
+                nickname: data.user.nickname,
+                email: data.user.email,
+                profile_picture: data.user.profile_picture,
+                role: data.user.role
+            })
             router.push("/profile");
         }
         else {
@@ -31,7 +37,7 @@ export default function LoginForm({ onSwitchView } : LoginFormProps) {
     }
 
     return (
-        <form 
+        <form
             onSubmit={handleSubmit}
             className="space-y-4"
         >
@@ -40,7 +46,10 @@ export default function LoginForm({ onSwitchView } : LoginFormProps) {
             </h2>
             {error && <p className="text-red-500">{error}</p>}
             <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                <label
+                    htmlFor="email"
+                    className="block text-sm font-medium text-gray-700"
+                >
                     Email
                 </label>
                 <input
@@ -54,7 +63,10 @@ export default function LoginForm({ onSwitchView } : LoginFormProps) {
                 />
             </div>
             <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                <label
+                    htmlFor="password"
+                    className="block text-sm font-medium text-gray-700"
+                >
                     Password
                 </label>
                 <input
@@ -76,15 +88,15 @@ export default function LoginForm({ onSwitchView } : LoginFormProps) {
             <div className="text-sm text-center mt-2">
                 <button
                     type="button"
-                    onClick={() => onSwitchView('register')}
+                    onClick={() => onSwitchView("register")}
                     className="text-blue-500"
                 >
                     Register
                 </button>
-                {' | '}
+                {" | "}
                 <button
                     type="button"
-                    onClick={() => onSwitchView('reset')}
+                    onClick={() => onSwitchView("reset")}
                     className="text-blue-500"
                 >
                     Forgot your password?

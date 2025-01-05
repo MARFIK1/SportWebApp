@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 
 import { getCurrentSeason } from "@/app/util/league/season";
+import { UserProvider } from "@/app/util/UserContext";
 import getSearchData from "./util/dataFetch/getSearchData";
 import Navbar from "./components/common/Navbar";
 
@@ -20,19 +21,21 @@ export default async function RootLayout({ children } : { children: React.ReactN
     return (
         <html lang="en">
             <body className={`${inter.className}`}>
-                <div className="flex h-screen">
-                    <div className="flex flex-col flex-1">
-                        <header className="bg-gray-800 w-full p-3">
-                            <Navbar
-                                teamsData={teams}
-                                playersData={players}
-                            />
-                        </header>
-                        <main className="bg-gray-800 flex-1">
-                            {children}
-                        </main>
+                <UserProvider>
+                    <div className="flex h-screen">
+                        <div className="flex flex-col flex-1">
+                            <header className="bg-gray-800 w-full p-3">
+                                <Navbar
+                                    teamsData={teams}
+                                    playersData={players}
+                                />
+                            </header>
+                            <main className="bg-gray-800 flex-1">
+                                {children}
+                            </main>
+                        </div>
                     </div>
-                </div>
+                </UserProvider>
             </body>
         </html>
     )
