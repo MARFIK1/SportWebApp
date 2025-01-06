@@ -5,6 +5,10 @@ import pool from "@/app/util/helpers/database";
 export async function GET(req: Request, { params } : { params: { id: string } }) {
     try {
         const { id } = params;
+        if (!id || id === "undefined") {
+            return NextResponse.json({ error: "Invalid article ID" }, { status: 400 });
+        }
+
         const articleResult = await pool.query(
             `SELECT articles.*, users.nickname AS author, users.profile_picture AS author_picture
             FROM articles

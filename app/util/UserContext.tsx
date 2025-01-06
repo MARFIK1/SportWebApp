@@ -1,23 +1,18 @@
 "use client";
 import { createContext, useContext, useState, ReactNode, useEffect } from "react";
+import { User } from "@/types";
 
 interface UserContextProps {
-    user: {
-        id: string;
-        nickname: string;
-        email: string;
-        profile_picture: string;
-        role: string;
-    } | null;
+    user: User | null;
     isLoading: boolean;
-    setUser: (user: UserContextProps["user"]) => void;
+    setUser: React.Dispatch<React.SetStateAction<User | null>>;
     logout: () => void;
 }
 
 const UserContext = createContext<UserContextProps | undefined>(undefined);
 
 export const UserProvider = ({ children } : { children: ReactNode }) => {
-    const [user, setUser] = useState<UserContextProps["user"]>(null);
+    const [user, setUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     const logout = async () => {

@@ -2,9 +2,11 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 
+import { useUser } from "@/app/util/UserContext";
 import { Article, Comment } from "@/types";
 
 export default function ArticlePage() {
+    const { user } = useUser();
     const [article, setArticle] = useState<Article | null>(null);
     const [comments, setComments] = useState<Comment[]>([]);
     const [newComment, setNewComment] = useState("");
@@ -77,7 +79,7 @@ export default function ArticlePage() {
                     {article.content}
                 </p>
                 <button
-                    onClick={() => router.back()}
+                    onClick={() => router.push("/blog")}
                     className="mt-6 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
                 >
                     Back to Blog
@@ -145,26 +147,30 @@ export default function ArticlePage() {
                             </p>
                         )
                     }
-                    <form
-                        onSubmit={handleCommentSubmit}
-                        className="mt-4"
-                    >
-                        <textarea
-                            value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            className="w-full px-4 py-2 border rounded-lg bg-gray-700 text-white"
-                            placeholder="Write a comment..."
-                            rows={3}
-                            required
-                        >
-                        </textarea>
-                        <button
-                            type="submit"
-                            className="mt-2 px-4 py-2 bg-blue-500 text-white rounded-lg w-full hover:bg-blue-600"
-                        >
-                            Add Comment
-                        </button>
-                    </form>
+                    {
+                        user && (
+                            <form
+                                onSubmit={handleCommentSubmit}
+                                className="mt-4"
+                            >
+                                <textarea
+                                    value={newComment}
+                                    onChange={(e) => setNewComment(e.target.value)}
+                                    className="w-full px-4 py-2 border rounded-lg bg-gray-700 text-white"
+                                    placeholder="Write a comment..."
+                                    rows={3}
+                                    required
+                                >
+                                </textarea>
+                                <button
+                                    type="submit"
+                                    className="mt-2 px-4 py-2 bg-blue-500 text-white rounded-lg w-full hover:bg-blue-600"
+                                >
+                                    Add Comment
+                                </button>
+                            </form>
+                        )
+                    }
                 </div>
             </div>
         </div>

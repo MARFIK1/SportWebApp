@@ -5,18 +5,28 @@ import { useRouter } from "next/navigation";
 import LoginForm from "../forms/LoginForm";
 import RegisterForm from "../forms/RegisterForm";
 import ResetPasswordForm from "../forms/ResetPasswordForm";
+import { useUser } from "@/app/util/UserContext";
 
 interface AuthModalProps {
     onClose: () => void;
+    initialView?: "login" | "register" | "reset";
 }
 
-export default function AuthModal({ onClose } : AuthModalProps) {
-    const [currentView, setCurrentView] = useState<"login" | "register" | "reset">("login");
+export default function AuthModal({ onClose, initialView = "login" } : AuthModalProps) {
+    const [currentView, setCurrentView] = useState<"login" | "register" | "reset">(initialView);
     const modalRef = useRef<HTMLDivElement | null>(null);
     const router = useRouter();
+    const { user } = useUser();
+    const isUserLoggedIn = !!user;
+
     const handleCloseAndRedirect = () => {
         onClose();
-        router.push("/");
+        if (isUserLoggedIn) {
+            router.push("/profile");
+        }
+        else {
+            router.push("/");
+        }
     }
 
     const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -36,7 +46,12 @@ export default function AuthModal({ onClose } : AuthModalProps) {
             >
                 {currentView === "login" && <LoginForm onSwitchView={setCurrentView} />}
                 {currentView === "register" && <RegisterForm onSwitchView={setCurrentView} />}
-                {currentView === "reset" && <ResetPasswordForm onSwitchView={setCurrentView} />}
+                {currentView === "reset" && (
+                    <ResetPasswordForm
+                        onSwitchView={setCurrentView}
+                        isUserLoggedIn={isUserLoggedIn}
+                    />
+                )}
                 <button
                     onClick={handleCloseAndRedirect}
                     className="mt-4 w-full px-4 py-2 bg-red-500 text-white rounded-lg"

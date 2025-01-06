@@ -2,10 +2,11 @@
 import { useState } from "react";
 
 interface ResetPasswordFormProps {
-    onSwitchView: (view: "login" | "register" | "reset") => void;
+    onSwitchView?: (view: "login" | "register" | "reset") => void;
+    isUserLoggedIn?: boolean;
 }
 
-export default function ResetPasswordForm({ onSwitchView } : ResetPasswordFormProps) {
+export default function ResetPasswordForm({ onSwitchView, isUserLoggedIn } : ResetPasswordFormProps) {
     const [email, setEmail] = useState("");
     const [message, setMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -57,13 +58,17 @@ export default function ResetPasswordForm({ onSwitchView } : ResetPasswordFormPr
                 Send reset link
             </button>
             <div className="text-sm text-center mt-2">
-                <button
-                    type="button"
-                    onClick={() => onSwitchView('login')}
-                    className="text-blue-500"
-                >
-                    Back to login
-                </button>
+                {
+                    !isUserLoggedIn && onSwitchView && (
+                        <button
+                            type="button"
+                            onClick={() => onSwitchView("login")}
+                            className="text-blue-500"
+                        >
+                            Back to login
+                        </button>
+                    )
+                }
             </div>
         </div>
     )

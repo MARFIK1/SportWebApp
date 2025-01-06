@@ -252,6 +252,7 @@ export interface Article {
     created_at: string;
     author: string;
     author_picture?: string;
+    status: string;
 }
 
 export interface Comment {
@@ -262,6 +263,15 @@ export interface Comment {
     created_at: string;
     author: string;
     profile_picture: string;
+    article_title: string;
+}
+
+export interface User {
+    id: string;
+    nickname: string;
+    email: string;
+    profile_picture: string;
+    role: string;
 }
 
 export { Standing, Team, AllFixtures, Fixture, Player, PlayerExtended };

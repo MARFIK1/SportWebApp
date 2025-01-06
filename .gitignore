@@ -37,3 +37,6 @@ next-env.d.ts
 
 # user uploads
 /public/uploads/
+
+# user avatars
+/public/avatars/
