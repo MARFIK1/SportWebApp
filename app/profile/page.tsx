@@ -14,7 +14,7 @@ export default function ProfilePage() {
     const [error, setError] = useState<string | null>(null);
     const [articlesPage, setArticlesPage] = useState(1);
     const [commentsPage, setCommentsPage] = useState(1);
-    const itemsPerPage = 4;
+    const itemsPerPage = 3;
     const [sortArticlesAsc, setSortArticlesAsc] = useState(false);
     const [sortCommentsAsc, setSortCommentsAsc] = useState(false);
     const router = useRouter();
@@ -22,6 +22,11 @@ export default function ProfilePage() {
     const [allArticles, setAllArticles] = useState<Article[]>([]);
     const [allComments, setAllComments] = useState<Comment[]>([]);
     const [loadingAdminData, setLoadingAdminData] = useState(false);
+    const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
+    const [activeFilter, setActiveFilter] = useState<"all" | "pending" | "approved" | "rejected">("pending");
+    const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+    const [rejectComment, setRejectComment] = useState("");
+    const [currentArticleId, setCurrentArticleId] = useState<string | null>(null);
 
     useEffect(() => {
         if (userLoading) return;
@@ -65,12 +70,14 @@ export default function ProfilePage() {
         setLoadingAdminData(true);
         try {
             const articlesRes = await fetch("/api/admin/articles");
-            const commentsRes = await fetch("/api/admin/comments");
-            if (articlesRes.ok && commentsRes.ok) {
+            if (articlesRes.ok) {
                 const articlesData = await articlesRes.json();
-                const commentsData = await commentsRes.json();
-                setAllArticles(articlesData.articles || []);
-                setAllComments(commentsData.comments || []);
+                const mappedArticles = articlesData.articles.map((article: Article) => ({
+                    ...article,
+                    status: String(article.status) as "pending" | "approved" | "rejected"
+                }))
+                setAllArticles(mappedArticles);
+                setFilteredArticles(mappedArticles.filter((article: Article) => article.status === "pending"));
             }
         }
         catch (err) {
@@ -205,6 +212,79 @@ export default function ProfilePage() {
         }
     }
 
+    const updateArticleStatus = async (articleId: string, status: "pending" | "approved" | "rejected", comment?: string) => {
+        try {
+            const res = await fetch(`/api/admin/articles/${articleId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status, admin_comment: comment })
+            })
+    
+            if (res.ok) {
+                setAllArticles((prev) =>
+                    prev.map((article) =>
+                        article.id === articleId ? { ...article, status, admin_comment: comment } : article
+                    )
+                )
+                setFilteredArticles((prev) =>
+                    prev.filter((article) => article.id !== articleId)
+                )
+            }
+            else {
+                console.error("Failed to update article status");
+            }
+        }
+        catch (err) {
+            console.error("Error updating article status:", err);
+        }
+    }
+
+    const filterArticles = (status: "all" | "pending" | "approved" | "rejected") => {
+        setActiveFilter(status);
+        if (status === "all") {
+            setFilteredArticles(allArticles);
+        }
+        else {
+            setFilteredArticles(allArticles.filter((article) => article.status === status));
+        }
+    }
+    
+    const handleRejectArticle = async () => {
+        if (!currentArticleId) return;
+
+        try {
+            const res = await fetch(`/api/admin/articles/${currentArticleId}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "rejected", admin_comment: rejectComment })
+            })
+
+            if (res.ok) {
+                setAllArticles((prev) =>
+                    prev.map((article) =>
+                        article.id === currentArticleId ? { ...article, status: "rejected" } : article
+                    )
+                )
+                setFilteredArticles((prev) =>
+                    prev.filter((article) => article.id !== currentArticleId)
+                )
+                setIsRejectModalOpen(false);
+                setRejectComment("");
+            }
+            else {
+                console.error("Failed to reject article");
+            }
+        }
+        catch (err) {
+            console.error("Error rejecting article:", err);
+        }
+    }
+
+    const openRejectModal = (articleId: string) => {
+        setCurrentArticleId(articleId);
+        setIsRejectModalOpen(true);
+    }
+
     const toggleSortArticles = () => {
         const newOrder = !sortArticlesAsc;
         setSortArticlesAsc(newOrder);
@@ -235,7 +315,7 @@ export default function ProfilePage() {
     return (
         <div className="container mx-auto p-4 text-gray-200">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[600px]">
+                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px]">
                     <div className="flex flex-col items-center space-y-4">
                         <label
                             htmlFor="avatar-upload"
@@ -301,7 +381,38 @@ export default function ProfilePage() {
                         }
                     </div>
                 </div>
-                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[600px] flex flex-col">
+                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px] flex flex-col">
+                    {
+                        isAdminView && (
+                            <div className="flex justify-around mb-4">
+                                {
+                                    ["all", "pending", "approved", "rejected"].map((filter) => (
+                                        <button
+                                            key={filter}
+                                            onClick={() =>
+                                                filterArticles(
+                                                    filter as "all" | "pending" | "approved" | "rejected"
+                                                )
+                                            }
+                                            className={`px-4 py-2 rounded ${
+                                                activeFilter === filter
+                                                    ? filter === "pending"
+                                                        ? "bg-yellow-500 text-black"
+                                                        : filter === "approved"
+                                                        ? "bg-green-500 text-white"
+                                                        : filter === "rejected"
+                                                        ? "bg-red-500 text-white"
+                                                        : "bg-blue-500 text-white"
+                                                    : "bg-gray-600 hover:bg-gray-500 text-gray-300"
+                                            }`}
+                                        >
+                                            {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                                        </button>
+                                    ))
+                                }
+                            </div>
+                        )
+                    }
                     <div className="flex justify-between items-center">
                         <h2 className="text-2xl font-bold">
                             {isAdminView ? "All Articles" : "Your Articles"}
@@ -311,13 +422,15 @@ export default function ProfilePage() {
                                 if (isAdminView) {
                                     const newOrder = !sortArticlesAsc;
                                     setSortArticlesAsc(newOrder);
-                                    setAllArticles((prev) =>
+                                    setFilteredArticles((prev) =>
                                         [...prev].sort((a, b) =>
                                             newOrder
-                                                ? new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                                                : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                                                ? new Date(a.created_at).getTime() -
+                                                new Date(b.created_at).getTime()
+                                                : new Date(b.created_at).getTime() -
+                                                new Date(a.created_at).getTime()
                                         )
-                                    );
+                                    )
                                 }
                                 else {
                                     toggleSortArticles();
@@ -328,28 +441,82 @@ export default function ProfilePage() {
                             Sort {sortArticlesAsc ? "Ascending" : "Descending"}
                         </button>
                     </div>
-                    <div className="flex-grow">
+                    <div className="flex-grow overflow-y-auto">
                         {
-                            (isAdminView ? paginate(allArticles, articlesPage) : paginate(articles, articlesPage)).map(
-                                (article) => (
+                            isAdminView && filteredArticles.length === 0 ? (
+                                <p className="text-center text-gray-400 mt-10">
+                                    No articles available in this category.
+                                </p>
+                            ) : (
+                                (isAdminView
+                                    ? paginate(filteredArticles, articlesPage)
+                                    : paginate(articles, articlesPage)
+                                ).map((article) => (
                                     <div
                                         key={article.id}
-                                        className="mt-4"
+                                        className="mt-4 border-b border-gray-600 pb-4"
                                     >
-                                        <a
-                                            href={`/blog/${article.id}`}
-                                            className="text-blue-400 hover:underline text-lg"
+                                        <h3
+                                            className={`text-xl font-bold ${
+                                                (isAdminView && (article.status === "approved" || article.status === "pending")) ||
+                                                (!isAdminView && article.status === "approved")
+                                                    ? "text-blue-400 hover:underline cursor-pointer"
+                                                    : "text-gray-400"
+                                            }`}
+                                            onClick={() => {
+                                                if (
+                                                    (isAdminView && (article.status === "approved" || article.status === "pending")) ||
+                                                    (!isAdminView && article.status === "approved")
+                                                ) {
+                                                    router.push(`/blog/${article.id}`);
+                                                }
+                                            }}
                                         >
                                             {article.title}
-                                        </a>
-                                        <p className="text-sm text-gray-400">
+                                        </h3>
+                                        <p
+                                            className={`text-sm ${
+                                                article.status === "pending"
+                                                    ? "text-yellow-500"
+                                                    : article.status === "approved"
+                                                    ? "text-green-500"
+                                                    : "text-red-500"
+                                            }`}
+                                        >
                                             Status: {article.status}
                                         </p>
-                                        <p className="text-xs text-gray-500">
+                                        {
+                                            article.status === "rejected" && article.admin_comment && (
+                                                <p className="text-sm text-red-400">
+                                                    Reason: {article.admin_comment}
+                                                </p>
+                                            )
+                                        }
+                                        <p className="text-sm text-gray-400">
                                             Created: {new Date(article.created_at).toLocaleString()}
                                         </p>
+                                        {
+                                            isAdminView && (
+                                                <div className="flex space-x-4 mt-2">
+                                                    <button
+                                                        onClick={() => {
+                                                            updateArticleStatus(article.id, "approved");
+                                                        }}
+                                                        className="px-4 py-2 bg-green-500 hover:bg-green-400 text-white rounded"
+                                                    >
+                                                        Approve
+                                                    </button>
+                                                    <button
+                                                        onClick={() => openRejectModal(article.id)}
+                                                        className="px-4 py-2 bg-red-500 hover:bg-red-400 text-white rounded"
+                                                    >
+                                                        Reject
+                                                    </button>
+                                                </div>
+                                            )
+                                        }
                                     </div>
-                                )
+                                ))
                             )
                         }
                     </div>
@@ -357,13 +524,13 @@ export default function ProfilePage() {
                         {
                             renderPagination(
                                 articlesPage,
-                                isAdminView ? allArticles.length : articles.length,
+                                isAdminView ? filteredArticles.length : articles.length,
                                 setArticlesPage
                             )
                         }
                     </div>
                 </div>
-                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[600px] flex flex-col">
+                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px] flex flex-col">
                     <div className="flex justify-between items-center">
                         <h2 className="text-2xl font-bold">
                             {isAdminView ? "All Comments" : "Your Comments"}
@@ -376,8 +543,10 @@ export default function ProfilePage() {
                                     setAllComments((prev) =>
                                         [...prev].sort((a, b) =>
                                             newOrder
-                                                ? new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                                                : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                                                ? new Date(a.created_at).getTime() -
+                                                new Date(b.created_at).getTime()
+                                                : new Date(b.created_at).getTime() -
+                                                new Date(a.created_at).getTime()
                                         )
                                     );
                                 }
@@ -390,55 +559,50 @@ export default function ProfilePage() {
                             Sort {sortCommentsAsc ? "Ascending" : "Descending"}
                         </button>
                     </div>
-                    <div className="flex-grow">
+                    <div className="flex-grow overflow-y-auto">
                         {
-                            (isAdminView ? paginate(allComments, commentsPage) : paginate(comments, commentsPage)).map(
-                                (comment) => (
-                                    <div
-                                        key={comment.id}
-                                        className="mt-4"
-                                    >
-                                        <p className="text-gray-300">
-                                            {comment.content}
-                                        </p>
-                                        {
-                                            isAdminView && (
-                                                <p className="text-sm text-gray-400">
-                                                    <span className="font-bold">
-                                                        By: {comment.author || "Unknown User"}
-                                                    </span>
-                                                </p>
+                            (isAdminView
+                                ? paginate(allComments, commentsPage)
+                                : paginate(comments, commentsPage)
+                            ).map((comment) => (
+                                <div
+                                    key={comment.id}
+                                    className="mt-4"
+                                >
+                                    <p className="text-gray-300">
+                                        {comment.content}
+                                    </p>
+                                    {
+                                        isAdminView && (
+                                            <p className="text-sm text-gray-400">
+                                                <span className="font-bold">
+                                                    By: {comment.author}
+                                                </span>
+                                            </p>
+                                        )
+                                    }
+                                    <p className="text-sm text-gray-400">
+                                        On:{" "}
+                                            {
+                                            comment.article_id ? (
+                                                <a
+                                                    href={`/blog/${comment.article_id}`}
+                                                    className="text-blue-400 hover:underline"
+                                                >
+                                                    {comment.article_title || "Unknown Article"}
+                                                </a>
+                                            ) : (
+                                                <span className="text-gray-500">
+                                                    Article not available
+                                                </span>
                                             )
                                         }
-                                        <p className="text-sm text-gray-400">
-                                            On:{" "}
-                                            {
-                                                comment.article_id ? (
-                                                    comment.article_title ? (
-                                                        <a
-                                                            href={`/blog/${comment.article_id}`}
-                                                            className="text-blue-400 hover:underline"
-                                                        >
-                                                            {comment.article_title}
-                                                        </a>
-                                                    ) : (
-                                                        <span className="text-gray-500">
-                                                            Article not available
-                                                        </span>
-                                                    )
-                                                ) : (
-                                                    <span className="text-gray-500">
-                                                        Article not available
-                                                    </span>
-                                                )
-                                            }
-                                        </p>
-                                        <p className="text-xs text-gray-500">
-                                            Created: {new Date(comment.created_at).toLocaleString()}
-                                        </p>
-                                    </div>
-                                )
-                            )
+                                    </p>
+                                    <p className="text-xs text-gray-500">
+                                        Created: {new Date(comment.created_at).toLocaleString()}
+                                    </p>
+                                </div>
+                            ))
                         }
                     </div>
                     <div className="mt-4">
@@ -451,6 +615,37 @@ export default function ProfilePage() {
                         }
                     </div>
                 </div>
+                {
+                    isRejectModalOpen && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
+                            <div className="bg-gray-800 p-6 rounded-lg w-96">
+                                <h2 className="text-xl font-bold text-white mb-4">
+                                    Reject Article
+                                </h2>
+                                <textarea
+                                    value={rejectComment}
+                                    onChange={(e) => setRejectComment(e.target.value)}
+                                    placeholder="Enter rejection comment (optional)"
+                                    className="w-full p-2 border border-gray-600 rounded bg-gray-700 text-white mb-4"
+                                />
+                                <div className="flex justify-end space-x-4">
+                                    <button
+                                        onClick={() => setIsRejectModalOpen(false)}
+                                        className="px-4 py-2 bg-gray-500 hover:bg-gray-400 text-white rounded"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleRejectArticle}
+                                        className="px-4 py-2 bg-red-500 hover:bg-red-400 text-white rounded"
+                                    >
+                                        Reject
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
             </div>
         </div>
     )
