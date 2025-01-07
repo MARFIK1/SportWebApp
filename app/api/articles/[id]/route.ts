@@ -9,6 +9,23 @@ export async function GET(req: Request, { params } : { params: { id: string } })
             return NextResponse.json({ error: "Invalid article ID" }, { status: 400 });
         }
 
+        const cookieHeader = req.headers.get("cookie");
+        const userCookie = cookieHeader?.split("; ").find((c) => c.startsWith("user="));
+        const userId = userCookie?.split("=")[1];
+
+        if (!userId) {
+            return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+        }
+
+        const userQuery = await pool.query(
+            "SELECT id, role FROM users WHERE id = $1",
+            [userId]
+        )
+        const user = userQuery.rows[0];
+        if (!user) {
+            return NextResponse.json({ error: "User not found" }, { status: 404 });
+        }
+
         const articleResult = await pool.query(
             `SELECT articles.*, users.nickname AS author, users.profile_picture AS author_picture
             FROM articles
@@ -22,28 +39,32 @@ export async function GET(req: Request, { params } : { params: { id: string } })
         }
 
         const article = articleResult.rows[0];
-        const commentsResult = await pool.query(`
-            SELECT 
-                comments.id, 
-                comments.content, 
-                comments.created_at, 
-                users.nickname AS author, 
-                users.profile_picture 
-            FROM comments 
-            JOIN users ON comments.user_id = users.id 
-            WHERE article_id = $1 
-            ORDER BY comments.created_at DESC
-        `, [id])
-        const comments = commentsResult.rows;
+        if (user.role === "admin" || article.user_id === user.id) {
+            const commentsResult = await pool.query(`
+                SELECT 
+                    comments.id, 
+                    comments.content, 
+                    comments.created_at, 
+                    users.nickname AS author, 
+                    users.profile_picture 
+                FROM comments 
+                JOIN users ON comments.user_id = users.id 
+                WHERE article_id = $1 
+                ORDER BY comments.created_at DESC
+            `, [id])
+            const comments = commentsResult.rows;
 
-        return NextResponse.json({
-            article: {
-                ...article,
-                author: article.author,
-                author_picture: article.author_picture
-            },
-            comments
-        })
+            return NextResponse.json({
+                article: {
+                    ...article,
+                    author: article.author,
+                    author_picture: article.author_picture,
+                },
+                comments
+            })
+        }
+
+        return NextResponse.json({ error: "Unauthorized access" }, { status: 403 });
     }
     catch (error) {
         console.error("Error fetching article details:", error);

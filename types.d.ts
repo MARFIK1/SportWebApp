@@ -252,7 +252,8 @@ export interface Article {
     created_at: string;
     author: string;
     author_picture?: string;
-    status: string;
+    status: "pending" | "approved" | "rejected";
+    admin_comment?: string;
 }
 
 export interface Comment {

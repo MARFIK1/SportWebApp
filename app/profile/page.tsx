@@ -14,10 +14,14 @@ export default function ProfilePage() {
     const [error, setError] = useState<string | null>(null);
     const [articlesPage, setArticlesPage] = useState(1);
     const [commentsPage, setCommentsPage] = useState(1);
-    const itemsPerPage = 5;
+    const itemsPerPage = 4;
     const [sortArticlesAsc, setSortArticlesAsc] = useState(false);
     const [sortCommentsAsc, setSortCommentsAsc] = useState(false);
     const router = useRouter();
+    const [isAdminView, setIsAdminView] = useState(false);
+    const [allArticles, setAllArticles] = useState<Article[]>([]);
+    const [allComments, setAllComments] = useState<Comment[]>([]);
+    const [loadingAdminData, setLoadingAdminData] = useState(false);
 
     useEffect(() => {
         if (userLoading) return;
@@ -56,6 +60,31 @@ export default function ProfilePage() {
         }
         fetchActivity();
     }, [user, userLoading, router]);
+
+    const fetchAdminData = async () => {
+        setLoadingAdminData(true);
+        try {
+            const articlesRes = await fetch("/api/admin/articles");
+            const commentsRes = await fetch("/api/admin/comments");
+            if (articlesRes.ok && commentsRes.ok) {
+                const articlesData = await articlesRes.json();
+                const commentsData = await commentsRes.json();
+                setAllArticles(articlesData.articles || []);
+                setAllComments(commentsData.comments || []);
+            }
+        }
+        catch (err) {
+            console.error("Error fetching admin data:", err);
+        }
+        finally {
+            setLoadingAdminData(false);
+        }
+    }
+    
+    const toggleAdminView = () => {
+        if (!isAdminView) fetchAdminData();
+        setIsAdminView(!isAdminView);
+    }
 
     const paginate = (items: any[], page: number) => items.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
@@ -260,15 +289,40 @@ export default function ProfilePage() {
                         >
                             Reset Password
                         </button>
+                        {
+                            user?.role === "admin" && (
+                                <button
+                                    onClick={toggleAdminView}
+                                    className="bg-green-500 hover:bg-green-600 px-4 py-2 text-white rounded-lg mt-4"
+                                >
+                                    Switch to {isAdminView ? "User View" : "Admin View"}
+                                </button>
+                            )
+                        }
                     </div>
                 </div>
                 <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[600px] flex flex-col">
                     <div className="flex justify-between items-center">
                         <h2 className="text-2xl font-bold">
-                            Your Articles
+                            {isAdminView ? "All Articles" : "Your Articles"}
                         </h2>
                         <button
-                            onClick={toggleSortArticles}
+                            onClick={() => {
+                                if (isAdminView) {
+                                    const newOrder = !sortArticlesAsc;
+                                    setSortArticlesAsc(newOrder);
+                                    setAllArticles((prev) =>
+                                        [...prev].sort((a, b) =>
+                                            newOrder
+                                                ? new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                                                : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                                        )
+                                    );
+                                }
+                                else {
+                                    toggleSortArticles();
+                                }
+                            }}
                             className="text-sm bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
                         >
                             Sort {sortArticlesAsc ? "Ascending" : "Descending"}
@@ -276,38 +330,61 @@ export default function ProfilePage() {
                     </div>
                     <div className="flex-grow">
                         {
-                            paginate(articles, articlesPage).map((article) => (
-                                <div
-                                    key={article.id}
-                                    className="mt-4"
-                                >
-                                    <a
-                                        href={`/blog/${article.id}`}
-                                        className="text-blue-400 hover:underline text-lg"
+                            (isAdminView ? paginate(allArticles, articlesPage) : paginate(articles, articlesPage)).map(
+                                (article) => (
+                                    <div
+                                        key={article.id}
+                                        className="mt-4"
                                     >
-                                        {article.title}
-                                    </a>
-                                    <p className="text-sm text-gray-400">
-                                        Status: {article.status}
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                        Created: {new Date(article.created_at).toLocaleString()}
-                                    </p>
-                                </div>
-                            ))
+                                        <a
+                                            href={`/blog/${article.id}`}
+                                            className="text-blue-400 hover:underline text-lg"
+                                        >
+                                            {article.title}
+                                        </a>
+                                        <p className="text-sm text-gray-400">
+                                            Status: {article.status}
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            Created: {new Date(article.created_at).toLocaleString()}
+                                        </p>
+                                    </div>
+                                )
+                            )
                         }
                     </div>
                     <div className="mt-4">
-                        {renderPagination(articlesPage, articles.length, setArticlesPage)}
+                        {
+                            renderPagination(
+                                articlesPage,
+                                isAdminView ? allArticles.length : articles.length,
+                                setArticlesPage
+                            )
+                        }
                     </div>
                 </div>
                 <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[600px] flex flex-col">
                     <div className="flex justify-between items-center">
                         <h2 className="text-2xl font-bold">
-                            Your Comments
+                            {isAdminView ? "All Comments" : "Your Comments"}
                         </h2>
                         <button
-                            onClick={toggleSortComments}
+                            onClick={() => {
+                                if (isAdminView) {
+                                    const newOrder = !sortCommentsAsc;
+                                    setSortCommentsAsc(newOrder);
+                                    setAllComments((prev) =>
+                                        [...prev].sort((a, b) =>
+                                            newOrder
+                                                ? new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                                                : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                                        )
+                                    );
+                                }
+                                else {
+                                    toggleSortComments();
+                                }
+                            }}
                             className="text-sm bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
                         >
                             Sort {sortCommentsAsc ? "Ascending" : "Descending"}
@@ -315,46 +392,63 @@ export default function ProfilePage() {
                     </div>
                     <div className="flex-grow">
                         {
-                            paginate(comments, commentsPage).map((comment) => (
-                                <div
-                                    key={comment.id}
-                                    className="mt-4"
-                                >
-                                    <p className="text-gray-300">
-                                        {comment.content}
-                                    </p>
-                                    <p className="text-sm text-gray-400">
-                                        On:{" "}
+                            (isAdminView ? paginate(allComments, commentsPage) : paginate(comments, commentsPage)).map(
+                                (comment) => (
+                                    <div
+                                        key={comment.id}
+                                        className="mt-4"
+                                    >
+                                        <p className="text-gray-300">
+                                            {comment.content}
+                                        </p>
                                         {
-                                            comment.article_id ? (
-                                                comment.article_title ? (
-                                                    <a
-                                                        href={`/blog/${comment.article_id}`}
-                                                        className="text-blue-400 hover:underline"
-                                                    >
-                                                        {comment.article_title}
-                                                    </a>
+                                            isAdminView && (
+                                                <p className="text-sm text-gray-400">
+                                                    <span className="font-bold">
+                                                        By: {comment.author || "Unknown User"}
+                                                    </span>
+                                                </p>
+                                            )
+                                        }
+                                        <p className="text-sm text-gray-400">
+                                            On:{" "}
+                                            {
+                                                comment.article_id ? (
+                                                    comment.article_title ? (
+                                                        <a
+                                                            href={`/blog/${comment.article_id}`}
+                                                            className="text-blue-400 hover:underline"
+                                                        >
+                                                            {comment.article_title}
+                                                        </a>
+                                                    ) : (
+                                                        <span className="text-gray-500">
+                                                            Article not available
+                                                        </span>
+                                                    )
                                                 ) : (
                                                     <span className="text-gray-500">
                                                         Article not available
                                                     </span>
                                                 )
-                                            ) : (
-                                                <span className="text-gray-500">
-                                                    Article not available
-                                                </span>
-                                            )
-                                        }
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                        Created: {new Date(comment.created_at).toLocaleString()}
-                                    </p>
-                                </div>
-                            ))
+                                            }
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            Created: {new Date(comment.created_at).toLocaleString()}
+                                        </p>
+                                    </div>
+                                )
+                            )
                         }
                     </div>
                     <div className="mt-4">
-                        {renderPagination(commentsPage, comments.length, setCommentsPage)}
+                        {
+                            renderPagination(
+                                commentsPage,
+                                isAdminView ? allComments.length : comments.length,
+                                setCommentsPage
+                            )
+                        }
                     </div>
                 </div>
             </div>
