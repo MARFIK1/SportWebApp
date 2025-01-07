@@ -273,6 +273,8 @@ export interface User {
     email: string;
     profile_picture: string;
     role: string;
+    first_name: string;
+    last_name: string;
 }
 
 export { Standing, Team, AllFixtures, Fixture, Player, PlayerExtended };

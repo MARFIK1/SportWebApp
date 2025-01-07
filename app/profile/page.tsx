@@ -27,6 +27,9 @@ export default function ProfilePage() {
     const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
     const [rejectComment, setRejectComment] = useState("");
     const [currentArticleId, setCurrentArticleId] = useState<string | null>(null);
+    const [firstName, setFirstName] = useState(user?.first_name || "");
+    const [lastName, setLastName] = useState(user?.last_name || "");
+    const [isEditingName, setIsEditingName] = useState(false);
 
     useEffect(() => {
         if (userLoading) return;
@@ -69,7 +72,11 @@ export default function ProfilePage() {
     const fetchAdminData = async () => {
         setLoadingAdminData(true);
         try {
-            const articlesRes = await fetch("/api/admin/articles");
+            const [articlesRes, commentsRes] = await Promise.all([
+                fetch("/api/admin/articles"),
+                fetch("/api/admin/comments")
+            ])
+
             if (articlesRes.ok) {
                 const articlesData = await articlesRes.json();
                 const mappedArticles = articlesData.articles.map((article: Article) => ({
@@ -78,6 +85,11 @@ export default function ProfilePage() {
                 }))
                 setAllArticles(mappedArticles);
                 setFilteredArticles(mappedArticles.filter((article: Article) => article.status === "pending"));
+            }
+    
+            if (commentsRes.ok) {
+                const commentsData = await commentsRes.json();
+                setAllComments(commentsData.comments);
             }
         }
         catch (err) {
@@ -212,6 +224,38 @@ export default function ProfilePage() {
         }
     }
 
+    const handleSaveName = async () => {
+        try {
+            const res = await fetch("/api/users/update-name", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ first_name: firstName, last_name: lastName })
+            })
+    
+            if (res.ok) {
+                const updatedUser = await res.json();
+                setUser((prev: User | null): User | null => {
+                    if (prev) {
+                        return {
+                            ...prev,
+                            first_name: updatedUser.first_name,
+                            last_name: updatedUser.last_name
+                        }
+                    }
+                    return prev;
+                })
+    
+                setIsEditingName(false);
+            }
+            else {
+                console.error("Failed to update name");
+            }
+        }
+        catch (err) {
+            console.error("Error updating name:", err);
+        }
+    }
+
     const updateArticleStatus = async (articleId: string, status: "pending" | "approved" | "rejected", comment?: string) => {
         try {
             const res = await fetch(`/api/admin/articles/${articleId}/status`, {
@@ -283,6 +327,25 @@ export default function ProfilePage() {
     const openRejectModal = (articleId: string) => {
         setCurrentArticleId(articleId);
         setIsRejectModalOpen(true);
+    }
+
+    const deleteComment = async (commentId: string) => {
+        try {
+            const res = await fetch(`/api/admin/comments/${commentId}`, {
+                method: "DELETE"
+            })
+    
+            if (res.ok) {
+                setAllComments((prev) => prev.filter((comment) => comment.id !== commentId));
+                setComments((prev) => prev.filter((comment) => comment.id !== commentId));
+            }
+            else {
+                console.error("Failed to delete comment");
+            }
+        }
+        catch (err) {
+            console.error("Error deleting comment:", err);
+        }
     }
 
     const toggleSortArticles = () => {
@@ -363,6 +426,57 @@ export default function ProfilePage() {
                         <h2 className="text-xl font-bold">
                             Account Settings
                         </h2>
+                        <div className="mt-4">
+                            <label className="block text-sm text-gray-400">
+                                First Name
+                            </label>
+                            <input
+                                type="text"
+                                value={firstName}
+                                onChange={(e) => setFirstName(e.target.value)}
+                                disabled={!isEditingName}
+                                className={`px-4 py-2 border rounded-lg w-full ${
+                                    isEditingName
+                                        ? "bg-gray-700 text-white border-gray-600"
+                                        : "bg-gray-800 text-gray-500 border-gray-700"
+                                }`}
+                            />
+                        </div>
+                        <div className="mt-4">
+                            <label className="block text-sm text-gray-400">
+                                Last Name
+                            </label>
+                            <input
+                                type="text"
+                                value={lastName}
+                                onChange={(e) => setLastName(e.target.value)}
+                                disabled={!isEditingName}
+                                className={`px-4 py-2 border rounded-lg w-full ${
+                                    isEditingName
+                                        ? "bg-gray-700 text-white border-gray-600"
+                                        : "bg-gray-800 text-gray-500 border-gray-700"
+                                }`}
+                            />
+                        </div>
+                        <div className="flex space-x-4 mt-4">
+                            {
+                                isEditingName ? (
+                                    <button
+                                        onClick={handleSaveName}
+                                        className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg"
+                                    >
+                                        Save
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={() => setIsEditingName(true)}
+                                        className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg"
+                                    >
+                                        Edit
+                                    </button>
+                                )
+                            }
+                        </div>
                         <button
                             onClick={() => router.push("/user/login?view=reset")}
                             className="bg-red-500 hover:bg-red-600 px-4 py-2 text-white rounded-lg mt-4"
@@ -371,12 +485,14 @@ export default function ProfilePage() {
                         </button>
                         {
                             user?.role === "admin" && (
-                                <button
-                                    onClick={toggleAdminView}
-                                    className="bg-green-500 hover:bg-green-600 px-4 py-2 text-white rounded-lg mt-4"
-                                >
-                                    Switch to {isAdminView ? "User View" : "Admin View"}
-                                </button>
+                                <div className="mt-4">
+                                    <button
+                                        onClick={toggleAdminView}
+                                        className="bg-green-500 hover:bg-green-600 px-4 py-2 text-white rounded-lg"
+                                    >
+                                        Switch to {isAdminView ? "User View" : "Admin View"}
+                                    </button>
+                                </div>
                             )
                         }
                     </div>
@@ -561,48 +677,66 @@ export default function ProfilePage() {
                     </div>
                     <div className="flex-grow overflow-y-auto">
                         {
-                            (isAdminView
-                                ? paginate(allComments, commentsPage)
-                                : paginate(comments, commentsPage)
-                            ).map((comment) => (
-                                <div
-                                    key={comment.id}
-                                    className="mt-4"
-                                >
-                                    <p className="text-gray-300">
-                                        {comment.content}
-                                    </p>
-                                    {
-                                        isAdminView && (
-                                            <p className="text-sm text-gray-400">
-                                                <span className="font-bold">
-                                                    By: {comment.author}
-                                                </span>
-                                            </p>
-                                        )
-                                    }
-                                    <p className="text-sm text-gray-400">
-                                        On:{" "}
-                                            {
-                                            comment.article_id ? (
-                                                <a
-                                                    href={`/blog/${comment.article_id}`}
-                                                    className="text-blue-400 hover:underline"
-                                                >
-                                                    {comment.article_title || "Unknown Article"}
-                                                </a>
-                                            ) : (
-                                                <span className="text-gray-500">
-                                                    Article not available
-                                                </span>
+                            isAdminView && allComments.length === 0 ? (
+                                <p className="text-center text-gray-400 mt-10">
+                                    No comments available.
+                                </p>
+                            ) : (
+                                (isAdminView
+                                    ? paginate(allComments, commentsPage)
+                                    : paginate(comments, commentsPage)
+                                ).map((comment) => (
+                                    <div
+                                        key={comment.id}
+                                        className="mt-4 border-b border-gray-600 pb-4"
+                                    >
+                                        <p className="text-gray-300">
+                                            {comment.content}
+                                        </p>
+                                        {
+                                            isAdminView && (
+                                                <p className="text-sm text-gray-400">
+                                                    <span className="font-bold">
+                                                        By: {comment.author}
+                                                    </span>
+                                                </p>
                                             )
                                         }
-                                    </p>
-                                    <p className="text-xs text-gray-500">
-                                        Created: {new Date(comment.created_at).toLocaleString()}
-                                    </p>
-                                </div>
-                            ))
+                                        <p className="text-sm text-gray-400">
+                                            On:{" "}
+                                            {
+                                                comment.article_id ? (
+                                                    <a
+                                                        href={`/blog/${comment.article_id}`}
+                                                        className="text-blue-400 hover:underline"
+                                                    >
+                                                        {comment.article_title || "Unknown Article"}
+                                                    </a>
+                                                ) : (
+                                                    <span className="text-gray-500">
+                                                        Article not available
+                                                    </span>
+                                                )
+                                            }
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            Created: {new Date(comment.created_at).toLocaleString()}
+                                        </p>
+                                        {
+                                            isAdminView && (
+                                                <div className="flex justify-end space-x-4 mt-2">
+                                                    <button
+                                                        onClick={() => deleteComment(comment.id)}
+                                                        className="px-4 py-2 bg-red-500 hover:bg-red-400 text-white rounded"
+                                                    >
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            )
+                                        }
+                                    </div>
+                                ))
+                            )
                         }
                     </div>
                     <div className="mt-4">
