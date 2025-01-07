@@ -9,7 +9,7 @@ export async function POST(req: Request) {
         const formData = await req.formData();
         const title = formData.get("title")?.toString();
         const content = formData.get("content")?.toString();
-        const tags = formData.get("tags")?.toString()?.split(",").map(tag => tag.trim());
+        const tags = formData.get("tags")?.toString()?.split(",").map((tag) => tag.trim());
         const imageFile = formData.get("image") as File | null;
 
         if (!title || !content || !tags) {
@@ -18,6 +18,10 @@ export async function POST(req: Request) {
 
         const userCookie = req.headers.get("cookie")?.match(/user=([^;]+)/);
         const authorId = userCookie ? userCookie[1] : null;
+        if (!authorId) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         let imageUrl = null;
         if (imageFile) {
             const uploadsDir = path.join(process.cwd(), "public", "uploads");
@@ -29,7 +33,8 @@ export async function POST(req: Request) {
         }
 
         await pool.query(
-            "INSERT INTO articles (title, content, tags, image, user_id, created_at) VALUES ($1, $2, $3, $4, $5, NOW())",
+            `INSERT INTO articles (title, content, tags, image, user_id, created_at, status)
+            VALUES ($1, $2, $3, $4, $5, NOW(), 'pending')`,
             [title, content, tags, imageUrl, authorId]
         )
 

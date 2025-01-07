@@ -4,7 +4,7 @@ import pool from "@/app/util/helpers/database";
 
 export async function GET() {
     try {
-        const result = await pool.query("SELECT * FROM articles ORDER BY created_at DESC");
+        const result = await pool.query("SELECT * FROM articles WHERE status = 'approved' ORDER BY created_at DESC");
         return NextResponse.json({ articles: result.rows });
     }
     catch (error) {
