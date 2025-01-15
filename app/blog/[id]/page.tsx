@@ -10,6 +10,7 @@ export default function ArticlePage() {
     const [article, setArticle] = useState<Article | null>(null);
     const [comments, setComments] = useState<Comment[]>([]);
     const [newComment, setNewComment] = useState("");
+    const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const router = useRouter();
@@ -53,6 +54,66 @@ export default function ArticlePage() {
         }
     }
 
+    const handleDeleteComment = async (commentId: string) => {
+        try {
+            const response = await fetch(`/api/articles/${id}/comments/${commentId}`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ articleId: id }),
+            })
+    
+            if (response.ok) {
+                setComments((prev) => prev.filter((comment) => comment.id !== commentId));
+            }
+            else {
+                console.error("Failed to delete comment.");
+            }
+        }
+        catch (err) {
+            console.error("Error deleting comment:", err);
+        }
+    }
+
+    const handleEditComment = (commentId: string) => {
+        const commentToEdit = comments.find((comment) => comment.id === commentId);
+        if (commentToEdit) {
+            setNewComment(commentToEdit.content);
+            setEditingCommentId(commentId);
+        }
+    }
+
+    const handleEditSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingCommentId) return;
+        try {
+            const response = await fetch(`/api/articles/${id}/comments/${editingCommentId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ content: newComment }),
+            })
+    
+            if (response.ok) {
+                const updatedComment = await response.json();
+                setComments((prev) =>
+                    prev.map((comment) =>
+                        comment.id === editingCommentId
+                            ? {
+                                ...comment,
+                                content: updatedComment.comment.content,
+                                updated_at: updatedComment.comment.updated_at
+                            }
+                            : comment
+                    )
+                )
+                setNewComment("");
+                setEditingCommentId(null);
+            }
+        }
+        catch (err) {
+            console.error("Error updating comment:", err);
+        }
+    }
+    
     if (isLoading) return <p className="text-white text-center mt-10">Loading...</p>;
     if (error) return <p className="text-red-500 text-center mt-10">{error}</p>;
     if (!article) return null;
@@ -60,6 +121,14 @@ export default function ArticlePage() {
     return (
         <div className="max-w-7xl mx-auto mt-10 grid grid-cols-3 gap-8 text-white">
             <div className="col-span-2">
+                <div className="mb-6">
+                    <button
+                        onClick={() => router.push("/blog")}
+                        className="mt-6 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    >
+                        Back to Blog
+                    </button>
+                </div>
                 <h1 className="text-4xl font-bold mb-6">
                     {article.title}
                 </h1>
@@ -78,12 +147,6 @@ export default function ArticlePage() {
                 <p className="text-lg leading-relaxed">
                     {article.content}
                 </p>
-                <button
-                    onClick={() => router.push("/blog")}
-                    className="mt-6 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                >
-                    Back to Blog
-                </button>
             </div>
             <div className="space-y-6">
                 <div className="p-6 bg-gray-800 rounded-lg text-center shadow-lg">
@@ -117,26 +180,55 @@ export default function ArticlePage() {
                                     comments.map((comment) => (
                                         <li
                                             key={comment.id}
-                                            className="border-b pb-4"
+                                            className="border-b pb-4 flex justify-between items-center"
                                         >
-                                            <div className="flex items-center space-x-4">
-                                                <img
-                                                    src={comment.profile_picture || "default-avatar.png"}
-                                                    alt={comment.author}
-                                                    className="w-10 h-10 rounded-full"
-                                                />
-                                                <div>
-                                                    <p className="font-semibold">
-                                                        {comment.author}
-                                                    </p>
-                                                    <p className="text-sm text-gray-400">
-                                                        {new Date(comment.created_at).toLocaleString()}
-                                                    </p>
+                                            <div>
+                                                <div className="flex items-center space-x-4">
+                                                    <img
+                                                        src={comment.profile_picture || "default-avatar.png"}
+                                                        alt={comment.author}
+                                                        className="w-10 h-10 rounded-full"
+                                                    />
+                                                    <div>
+                                                        <p className="font-semibold">
+                                                            {comment.author}
+                                                        </p>
+                                                        <p className="text-sm text-gray-400">
+                                                            {new Date(comment.created_at).toLocaleString()}
+                                                        </p>
+                                                        {
+                                                            comment.updated_at && comment.updated_at !== comment.created_at && (
+                                                                <p className="text-xs text-gray-500">
+                                                                    Edited: {new Date(comment.updated_at).toLocaleString()}
+                                                                </p>
+                                                            )
+                                                        }
+                                                    </div>
                                                 </div>
+                                                <p className="mt-2">
+                                                    {comment.content}
+                                                </p>
                                             </div>
-                                            <p className="mt-2">
-                                                {comment.content}
-                                            </p>
+                                            {
+                                                user && comment.author === user.nickname && (
+                                                    <div className="flex space-x-2">
+                                                        <button
+                                                            onClick={() => handleEditComment(comment.id)}
+                                                            className="w-8 h-8 bg-blue-500 hover:bg-blue-400 text-white rounded-full flex items-center justify-center text-xl"
+                                                            title="Edit"
+                                                        >
+                                                            ✎
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteComment(comment.id)}
+                                                            className="w-8 h-8 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center text-xl"
+                                                            title="Delete"
+                                                        >
+                                                            X
+                                                        </button>
+                                                    </div>
+                                                )
+                                            }
                                         </li>
                                     ))
                                 }
@@ -150,15 +242,21 @@ export default function ArticlePage() {
                     {
                         user ? (
                             article.status === "approved" ? (
-                                <form 
-                                    onSubmit={handleCommentSubmit}
+                                <form
+                                    onSubmit={
+                                        editingCommentId ? handleEditSubmit : handleCommentSubmit
+                                    }
                                     className="mt-4"
                                 >
                                     <textarea
                                         value={newComment}
                                         onChange={(e) => setNewComment(e.target.value)}
                                         className="w-full px-4 py-2 border rounded-lg bg-gray-700 text-white"
-                                        placeholder="Write a comment..."
+                                        placeholder={
+                                            editingCommentId
+                                                ? "Edit your comment..."
+                                                : "Write a comment..."
+                                        }
                                         rows={3}
                                         required
                                     ></textarea>
@@ -166,8 +264,22 @@ export default function ArticlePage() {
                                         type="submit"
                                         className="mt-2 px-4 py-2 bg-blue-500 text-white rounded-lg w-full hover:bg-blue-600"
                                     >
-                                        Add Comment
+                                        {editingCommentId ? "Update Comment" : "Add Comment"}
                                     </button>
+                                    {
+                                        editingCommentId && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setEditingCommentId(null);
+                                                    setNewComment("");
+                                                }}
+                                                className="mt-2 px-4 py-2 bg-gray-500 text-white rounded-lg w-full hover:bg-gray-600"
+                                            >
+                                                Cancel
+                                            </button>
+                                        )
+                                    }
                                 </form>
                             ) : (
                                 <p className="text-gray-400 mt-4">

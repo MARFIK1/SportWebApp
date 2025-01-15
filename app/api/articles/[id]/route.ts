@@ -27,6 +27,7 @@ export async function GET(req: Request, { params } : { params: { id: string } })
                 comments.id, 
                 comments.content, 
                 comments.created_at, 
+                comments.updated_at, 
                 users.nickname AS author, 
                 users.profile_picture 
             FROM comments 

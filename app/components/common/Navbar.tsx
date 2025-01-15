@@ -52,7 +52,7 @@ export default function Navbar({ teamsData, playersData } : { teamsData: Team[],
             <div className="relative flex items-center space-x-4">
                 <button
                     onClick={handleBlogClick}
-                    className="text-white font-bold hover:text-gray-400"
+                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-lg shadow-md hover:shadow-lg hover:from-blue-600 hover:to-indigo-700 transform hover:scale-105 transition-all duration-300"
                 >
                     Blog
                 </button>
@@ -75,7 +75,7 @@ export default function Navbar({ teamsData, playersData } : { teamsData: Team[],
                     ) : (
                         <button
                             onClick={() => router.push("/user/login")}
-                            className="px-4 py-2 bg-blue-500 text-white rounded-lg"
+                            className="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-lg shadow-md hover:shadow-lg hover:from-blue-600 hover:to-indigo-700 transform hover:scale-105 transition-all duration-300"
                         >
                             Log in
                         </button>
