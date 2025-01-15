@@ -14,7 +14,8 @@ export default function ProfilePage() {
     const [error, setError] = useState<string | null>(null);
     const [articlesPage, setArticlesPage] = useState(1);
     const [commentsPage, setCommentsPage] = useState(1);
-    const itemsPerPage = 3;
+    const articlesPerPage = 3;
+    const commentsPerPage = 6;
     const [sortArticlesAsc, setSortArticlesAsc] = useState(false);
     const [sortCommentsAsc, setSortCommentsAsc] = useState(false);
     const router = useRouter();
@@ -43,11 +44,23 @@ export default function ProfilePage() {
                 const res = await fetch(`/api/users/activity`);
                 if (res.ok) {
                     const data = await res.json();
+                    const articlesWithDates = data.articles.map((article: Article) => ({
+                        ...article,
+                        created_at: new Date(article.created_at).toISOString(),
+                        updated_at: article.updated_at ? new Date(article.updated_at).toISOString() : null,
+                    }));
+    
                     setArticles(
-                        data.articles.sort((a: Article, b: Article) =>
-                            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                        articlesWithDates.sort((a: Article, b: Article) => 
+                            new Date(b.updated_at || b.created_at).getTime() - 
+                            new Date(a.updated_at || a.created_at).getTime()
                         )
                     );
+    
+                    setFilteredArticles(
+                        articlesWithDates.filter((article: Article) => article.status === "pending")
+                    );
+    
                     setComments(
                         data.comments.sort((a: Comment, b: Comment) =>
                             new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -81,6 +94,7 @@ export default function ProfilePage() {
                 const articlesData = await articlesRes.json();
                 const mappedArticles = articlesData.articles.map((article: Article) => ({
                     ...article,
+                    author: article.author || "Unknown",
                     status: String(article.status) as "pending" | "approved" | "rejected"
                 }))
                 setAllArticles(mappedArticles);
@@ -103,11 +117,17 @@ export default function ProfilePage() {
     const toggleAdminView = () => {
         if (!isAdminView) fetchAdminData();
         setIsAdminView(!isAdminView);
+        setActiveFilter("pending");
+        const articlesToFilter = !isAdminView ? allArticles : articles;
+        setFilteredArticles(
+            articlesToFilter.filter((article) => article.status === "pending")
+        );
+        setArticlesPage(1);
     }
 
-    const paginate = (items: any[], page: number) => items.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+    const paginate = (items: any[], page: number, itemsPerPage: number) => items.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
-    const renderPagination = (page: number, totalItems: number, setPage: (page: number) => void) => {
+    const renderPagination = (page: number, totalItems: number, setPage: (page: number) => void, itemsPerPage: number) => {
         const totalPages = Math.ceil(totalItems / itemsPerPage);
         if (totalPages <= 1) return null;
 
@@ -256,23 +276,76 @@ export default function ProfilePage() {
         }
     }
 
+    const renderArticleActions = (article: Article) => {
+        if (!isAdminView) return null;
+
+        return (
+            <div className="flex space-x-2">
+                {
+                    article.status === "pending" && (
+                        <>
+                            <button
+                                onClick={() => updateArticleStatus(article.id, "approved")}
+                                className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded"
+                            >
+                                Approve
+                            </button>
+                            <button
+                                onClick={() => openRejectModal(article.id)}
+                                className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded"
+                            >
+                                Reject
+                            </button>
+                        </>
+                    )
+                }
+                {
+                    article.status === "approved" && (
+                        <button
+                            onClick={() => openRejectModal(article.id)}
+                            className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded"
+                        >
+                            Reject
+                        </button>
+                    )
+                }
+                {
+                    article.status === "rejected" && (
+                        <button
+                            onClick={() => updateArticleStatus(article.id, "approved")}
+                            className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded"
+                        >
+                            Approve
+                        </button>
+                    )
+                }
+            </div>
+        )
+    }
+
     const updateArticleStatus = async (articleId: string, status: "pending" | "approved" | "rejected", comment?: string) => {
         try {
             const res = await fetch(`/api/admin/articles/${articleId}/status`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status, admin_comment: comment })
+                body: JSON.stringify({ status, admin_comment: comment || null })
             })
     
             if (res.ok) {
+                const updatedArticle = await res.json();
+                setFilteredArticles((prev) => prev.filter((article) => article.id !== articleId));
                 setAllArticles((prev) =>
                     prev.map((article) =>
-                        article.id === articleId ? { ...article, status, admin_comment: comment } : article
+                        article.id === articleId ? { ...article, status, admin_comment: comment || null } : article
                     )
                 )
-                setFilteredArticles((prev) =>
-                    prev.filter((article) => article.id !== articleId)
-                )
+
+                if (activeFilter === status || activeFilter === "all") {
+                    setFilteredArticles((prev) => [
+                        ...prev,
+                        { ...updatedArticle, status, admin_comment: comment || null },
+                    ]);
+                }
             }
             else {
                 console.error("Failed to update article status");
@@ -285,11 +358,14 @@ export default function ProfilePage() {
 
     const filterArticles = (status: "all" | "pending" | "approved" | "rejected") => {
         setActiveFilter(status);
+        setArticlesPage(1);
+        const articlesToFilter = isAdminView ? allArticles : articles;
+    
         if (status === "all") {
-            setFilteredArticles(allArticles);
+            setFilteredArticles(articlesToFilter);
         }
         else {
-            setFilteredArticles(allArticles.filter((article) => article.status === status));
+            setFilteredArticles(articlesToFilter.filter((article) => article.status === status));
         }
     }
     
@@ -304,14 +380,21 @@ export default function ProfilePage() {
             })
 
             if (res.ok) {
+                const updatedArticle = await res.json();
+                setFilteredArticles((prev) => prev.filter((article) => article.id !== currentArticleId));
                 setAllArticles((prev) =>
                     prev.map((article) =>
-                        article.id === currentArticleId ? { ...article, status: "rejected" } : article
+                        article.id === currentArticleId ? { ...article, status: "rejected", admin_comment: rejectComment } : article
                     )
                 )
-                setFilteredArticles((prev) =>
-                    prev.filter((article) => article.id !== currentArticleId)
-                )
+
+                if (activeFilter === "rejected" || activeFilter === "all") {
+                    setFilteredArticles((prev) => [
+                        ...prev,
+                        { ...updatedArticle, status: "rejected", admin_comment: rejectComment },
+                    ]);
+                }
+
                 setIsRejectModalOpen(false);
                 setRejectComment("");
             }
@@ -329,6 +412,26 @@ export default function ProfilePage() {
         setIsRejectModalOpen(true);
     }
 
+    const deleteArticle = async (articleId: string) => {
+        try {
+            const res = await fetch(`/api/admin/articles/${articleId}`, {
+                method: "DELETE"
+            })
+    
+            if (res.ok) {
+                setArticles((prev) => prev.filter((article) => article.id !== articleId));
+                setFilteredArticles((prev) => prev.filter((article) => article.id !== articleId));
+                setAllArticles((prev) => prev.filter((article) => article.id !== articleId));
+            }
+            else {
+                console.error("Failed to delete article");
+            }
+        }
+        catch (err) {
+            console.error("Error deleting article:", err);
+        }
+    }
+    
     const deleteComment = async (commentId: string) => {
         try {
             const res = await fetch(`/api/admin/comments/${commentId}`, {
@@ -336,8 +439,8 @@ export default function ProfilePage() {
             })
     
             if (res.ok) {
-                setAllComments((prev) => prev.filter((comment) => comment.id !== commentId));
                 setComments((prev) => prev.filter((comment) => comment.id !== commentId));
+                setAllComments((prev) => prev.filter((comment) => comment.id !== commentId));
             }
             else {
                 console.error("Failed to delete comment");
@@ -352,11 +455,18 @@ export default function ProfilePage() {
         const newOrder = !sortArticlesAsc;
         setSortArticlesAsc(newOrder);
         setArticles((prev) =>
-            [...prev].sort((a, b) =>
-                newOrder
-                    ? new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                    : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-            )
+            [...prev].sort((a, b) => {
+                const dateA = new Date(a.updated_at || a.created_at).getTime();
+                const dateB = new Date(b.updated_at || b.created_at).getTime();
+                return newOrder ? dateA - dateB : dateB - dateA;
+            })
+        )
+        setFilteredArticles((prev) =>
+            [...prev].sort((a, b) => {
+                const dateA = new Date(a.updated_at || a.created_at).getTime();
+                const dateB = new Date(b.updated_at || b.created_at).getTime();
+                return newOrder ? dateA - dateB : dateB - dateA;
+            })
         )
     }
 
@@ -377,15 +487,15 @@ export default function ProfilePage() {
 
     return (
         <div className="container mx-auto p-4 text-gray-200">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px]">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                <div className="col-span-3 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px]">
                     <div className="flex flex-col items-center space-y-4">
                         <label
                             htmlFor="avatar-upload"
                             className="cursor-pointer"
                         >
                             <img
-                                src={user?.profile_picture || "/default-avatar.png"}
+                                src={user?.profile_picture || "default-avatar.png"}
                                 alt="Profile Avatar"
                                 className="w-32 h-32 rounded-full border-4 border-gray-600 hover:opacity-80"
                                 title="Click to change avatar"
@@ -497,38 +607,30 @@ export default function ProfilePage() {
                         }
                     </div>
                 </div>
-                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px] flex flex-col">
-                    {
-                        isAdminView && (
-                            <div className="flex justify-around mb-4">
-                                {
-                                    ["all", "pending", "approved", "rejected"].map((filter) => (
-                                        <button
-                                            key={filter}
-                                            onClick={() =>
-                                                filterArticles(
-                                                    filter as "all" | "pending" | "approved" | "rejected"
-                                                )
-                                            }
-                                            className={`px-4 py-2 rounded ${
-                                                activeFilter === filter
-                                                    ? filter === "pending"
-                                                        ? "bg-yellow-500 text-black"
-                                                        : filter === "approved"
-                                                        ? "bg-green-500 text-white"
-                                                        : filter === "rejected"
-                                                        ? "bg-red-500 text-white"
-                                                        : "bg-blue-500 text-white"
-                                                    : "bg-gray-600 hover:bg-gray-500 text-gray-300"
-                                            }`}
-                                        >
-                                            {filter.charAt(0).toUpperCase() + filter.slice(1)}
-                                        </button>
-                                    ))
-                                }
-                            </div>
-                        )
-                    }
+                <div className="col-span-5 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px] flex flex-col">
+                    <div className="flex space-x-1 mb-4 justify-start">
+                        {
+                            ["all", "pending", "approved", "rejected"].map((filter) => (
+                                <button
+                                    key={filter}
+                                    onClick={() => filterArticles(filter as "all" | "pending" | "approved" | "rejected")}
+                                    className={`px-3 py-2 rounded ${
+                                        activeFilter === filter
+                                        ? filter === "pending"
+                                            ? "bg-yellow-500 text-black"
+                                            : filter === "approved"
+                                            ? "bg-green-500 text-white"
+                                            : filter === "rejected"
+                                            ? "bg-red-500 text-white"
+                                            : "bg-blue-500 text-white"
+                                        : "bg-gray-600 hover:bg-gray-500 text-gray-300"
+                                    }`}
+                                >
+                                    {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                                </button>
+                            ))
+                        }
+                    </div>
                     <div className="flex justify-between items-center">
                         <h2 className="text-2xl font-bold">
                             {isAdminView ? "All Articles" : "Your Articles"}
@@ -557,96 +659,105 @@ export default function ProfilePage() {
                             Sort {sortArticlesAsc ? "Ascending" : "Descending"}
                         </button>
                     </div>
-                    <div className="flex-grow overflow-y-auto">
+                    <div className="flex-grow overflow-y-scroll scrollbar-hide">
                         {
-                            isAdminView && filteredArticles.length === 0 ? (
+                            filteredArticles.length === 0 ? (
                                 <p className="text-center text-gray-400 mt-10">
                                     No articles available in this category.
                                 </p>
                             ) : (
-                                (isAdminView
-                                    ? paginate(filteredArticles, articlesPage)
-                                    : paginate(articles, articlesPage)
-                                ).map((article) => (
+                                paginate(filteredArticles, articlesPage, articlesPerPage).map((article) => (
                                     <div
                                         key={article.id}
-                                        className="mt-4 border-b border-gray-600 pb-4"
+                                        className="mt-4 border-b border-gray-600 pb-4 flex items-center justify-between space-x-4"
                                     >
-                                        <h3
-                                            className={`text-xl font-bold ${
-                                                (isAdminView && (article.status === "approved" || article.status === "pending")) ||
-                                                (!isAdminView && article.status === "approved")
-                                                    ? "text-blue-400 hover:underline cursor-pointer"
-                                                    : "text-gray-400"
-                                            }`}
-                                            onClick={() => {
-                                                if (
+                                        <div className="flex-1">
+                                            <h3
+                                                className={`text-xl font-bold ${
                                                     (isAdminView && (article.status === "approved" || article.status === "pending")) ||
                                                     (!isAdminView && article.status === "approved")
-                                                ) {
-                                                    router.push(`/blog/${article.id}`);
-                                                }
-                                            }}
-                                        >
-                                            {article.title}
-                                        </h3>
-                                        <p
-                                            className={`text-sm ${
-                                                article.status === "pending"
-                                                    ? "text-yellow-500"
-                                                    : article.status === "approved"
-                                                    ? "text-green-500"
-                                                    : "text-red-500"
-                                            }`}
-                                        >
-                                            Status: {article.status}
-                                        </p>
-                                        {
-                                            article.status === "rejected" && article.admin_comment && (
-                                                <p className="text-sm text-red-400">
-                                                    Reason: {article.admin_comment}
-                                                </p>
-                                            )
-                                        }
-                                        <p className="text-sm text-gray-400">
-                                            Created: {new Date(article.created_at).toLocaleString()}
-                                        </p>
-                                        {
-                                            isAdminView && (
-                                                <div className="flex space-x-4 mt-2">
+                                                        ? "text-blue-400 hover:underline cursor-pointer"
+                                                        : "text-gray-400"
+                                                }`}
+                                                onClick={() => {
+                                                    if (
+                                                        (isAdminView && (article.status === "approved" || article.status === "pending")) ||
+                                                        (!isAdminView && article.status === "approved")
+                                                    ) {
+                                                        router.push(`/blog/${article.id}`);
+                                                    }
+                                                }}
+                                            >
+                                                {article.title}
+                                            </h3>
+                                            {
+                                                isAdminView && (
+                                                    <p className="text-sm text-gray-400">
+                                                        <span className="font-bold">By: {article.author || "Unknown"}</span>
+                                                    </p>
+                                                )
+                                            }
+                                            <p
+                                                className={`text-sm ${
+                                                    article.status === "pending"
+                                                        ? "text-yellow-500"
+                                                        : article.status === "approved"
+                                                        ? "text-green-500"
+                                                        : "text-red-500"
+                                                }`}
+                                            >
+                                                Status: {article.status}
+                                            </p>
+                                            {
+                                                article.status === "rejected" && (
+                                                    <p className="text-sm text-red-400">
+                                                        Reason: {article.admin_comment || <i>No comment added</i>}
+                                                    </p>
+                                                )
+                                            }
+                                            <p className="text-sm text-gray-400">
+                                                Created at: {new Date(article.created_at).toLocaleString()}
+                                            </p>
+                                            <p className="text-sm text-gray-400">
+                                                Updated at: {new Date(article.updated_at).toLocaleString()}
+                                            </p>
+                                        </div>
+                                        {renderArticleActions(article)}
+                                        <div className="flex space-x-2">
+                                            {
+                                                !isAdminView && (
                                                     <button
-                                                        onClick={() => {
-                                                            updateArticleStatus(article.id, "approved");
-                                                        }}
-                                                        className="px-4 py-2 bg-green-500 hover:bg-green-400 text-white rounded"
+                                                        onClick={() => router.push(`/blog/edit/${article.id}`)}
+                                                        className="w-8 h-8 bg-blue-500 hover:bg-blue-400 text-white rounded-full flex items-center justify-center text-xl"
+                                                        title="Edit"
                                                     >
-                                                        Approve
+                                                        ✎
                                                     </button>
-                                                    <button
-                                                        onClick={() => openRejectModal(article.id)}
-                                                        className="px-4 py-2 bg-red-500 hover:bg-red-400 text-white rounded"
-                                                    >
-                                                        Reject
-                                                    </button>
-                                                </div>
-                                            )
-                                        }
+                                                )
+                                            }
+                                            <button
+                                                onClick={() => deleteArticle(article.id)}
+                                                className="w-8 h-8 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center text-xl"
+                                                title="Delete"
+                                            >
+                                                X
+                                            </button>
+                                        </div>
                                     </div>
                                 ))
                             )
                         }
                     </div>
                     <div className="mt-4">
-                        {
-                            renderPagination(
-                                articlesPage,
-                                isAdminView ? filteredArticles.length : articles.length,
-                                setArticlesPage
-                            )
-                        }
+                        {renderPagination(
+                            articlesPage,
+                            filteredArticles.length,
+                            setArticlesPage,
+                            articlesPerPage
+                        )}
                     </div>
                 </div>
-                <div className="col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px] flex flex-col">
+                <div className="col-span-4 bg-gray-800 p-6 rounded-lg shadow-lg h-[750px] flex flex-col">
                     <div className="flex justify-between items-center">
                         <h2 className="text-2xl font-bold">
                             {isAdminView ? "All Comments" : "Your Comments"}
@@ -675,78 +786,119 @@ export default function ProfilePage() {
                             Sort {sortCommentsAsc ? "Ascending" : "Descending"}
                         </button>
                     </div>
-                    <div className="flex-grow overflow-y-auto">
+                    <div className="flex-grow overflow-y-scroll scrollbar-hide">
                         {
-                            isAdminView && allComments.length === 0 ? (
-                                <p className="text-center text-gray-400 mt-10">
-                                    No comments available.
-                                </p>
-                            ) : (
-                                (isAdminView
-                                    ? paginate(allComments, commentsPage)
-                                    : paginate(comments, commentsPage)
-                                ).map((comment) => (
-                                    <div
-                                        key={comment.id}
-                                        className="mt-4 border-b border-gray-600 pb-4"
-                                    >
-                                        <p className="text-gray-300">
-                                            {comment.content}
-                                        </p>
-                                        {
-                                            isAdminView && (
-                                                <p className="text-sm text-gray-400">
-                                                    <span className="font-bold">
-                                                        By: {comment.author}
-                                                    </span>
+                            isAdminView ? (
+                                allComments.length === 0 ? (
+                                    <p className="text-center text-gray-400 mt-10">
+                                        No comments available.
+                                    </p>
+                                ) : (
+                                    paginate(allComments, commentsPage, commentsPerPage).map((comment) => (
+                                        <div
+                                            key={comment.id}
+                                            className="mt-4 border-b border-gray-600 pb-4 flex items-center justify-between space-x-4"
+                                        >
+                                            <div className="flex-1">
+                                                <p className="text-gray-300">
+                                                    {comment.content}
                                                 </p>
-                                            )
-                                        }
-                                        <p className="text-sm text-gray-400">
-                                            On:{" "}
-                                            {
-                                                comment.article_id ? (
-                                                    <a
-                                                        href={`/blog/${comment.article_id}`}
-                                                        className="text-blue-400 hover:underline"
-                                                    >
-                                                        {comment.article_title || "Unknown Article"}
-                                                    </a>
-                                                ) : (
-                                                    <span className="text-gray-500">
-                                                        Article not available
-                                                    </span>
-                                                )
-                                            }
-                                        </p>
-                                        <p className="text-xs text-gray-500">
-                                            Created: {new Date(comment.created_at).toLocaleString()}
-                                        </p>
-                                        {
-                                            isAdminView && (
-                                                <div className="flex justify-end space-x-4 mt-2">
-                                                    <button
-                                                        onClick={() => deleteComment(comment.id)}
-                                                        className="px-4 py-2 bg-red-500 hover:bg-red-400 text-white rounded"
-                                                    >
-                                                        Delete
-                                                    </button>
-                                                </div>
-                                            )
-                                        }
-                                    </div>
-                                ))
+                                                {
+                                                    isAdminView && (
+                                                        <p className="text-sm text-gray-400">
+                                                            <span className="font-bold">
+                                                                By: {comment.author}
+                                                            </span>
+                                                        </p>
+                                                    )
+                                                }
+                                                <p className="text-sm text-gray-400">
+                                                    On:{" "}
+                                                    {
+                                                        comment.article_id ? (
+                                                            <a
+                                                                href={`/blog/${comment.article_id}`}
+                                                                className="text-blue-400 hover:underline"
+                                                            >
+                                                                {comment.article_title || "Unknown Article"}
+                                                            </a>
+                                                        ) : (
+                                                            <span className="text-gray-500">
+                                                                Article not available
+                                                            </span>
+                                                        )
+                                                    }
+                                                </p>
+                                                <p className="text-xs text-gray-500">
+                                                    Created: {new Date(comment.created_at).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <button
+                                                onClick={() => deleteComment(comment.id)}
+                                                className="w-8 h-8 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center text-xl"
+                                                title="Delete"
+                                            >
+                                                X
+                                            </button>
+                                        </div>
+                                    ))
+                                )
+                            ) : (
+                                comments.length === 0 ? (
+                                    <p className="text-center text-gray-400 mt-10">
+                                        You have not posted any comments yet.
+                                    </p>
+                                ) : (
+                                    paginate(comments, commentsPage, commentsPerPage).map((comment) => (
+                                        <div
+                                            key={comment.id}
+                                            className="mt-4 border-b border-gray-600 pb-4 flex items-center justify-between space-x-4"
+                                        >
+                                            <div className="flex-1">
+                                                <p className="text-gray-300">
+                                                    {comment.content}
+                                                </p>
+                                                <p className="text-sm text-gray-400">
+                                                    On:{" "}
+                                                    {
+                                                        comment.article_id ? (
+                                                            <a
+                                                                href={`/blog/${comment.article_id}`}
+                                                                className="text-blue-400 hover:underline"
+                                                            >
+                                                                {comment.article_title || "Unknown Article"}
+                                                            </a>
+                                                        ) : (
+                                                            <span className="text-gray-500">
+                                                                Article not available
+                                                            </span>
+                                                        )
+                                                    }
+                                                </p>
+                                                <p className="text-xs text-gray-500">
+                                                    Created: {new Date(comment.created_at).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <button
+                                                onClick={() => deleteComment(comment.id)}
+                                                className="w-8 h-8 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center text-xl"
+                                                title="Delete"
+                                            >
+                                                X
+                                            </button>
+                                        </div>
+                                    ))
+                                )
                             )
                         }
                     </div>
                     <div className="mt-4">
-                        {
-                            renderPagination(
-                                commentsPage,
-                                isAdminView ? allComments.length : comments.length,
-                                setCommentsPage
-                            )
-                        }
+                        {renderPagination(
+                            commentsPage,
+                            isAdminView ? allComments.length : comments.length,
+                            setCommentsPage,
+                            commentsPerPage
+                        )}
                     </div>
                 </div>
                 {

@@ -250,10 +250,11 @@ export interface Article {
     image?: string;
     tags: string[];
     created_at: string;
+    updated_at: string;
     author: string;
     author_picture?: string;
     status: "pending" | "approved" | "rejected";
-    admin_comment?: string;
+    admin_comment?: string | null;
 }
 
 export interface Comment {
@@ -262,6 +263,7 @@ export interface Comment {
     user_id: string;
     content: string;
     created_at: string;
+    updated_at: string;
     author: string;
     profile_picture: string;
     article_title: string;

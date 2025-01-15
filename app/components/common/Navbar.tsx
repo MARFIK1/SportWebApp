@@ -67,7 +67,7 @@ export default function Navbar({ teamsData, playersData } : { teamsData: Team[],
                             onClick={() => setDropdownOpen((prev) => !prev)}
                         >
                             <img
-                                src={user.profile_picture || "/default-avatar.png"}
+                                src={user.profile_picture || "default-avatar.png"}
                                 alt="Avatar"
                                 className="w-10 h-10 rounded-full"
                             />

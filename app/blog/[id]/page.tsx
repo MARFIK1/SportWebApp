@@ -91,7 +91,7 @@ export default function ArticlePage() {
                         article.author ? (
                             <>
                                 <img
-                                    src={article.author_picture || "/default-avatar.png"}
+                                    src={article.author_picture || "default-avatar.png"}
                                     alt={article.author}
                                     className="w-20 h-20 rounded-full mx-auto mb-4"
                                 />
@@ -121,7 +121,7 @@ export default function ArticlePage() {
                                         >
                                             <div className="flex items-center space-x-4">
                                                 <img
-                                                    src={comment.profile_picture || "/default-avatar.png"}
+                                                    src={comment.profile_picture || "default-avatar.png"}
                                                     alt={comment.author}
                                                     className="w-10 h-10 rounded-full"
                                                 />
@@ -148,27 +148,36 @@ export default function ArticlePage() {
                         )
                     }
                     {
-                        user && (
-                            <form
-                                onSubmit={handleCommentSubmit}
-                                className="mt-4"
-                            >
-                                <textarea
-                                    value={newComment}
-                                    onChange={(e) => setNewComment(e.target.value)}
-                                    className="w-full px-4 py-2 border rounded-lg bg-gray-700 text-white"
-                                    placeholder="Write a comment..."
-                                    rows={3}
-                                    required
+                        user ? (
+                            article.status === "approved" ? (
+                                <form 
+                                    onSubmit={handleCommentSubmit}
+                                    className="mt-4"
                                 >
-                                </textarea>
-                                <button
-                                    type="submit"
-                                    className="mt-2 px-4 py-2 bg-blue-500 text-white rounded-lg w-full hover:bg-blue-600"
-                                >
-                                    Add Comment
-                                </button>
-                            </form>
+                                    <textarea
+                                        value={newComment}
+                                        onChange={(e) => setNewComment(e.target.value)}
+                                        className="w-full px-4 py-2 border rounded-lg bg-gray-700 text-white"
+                                        placeholder="Write a comment..."
+                                        rows={3}
+                                        required
+                                    ></textarea>
+                                    <button
+                                        type="submit"
+                                        className="mt-2 px-4 py-2 bg-blue-500 text-white rounded-lg w-full hover:bg-blue-600"
+                                    >
+                                        Add Comment
+                                    </button>
+                                </form>
+                            ) : (
+                                <p className="text-gray-400 mt-4">
+                                    This article has not been approved by the administrator yet.
+                                </p>
+                            )
+                        ) : (
+                            <p className="text-gray-400 mt-4">
+                                Log in to add a comment.
+                            </p>
                         )
                     }
                 </div>

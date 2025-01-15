@@ -6,13 +6,23 @@ export async function GET(req: Request) {
     try {
         const userId = req.headers.get("cookie")?.split("; ").find((c) => c.startsWith("user="))?.split("=")[1];
         if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        const articles = await pool.query(`
+            SELECT 
+                id, 
+                title, 
+                status, 
+                created_at, 
+                updated_at 
+            FROM articles 
+            WHERE user_id = $1
+        `, [userId])
 
-        const articles = await pool.query("SELECT id, title, status, created_at FROM articles WHERE user_id = $1", [userId]);
         const comments = await pool.query(`
             SELECT 
                 comments.id, 
                 comments.content, 
                 comments.created_at, 
+                comments.updated_at, 
                 comments.article_id, 
                 articles.title AS article_title
             FROM comments

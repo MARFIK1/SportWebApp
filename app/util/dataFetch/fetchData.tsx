@@ -1,4 +1,3 @@
-import "server-only";
 import moment from "moment";
 
 import { Player, Standing, AllFixtures, PlayerExtended, Fixture } from "@/types";

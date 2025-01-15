@@ -29,7 +29,7 @@ export async function POST(req: Request) {
                     id: user.id,
                     nickname: user.nickname,
                     email: user.email,
-                    profile_picture: user.profile_picture || "/default-avatar.png",
+                    profile_picture: user.profile_picture || "default-avatar.png",
                     role: user.role
                 }
             },
