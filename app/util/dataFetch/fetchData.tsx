@@ -43,7 +43,7 @@ async function getStandings(season: number): Promise<Standing[]> {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 * 60 }
+        next: { revalidate: 3600 * 24 }
     };
 
     for (const league of leagues) {
@@ -75,7 +75,7 @@ async function getFixtures(season: number): Promise<AllFixtures[]> {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 * 60 }
+        next: { revalidate: 3600 * 24 }
     };
 
     const fixturesByLeague = await Promise.all(
@@ -222,7 +222,7 @@ async function getTopScorers(leagueId: number, season: number): Promise<Player[]
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 * 60 }
+        next: { revalidate: 3600 * 24 }
     };
 
     try {
@@ -243,7 +243,7 @@ async function getTopAssistants(leagueId: number, season: number): Promise<Playe
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 * 60 }
+        next: { revalidate: 3600 * 24 }
     };
 
     try {
@@ -268,7 +268,7 @@ async function fetchTeamsByLeague(leagueId: number, season: number) {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 * 60 }
+        next: { revalidate: 3600 * 24 }
     };
 
     try {
@@ -298,7 +298,7 @@ async function fetchTeamSquad(teamId: number): Promise<Player[]> {
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 * 60 }
+        next: { revalidate: 3600 * 24 }
     };
 
     try {
@@ -335,7 +335,7 @@ async function fetchPlayerDetails(playerId: string, season: number): Promise<Pla
             'x-rapidapi-key': API_KEY,
             'x-rapidapi-host': 'api-football-v1.p.rapidapi.com'
         },
-        next: { revalidate: 3600 * 60 }
+        next: { revalidate: 3600 * 24}
     };
 
     try {

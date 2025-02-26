@@ -12,12 +12,13 @@ export async function GET() {
                 articles.status,
                 articles.created_at,
                 articles.updated_at,
+                articles.admin_comment,
                 users.nickname AS author,
                 COUNT(comments.id) AS comment_count
             FROM articles
-            LEFT JOIN users ON articles.user_id = users.id -- Użycie user_id zamiast author_id
+            LEFT JOIN users ON articles.user_id = users.id
             LEFT JOIN comments ON articles.id = comments.article_id
-            GROUP BY articles.id, users.nickname
+            GROUP BY articles.id, users.nickname, articles.admin_comment
             ORDER BY articles.created_at DESC
         `)
 

@@ -10,7 +10,10 @@ export async function GET(req: Request, { params } : { params: { id: string } })
         }
 
         const articleResult = await pool.query(
-            `SELECT articles.*, users.nickname AS author, users.profile_picture AS author_picture
+            `SELECT articles.*, 
+                    articles.admin_comment,
+                    users.nickname AS author, 
+                    users.profile_picture AS author_picture
             FROM articles
             JOIN users ON articles.user_id = users.id
             WHERE articles.id = $1`,

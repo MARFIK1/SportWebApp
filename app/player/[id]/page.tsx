@@ -3,6 +3,7 @@ import Image from "next/image";
 import { fetchPlayerDetails } from "@/app/util/dataFetch/fetchData";
 import { getCurrentSeason } from "@/app/util/league/season";
 import type { PlayerExtended } from "@/types";
+import { calculateAge } from "@/app/util/helpers/calculateAge";
 import FlagImage from "@/app/components/common/FlagImage";
 import ScrollToTop from "@/app/components/common/ScrollToTop";
 
@@ -140,7 +141,7 @@ export default async function PlayerPage({ params } : PageProps) {
                                     Age
                                 </p>
                                 <p className="text-xl font-bold text-green-400">
-                                    {player.age}
+                                    {calculateAge(player.birth.date)}
                                 </p>
                                 <p className="text-sm text-gray-400">
                                     ({player.birth.date})

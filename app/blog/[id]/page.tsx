@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
+import parse from "html-react-parser";
 
 import { useUser } from "@/app/util/UserContext";
 import { Article, Comment } from "@/types";
@@ -144,9 +145,34 @@ export default function ArticlePage() {
                 <p className="text-gray-400 mb-4">
                     {article.tags.join(", ")}
                 </p>
-                <p className="text-lg leading-relaxed">
-                    {article.content}
-                </p>
+                <div className="text-lg leading-relaxed">
+                    <style>
+                        {`.ql-editor iframe, iframe {
+                            width: 100%;
+                            height: 500px !important; /* Wymuszamy większą wysokość */
+                            max-width: 100%;
+                            border-radius: 8px;
+                        }`}
+                    </style>
+                    {
+                        parse(article.content, {
+                            replace: (domNode: any) => {
+                                if (domNode.name === "iframe") {
+                                    return (
+                                        <iframe
+                                            src={domNode.attribs.src}
+                                            width="100%"
+                                            height="500"
+                                            className="rounded-lg"
+                                            allowFullScreen
+                                        >
+                                        </iframe>
+                                    )
+                                }
+                            }
+                        })
+                    }
+                </div>
             </div>
             <div className="space-y-6">
                 <div className="p-6 bg-gray-800 rounded-lg text-center shadow-lg">

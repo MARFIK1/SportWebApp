@@ -255,6 +255,7 @@ export interface Article {
     author_picture?: string;
     status: "pending" | "approved" | "rejected";
     admin_comment?: string | null;
+    comment_count: number;
 }
 
 export interface Comment {

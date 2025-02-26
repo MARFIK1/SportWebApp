@@ -39,48 +39,49 @@ export default function ProfilePage() {
             return;
         }
 
-        async function fetchActivity() {
-            try {
-                const res = await fetch(`/api/users/activity`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const articlesWithDates = data.articles.map((article: Article) => ({
-                        ...article,
-                        created_at: new Date(article.created_at).toISOString(),
-                        updated_at: article.updated_at ? new Date(article.updated_at).toISOString() : null,
-                    }));
-    
-                    setArticles(
-                        articlesWithDates.sort((a: Article, b: Article) => 
-                            new Date(b.updated_at || b.created_at).getTime() - 
-                            new Date(a.updated_at || a.created_at).getTime()
-                        )
-                    );
-    
-                    setFilteredArticles(
-                        articlesWithDates.filter((article: Article) => article.status === "pending")
-                    );
-    
-                    setComments(
-                        data.comments.sort((a: Comment, b: Comment) =>
-                            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                        )
-                    );
-                }
-                else {
-                    setError("Failed to fetch user activity.");
-                }
+        fetchActivity();
+    }, [user, userLoading, router])
+
+    async function fetchActivity() {
+        try {
+            const res = await fetch(`/api/users/activity`);
+            if (res.ok) {
+                const data = await res.json();
+                const articlesWithDates = data.articles.map((article: Article) => ({
+                    ...article,
+                    created_at: new Date(article.created_at).toISOString(),
+                    updated_at: article.updated_at ? new Date(article.updated_at).toISOString() : null,
+                }));
+
+                setArticles(
+                    articlesWithDates.sort((a: Article, b: Article) => 
+                        new Date(b.updated_at || b.created_at).getTime() - 
+                        new Date(a.updated_at || a.created_at).getTime()
+                    )
+                );
+
+                setFilteredArticles(
+                    articlesWithDates.filter((article: Article) => article.status === "pending")
+                );
+
+                setComments(
+                    data.comments.sort((a: Comment, b: Comment) =>
+                        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                    )
+                );
             }
-            catch (err) {
-                console.error("Error fetching activity:", err);
-                setError("An error occurred while fetching activity.");
-            }
-            finally {
-                setLoading(false);
+            else {
+                setError("Failed to fetch user activity.");
             }
         }
-        fetchActivity();
-    }, [user, userLoading, router]);
+        catch (err) {
+            console.error("Error fetching activity:", err);
+            setError("An error occurred while fetching activity.");
+        }
+        finally {
+            setLoading(false);
+        }
+    }
 
     const fetchAdminData = async () => {
         setLoadingAdminData(true);
@@ -115,7 +116,13 @@ export default function ProfilePage() {
     }
     
     const toggleAdminView = () => {
-        if (!isAdminView) fetchAdminData();
+        if (!isAdminView) {
+            fetchAdminData();
+        }
+        else {
+            fetchActivity();
+        }
+
         setIsAdminView(!isAdminView);
         setActiveFilter("pending");
         const articlesToFilter = !isAdminView ? allArticles : articles;
@@ -333,13 +340,15 @@ export default function ProfilePage() {
     
             if (res.ok) {
                 const updatedArticle = await res.json();
+                setArticles((prev) => prev.map((article) => 
+                    article.id === articleId ? { ...article, status, admin_comment: comment || null } : article
+                ));
+    
                 setFilteredArticles((prev) => prev.filter((article) => article.id !== articleId));
-                setAllArticles((prev) =>
-                    prev.map((article) =>
-                        article.id === articleId ? { ...article, status, admin_comment: comment || null } : article
-                    )
-                )
-
+                setAllArticles((prev) => prev.map((article) => 
+                    article.id === articleId ? { ...article, status, admin_comment: comment || null } : article
+                ));
+    
                 if (activeFilter === status || activeFilter === "all") {
                     setFilteredArticles((prev) => [
                         ...prev,

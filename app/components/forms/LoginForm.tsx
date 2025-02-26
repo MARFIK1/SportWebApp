@@ -26,7 +26,9 @@ export default function LoginForm({ onSwitchView } : { onSwitchView: (view: "log
                 nickname: data.user.nickname,
                 email: data.user.email,
                 profile_picture: data.user.profile_picture,
-                role: data.user.role
+                role: data.user.role,
+                first_name: data.user.first_name ?? "",
+                last_name: data.user.last_name ?? ""
             })
             router.push("/profile");
         }

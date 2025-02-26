@@ -106,3 +106,18 @@ html, body {
 .slide-in-right {
     animation: slide-right 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
+
+.ql-container, .ql-editor {
+    border: none !important;
+    outline: none !important;
+    max-height: 480px;
+    min-height: 250px;
+    overflow-y: auto;
+    padding-bottom: 20px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.ql-editor::-webkit-scrollbar {
+    display: none;
+}

@@ -1,5 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
+import "react-quill/dist/quill.snow.css";
+
+const ReactQuill = dynamic(() => import("react-quill"), { ssr: false });
 
 export default function ArticleForm({ mode, articleData, onSubmit } : { mode: "create" | "edit", articleData?: { title: string; content: string; tags: string; imageUrl?: string }, onSubmit: (formData: FormData) => void }) {
     const [title, setTitle] = useState(articleData?.title || "");
@@ -65,23 +69,34 @@ export default function ArticleForm({ mode, articleData, onSubmit } : { mode: "c
                         required
                     />
                 </div>
-                <div>
+                <div className="mb-16">
                     <label
                         htmlFor="content"
                         className="block text-sm font-medium text-gray-200"
                     >
                         Content
                     </label>
-                    <textarea
-                        id="content"
+                    <ReactQuill
+                        theme="snow"
                         value={content}
-                        onChange={(e) => setContent(e.target.value)}
-                        className="w-full px-4 py-2 border rounded bg-gray-800 text-white"
-                        rows={12}
-                        required
+                        onChange={setContent}
+                        className="bg-gray-200 text-black"
+                        style={{
+                            maxHeight: "500px", 
+                            minHeight: "250px",
+                            overflow: "hidden"
+                        }}
                     />
+                    <style>
+                        {`.ql-editor iframe {
+                            width: 100%;
+                            height: 500px !important; /* Wymuszamy większą wysokość */
+                            max-width: 100%;
+                            border-radius: 8px;
+                        }`}
+                    </style>
                 </div>
-                <div>
+                <div className="mb-8">
                     <label
                         htmlFor="tags"
                         className="block text-sm font-medium text-gray-200"
@@ -112,7 +127,7 @@ export default function ArticleForm({ mode, articleData, onSubmit } : { mode: "c
                     {
                         mode === "edit" && currentImagePath && (
                             <p className="text-sm text-gray-400 mt-2">
-                                Current Image: <span className="text-gray-200">{currentImagePath}</span>
+                                Current Image: <span className="text-gray-200">{currentImagePath.replace("/uploads/", "")}</span>
                             </p>
                         )
                     }
