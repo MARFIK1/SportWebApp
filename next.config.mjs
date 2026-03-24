@@ -13,23 +13,6 @@ const nextConfig = {
             }
         ],
     },
-    env: {
-        DATABASE_URL: process.env.DATABASE_URL
-    },
-    async redirects() {
-        return [
-            {
-                source: '/verify',
-                destination: '/user/verify',
-                permanent: true
-            },
-            {
-                source: '/reset-password',
-                destination: '/user/reset-password',
-                permanent: true
-            }
-        ]
-    }
 }
 
 export default nextConfig;

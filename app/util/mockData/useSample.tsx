@@ -1,1 +1,1 @@
-export const USE_SAMPLE = false;
+export const USE_SAMPLE = true;

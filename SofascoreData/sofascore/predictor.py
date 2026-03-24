@@ -1,0 +1,1600 @@
+"""
+Universal Match Predictor.
+"""
+
+import json
+import os
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
+from pathlib import Path
+
+from sklearn.ensemble import (
+    RandomForestClassifier, VotingClassifier, GradientBoostingClassifier,
+    StackingClassifier,
+)
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import (
+    accuracy_score, classification_report,
+    precision_score, recall_score, f1_score,
+    mean_absolute_error, mean_squared_error, r2_score,
+)
+from sklearn.base import clone
+from sklearn.ensemble import RandomForestRegressor
+import joblib
+import time
+import psutil
+import tempfile
+
+try:
+    from xgboost import XGBClassifier, XGBRegressor
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+
+try:
+    from lightgbm import LGBMClassifier, LGBMRegressor
+    HAS_LIGHTGBM = True
+except ImportError:
+    HAS_LIGHTGBM = False
+
+try:
+    from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
+except ImportError:
+    HAS_TORCH = False
+
+
+COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
+
+
+META_COLUMNS = {
+    'event_id', 'date', 'round', 'home_team', 'away_team',
+    'comp_type', 'country', 'competition', 'league',
+    'home_score', 'away_score', 'home_score_ht', 'away_score_ht', 'status',
+}
+
+LABEL_COLUMNS = {
+    'label_result', 'label_result_int', 'label_home_goals', 'label_away_goals',
+    'label_total_goals', 'label_btts', 'label_over_2_5', 'label_over_1_5',
+    'label_total_corners', 'label_corners_over_8_5', 'label_corners_over_10_5',
+    'label_total_cards', 'label_cards_over_3_5', 'label_cards_over_4_5',
+}
+
+
+FEATURE_COLUMNS = [
+    'home_rest_days', 'away_rest_days', 'rest_days_diff',
+    'home_is_congested', 'away_is_congested',
+    'home_form_points', 'away_form_points', 'form_points_diff',
+    'home_form_avg_points', 'away_form_avg_points',
+    'home_form_wins', 'away_form_wins',
+    'home_form_draws', 'away_form_draws',
+    'home_form_losses', 'away_form_losses',
+    'home_form_goals_for', 'away_form_goals_for',
+    'home_form_goals_against', 'away_form_goals_against',
+    'home_form_goal_diff', 'away_form_goal_diff',
+    'home_form_xg_for', 'away_form_xg_for',
+    'home_form_xg_against', 'away_form_xg_against',
+    'home_form_xg_diff', 'away_form_xg_diff', 'xg_form_diff',
+    'home_form_clean_sheets', 'away_form_clean_sheets',
+    'home_form10_points', 'away_form10_points', 'form10_points_diff',
+    'home_form10_avg_points', 'away_form10_avg_points',
+    'home_form10_wins', 'away_form10_wins',
+    'home_form10_goals_for', 'away_form10_goals_for',
+    'home_form10_goals_against', 'away_form10_goals_against',
+    'home_form10_goal_diff', 'away_form10_goal_diff',
+    'home_form10_xg_for', 'away_form10_xg_for',
+    'home_form10_xg_diff', 'away_form10_xg_diff',
+    'home_form10_clean_sheets', 'away_form10_clean_sheets',
+    'home_avg_player_rating', 'away_avg_player_rating', 'player_rating_diff',
+    'home_top_scorer_goals', 'away_top_scorer_goals',
+    'home_total_team_goals', 'away_total_team_goals',
+    'home_total_team_assists', 'away_total_team_assists',
+    'home_avg_minutes_starters', 'away_avg_minutes_starters',
+    'home_squad_avg_age', 'away_squad_avg_age',
+    'home_table_position', 'away_table_position', 'position_diff',
+    'home_table_points', 'away_table_points', 'points_diff',
+    'home_table_goal_diff', 'away_table_goal_diff',
+    'home_table_ppg', 'away_table_ppg', 'ppg_diff',
+    'h2h_matches', 'h2h_home_wins', 'h2h_away_wins', 'h2h_draws',
+    'h2h_home_goals', 'h2h_away_goals', 'h2h_home_win_rate',
+    'home_momentum_points', 'away_momentum_points', 'momentum_diff',
+    'home_momentum_goals', 'away_momentum_goals',
+    'home_momentum_xg', 'away_momentum_xg',
+    'home_venue_form_points', 'away_venue_form_points', 'venue_ppg_diff',
+    'home_venue_form_ppg', 'away_venue_form_ppg',
+    'home_venue_form_goals_for', 'away_venue_form_goals_for',
+    'home_venue_form_goals_against', 'away_venue_form_goals_against',
+    'home_venue_form_clean_sheets', 'away_venue_form_clean_sheets',
+    'home_fatigue_matches', 'away_fatigue_matches', 'fatigue_diff',
+    'home_fatigue_avg_days', 'away_fatigue_avg_days',
+    'home_sos_avg_position', 'away_sos_avg_position', 'sos_diff',
+    'home_sos_avg_ppg', 'away_sos_avg_ppg',
+    'home_clean_sheet_pct', 'away_clean_sheet_pct',
+    'home_failed_to_score_pct', 'away_failed_to_score_pct',
+    'home_elo', 'away_elo', 'elo_diff',
+    'home_wform_ppg', 'away_wform_ppg', 'wform_ppg_diff',
+    'home_wform_goals_for', 'away_wform_goals_for',
+    'home_wform_goals_against', 'away_wform_goals_against',
+    'home_wform_xg_diff', 'away_wform_xg_diff', 'wform_xg_diff',
+    'home_wform_clean_sheets', 'away_wform_clean_sheets',
+    'odds_home_win', 'odds_draw', 'odds_away_win',
+    'odds_home_prob', 'odds_draw_prob', 'odds_away_prob',
+    'odds_overround',
+    'odds_over_2_5', 'odds_under_2_5', 'odds_over_2_5_prob',
+    'odds_btts_yes', 'odds_btts_no', 'odds_btts_prob',
+]
+
+RESULT_MAP = {0: 'HOME', 1: 'DRAW', 2: 'AWAY'}
+BINARY_MAP = {0: 'NO', 1: 'YES'}
+
+TARGET_CONFIGS = {
+    'result': {
+        'label_col': 'label_result_int',
+        'num_classes': 3,
+        'class_names': RESULT_MAP,
+        'task': 'multiclass',
+    },
+    'btts': {
+        'label_col': 'label_btts',
+        'num_classes': 2,
+        'class_names': {0: 'NO', 1: 'YES'},
+        'task': 'binary',
+    },
+    'over_2_5': {
+        'label_col': 'label_over_2_5',
+        'num_classes': 2,
+        'class_names': {0: 'UNDER', 1: 'OVER'},
+        'task': 'binary',
+    },
+    'over_1_5': {
+        'label_col': 'label_over_1_5',
+        'num_classes': 2,
+        'class_names': {0: 'UNDER', 1: 'OVER'},
+        'task': 'binary',
+    },
+    'corners_over_8_5': {
+        'label_col': 'label_corners_over_8_5',
+        'num_classes': 2,
+        'class_names': {0: 'UNDER', 1: 'OVER'},
+        'task': 'binary',
+    },
+    'corners_over_10_5': {
+        'label_col': 'label_corners_over_10_5',
+        'num_classes': 2,
+        'class_names': {0: 'UNDER', 1: 'OVER'},
+        'task': 'binary',
+    },
+    'cards_over_3_5': {
+        'label_col': 'label_cards_over_3_5',
+        'num_classes': 2,
+        'class_names': {0: 'UNDER', 1: 'OVER'},
+        'task': 'binary',
+    },
+    'cards_over_4_5': {
+        'label_col': 'label_cards_over_4_5',
+        'num_classes': 2,
+        'class_names': {0: 'UNDER', 1: 'OVER'},
+        'task': 'binary',
+    },
+    'total_goals': {
+        'label_col': 'label_total_goals',
+        'task': 'regression',
+    },
+    'total_corners': {
+        'label_col': 'label_total_corners',
+        'task': 'regression',
+    },
+    'total_cards': {
+        'label_col': 'label_total_cards',
+        'task': 'regression',
+    },
+}
+
+
+class UniversalPredictor:
+
+    def __init__(self, data_dir: str):
+        self.data_dir = Path(data_dir)
+        self.models = {}
+        self.scalers = {}
+        self.feature_columns_by_target = {}
+        self.scaler = StandardScaler()
+        self.trained = False
+        self.feature_columns = []   # Backward compat (result target)
+        self.training_stats = {}
+        
+    def discover_all_competitions(self) -> Dict[str, Dict[str, List[str]]]:
+        discovered = {}
+
+        for comp_type in COMPETITION_TYPES:
+            comp_dir = self.data_dir / comp_type
+            if not comp_dir.exists():
+                continue
+
+            discovered[comp_type] = {}
+
+            if comp_type == 'european':
+                # european/{competition}/ - flat structure, no country subfolder
+                for comp_subdir in comp_dir.iterdir():
+                    if not comp_subdir.is_dir():
+                        continue
+                    features_dir = comp_subdir / 'features'
+                    if features_dir.exists() and any(features_dir.glob('*.json')):
+                        discovered[comp_type].setdefault('uefa', []).append(comp_subdir.name)
+                continue
+
+            for country_dir in comp_dir.iterdir():
+                if not country_dir.is_dir():
+                    continue
+                country = country_dir.name
+                discovered[comp_type][country] = []
+
+                for comp_subdir in country_dir.iterdir():
+                    if not comp_subdir.is_dir():
+                        continue
+                    features_dir = comp_subdir / 'features'
+                    if features_dir.exists() and any(features_dir.glob('*.json')):
+                        discovered[comp_type][country].append(comp_subdir.name)
+
+        return discovered
+    
+    def discover_leagues(self) -> Dict[str, List[str]]:
+        """Backwards compatible wrapper for discover_all_competitions."""
+        all_comps = self.discover_all_competitions()
+        return all_comps.get('league', {})
+    
+    def load_competition_data(self, comp_type: str, country: str, competition: str,
+                               seasons: Optional[List[str]] = None) -> pd.DataFrame:
+        if comp_type == 'european':
+            features_path = self.data_dir / comp_type / competition / 'features'
+        else:
+            features_path = self.data_dir / comp_type / country / competition / 'features'
+        
+        if not features_path.exists():
+            return pd.DataFrame()
+        
+        all_seasons_path = features_path / 'features_all_seasons.json'
+        if all_seasons_path.exists() and seasons is None:
+            with open(all_seasons_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            df = pd.DataFrame(data.get('samples', []))
+            df['comp_type'] = comp_type
+            df['country'] = country
+            df['competition'] = competition
+            return df
+        
+        dfs = []
+        for file in features_path.glob('features_*.json'):
+            if 'all_seasons' in file.name:
+                continue
+            with open(file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            season_df = pd.DataFrame(data.get('samples', []))
+            season_df['comp_type'] = comp_type
+            season_df['country'] = country
+            season_df['competition'] = competition
+            dfs.append(season_df)
+        
+        if dfs:
+            return pd.concat(dfs, ignore_index=True)
+        return pd.DataFrame()
+    
+    def load_league_data(self, country: str, league: str, 
+                         seasons: Optional[List[str]] = None) -> pd.DataFrame:
+        """Load feature data for a specific league (backwards compatible)."""
+        df = self.load_competition_data('league', country, league, seasons)
+        if not df.empty:
+            df['league'] = league  # backwards compatibility
+        return df
+    
+    def load_all_data(self, comp_types: Optional[List[str]] = None,
+                      countries: Optional[List[str]] = None) -> pd.DataFrame:
+        all_data = []
+        discovered = self.discover_all_competitions()
+        
+        types_to_load = comp_types if comp_types else COMPETITION_TYPES
+        
+        for comp_type in types_to_load:
+            if comp_type not in discovered:
+                continue
+            
+            for country, competitions in discovered[comp_type].items():
+                if countries and country not in countries:
+                    continue
+                    
+                for competition in competitions:
+                    df = self.load_competition_data(comp_type, country, competition)
+                    if not df.empty:
+                        if 'label_result_int' in df.columns:
+                            df_finished = df[df['label_result_int'].notna()]
+                            if not df_finished.empty:
+                                all_data.append(df_finished)
+                                print(f"  Loaded: {comp_type}/{country}/{competition} ({len(df_finished)} matches)")
+        
+        if all_data:
+            return pd.concat(all_data, ignore_index=True)
+        return pd.DataFrame()
+    
+    def load_all_leagues(self, countries: Optional[List[str]] = None) -> pd.DataFrame:
+        """Backwards compatible wrapper - loads all competition types."""
+        return self.load_all_data(countries=countries)
+    
+    def prepare_data(self, df: pd.DataFrame, target: str = 'result') -> Tuple[pd.DataFrame, pd.Series, Dict]:
+        """Returns (X, y, meta) with auto-discovered numeric features."""
+        config = TARGET_CONFIGS[target]
+        label_col = config['label_col']
+
+        if label_col not in df.columns:
+            raise ValueError(f"Missing '{label_col}' column for target '{target}'")
+
+        skip = META_COLUMNS | LABEL_COLUMNS
+        numeric_cols = df.select_dtypes(include='number').columns.tolist()
+        discovered = [c for c in numeric_cols if c not in skip]
+
+        known = [c for c in FEATURE_COLUMNS if c in discovered]
+        new_features = [c for c in discovered if c not in set(FEATURE_COLUMNS)]
+        feature_cols = known + new_features
+
+        if not feature_cols:
+            raise ValueError("No feature columns found in data")
+
+        if new_features:
+            print(f"  Auto-discovered {len(new_features)} new features beyond reference list")
+
+        group_cols = [c for c in ['comp_type', 'country', 'competition'] if c in df.columns]
+        extra_cols = (['date'] if 'date' in df.columns else []) + group_cols
+
+        cols_needed = list(set(feature_cols + [label_col] + extra_cols))
+        df_clean = df[cols_needed].dropna(subset=feature_cols + [label_col])
+
+        X = df_clean[feature_cols]
+        if config.get('task') == 'regression':
+            y = df_clean[label_col].astype(float)
+        else:
+            y = df_clean[label_col].astype(int)
+
+        meta = {}
+        if 'date' in df_clean.columns:
+            meta['date'] = df_clean['date']
+        for col in group_cols:
+            meta[col] = df_clean[col]
+
+        return X, y, meta
+    
+    def train_all_models(self, df: pd.DataFrame, test_size: float = 0.2,
+                         targets: Optional[List[str]] = None) -> Dict:
+        if targets is None:
+            targets = ['result', 'btts', 'over_2_5', 'over_1_5']
+
+        all_results = {}
+        for target in targets:
+            if target not in TARGET_CONFIGS:
+                print(f"\n  [SKIP] Target '{target}' - unknown target")
+                continue
+            config = TARGET_CONFIGS[target]
+            label_col = config['label_col']
+            if label_col not in df.columns:
+                print(f"\n  [SKIP] Target '{target}' - missing column '{label_col}' in data")
+                continue
+
+            print(f"\n{'='*70}")
+            task_label = config.get('task', 'multiclass').upper()
+            print(f"  TRAINING TARGET: {target.upper()} [{task_label}]")
+            print(f"{'='*70}")
+
+            results = self._train_target(df, target, test_size)
+            all_results[target] = results
+
+        self.trained = True
+
+        if 'result' in self.feature_columns_by_target:
+            self.feature_columns = self.feature_columns_by_target['result']
+        if 'result' in self.scalers:
+            self.scaler = self.scalers['result']
+
+        print("\n" + "=" * 70)
+        print("ALL TARGETS TRAINING COMPLETE")
+        print("=" * 70)
+        for target, results in all_results.items():
+            if not results:
+                continue
+            config = TARGET_CONFIGS.get(target, {})
+            if config.get('task') == 'regression':
+                best = min(results, key=results.get)
+                print(f"  {target:20s}: best = {best} (MAE={results[best]:.3f})")
+            else:
+                best = max(results, key=results.get)
+                print(f"  {target:20s}: best = {best} ({results[best]:.1%})")
+
+        return all_results
+
+    def _build_model_configs(self, target: str, y_train: pd.Series = None) -> Dict:
+        config = TARGET_CONFIGS[target]
+        is_binary = config['task'] == 'binary'
+
+        spw = 1.0
+        if is_binary and y_train is not None:
+            neg = (y_train == 0).sum()
+            pos = (y_train == 1).sum()
+            if pos > 0:
+                spw = neg / pos
+
+        model_configs = {
+            'Logistic Regression': {
+                'model': LogisticRegression(
+                    max_iter=1000, C=0.5, class_weight='balanced', random_state=42
+                ),
+                'scaled': True,
+                'sample_weight': False,
+            },
+            'Random Forest': {
+                'model': RandomForestClassifier(
+                    n_estimators=400, max_depth=15, min_samples_split=10,
+                    min_samples_leaf=5, class_weight='balanced_subsample',
+                    random_state=42, n_jobs=-1
+                ),
+                'scaled': False,
+                'sample_weight': False,
+            },
+            'KNN': {
+                'model': KNeighborsClassifier(n_neighbors=11, weights='distance', n_jobs=-1),
+                'scaled': True,
+                'sample_weight': False,
+            },
+            'MLP': {
+                'model': MLPClassifier(
+                    hidden_layer_sizes=(128, 64, 32), max_iter=600,
+                    learning_rate_init=0.001, early_stopping=True,
+                    validation_fraction=0.15, random_state=42
+                ),
+                'scaled': True,
+                'sample_weight': True,  # pass sample_weight for imbalanced targets
+            },
+        }
+
+        if HAS_XGBOOST:
+            xgb_params = dict(
+                n_estimators=400, max_depth=7, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.8,
+                min_child_weight=3, gamma=0.1,
+                random_state=42, n_jobs=-1,
+            )
+            if is_binary:
+                xgb_params['eval_metric'] = 'logloss'
+                xgb_params['objective'] = 'binary:logistic'
+                xgb_params['scale_pos_weight'] = spw
+            else:
+                xgb_params['eval_metric'] = 'mlogloss'
+            model_configs['XGBoost'] = {
+                'model': XGBClassifier(**xgb_params),
+                'scaled': False,
+                'sample_weight': True,
+            }
+
+        if HAS_LIGHTGBM:
+            lgb_params = dict(
+                n_estimators=400, max_depth=12, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.8, is_unbalance=True,
+                min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
+                random_state=42, n_jobs=-1, verbose=-1,
+            )
+            if is_binary:
+                lgb_params['objective'] = 'binary'
+            model_configs['LightGBM'] = {
+                'model': LGBMClassifier(**lgb_params),
+                'scaled': False,
+                'sample_weight': False,
+            }
+
+        return model_configs
+
+    def _train_target(self, df: pd.DataFrame, target: str, test_size: float) -> Dict:
+        config = TARGET_CONFIGS[target]
+        is_regression = config.get('task') == 'regression'
+
+        X, y, meta = self.prepare_data(df, target)
+        feature_cols = X.columns.tolist()
+
+        print(f"\n  Dataset: {len(X)} matches, {len(feature_cols)} features")
+        if is_regression:
+            print(f"  Label stats: mean={y.mean():.2f}, std={y.std():.2f}, "
+                  f"min={y.min():.0f}, max={y.max():.0f}")
+        else:
+            class_names = config['class_names']
+            print(f"  Class distribution:")
+            for cls, name in class_names.items():
+                count = (y == cls).sum()
+                print(f"    {name}: {count} ({count / len(y) * 100:.1f}%)")
+
+        dates = meta.get('date')
+
+        if dates is not None:
+            group_parts = []
+            for col in ['comp_type', 'country', 'competition']:
+                if col in meta:
+                    group_parts.append(meta[col].astype(str))
+
+            if group_parts:
+                comp_groups = group_parts[0]
+                for part in group_parts[1:]:
+                    comp_groups = comp_groups + '/' + part
+            else:
+                comp_groups = pd.Series('all', index=X.index)
+
+            train_idx, test_idx = [], []
+            for group_name in comp_groups.unique():
+                mask = comp_groups == group_name
+                group_dates = dates[mask].sort_values()
+                n = len(group_dates)
+                split = int(n * (1 - test_size))
+
+                if split < 5 or (n - split) < 5:
+                    train_idx.extend(group_dates.index.tolist())
+                    continue
+                train_idx.extend(group_dates.iloc[:split].index.tolist())
+                test_idx.extend(group_dates.iloc[split:].index.tolist())
+
+            X_train, X_test = X.loc[train_idx], X.loc[test_idx]
+            y_train, y_test = y.loc[train_idx], y.loc[test_idx]
+            n_comps = comp_groups.nunique()
+            print(f"\n  Per-competition temporal split ({n_comps} competitions):")
+            print(f"    Train: {len(X_train)}, Test: {len(X_test)}")
+        else:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=42, stratify=y
+            )
+            print(f"\n  Random split: Train: {len(X_train)}, Test: {len(X_test)}")
+
+        corr_matrix = X_train.corr().abs()
+        upper_tri = corr_matrix.where(
+            np.triu(np.ones(corr_matrix.shape, dtype=bool), k=1)
+        )
+        corr_drop = [col for col in upper_tri.columns if any(upper_tri[col] > 0.95)]
+        if corr_drop:
+            print(f"  Correlation filter: removing {len(corr_drop)} features (r > 0.95)")
+            X_train = X_train.drop(columns=corr_drop)
+            X_test = X_test.drop(columns=corr_drop)
+            feature_cols = [c for c in feature_cols if c not in set(corr_drop)]
+
+        if is_regression:
+            from sklearn.feature_selection import mutual_info_regression
+            mi_scores = mutual_info_regression(X_train, y_train, random_state=42, n_neighbors=5)
+        else:
+            from sklearn.feature_selection import mutual_info_classif
+            mi_scores = mutual_info_classif(X_train, y_train, random_state=42, n_neighbors=5)
+        mi_series = pd.Series(mi_scores, index=X_train.columns).sort_values(ascending=False)
+
+        task = config.get('task', 'multiclass')
+        if task in ('binary', 'regression'):
+            mi_threshold = 0.003
+        else:
+            mi_threshold = 0.005
+
+        useful_features = mi_series[mi_series > mi_threshold].index.tolist()
+
+        MIN_FEATURES = 10
+        if len(useful_features) < MIN_FEATURES:
+            useful_features = mi_series.head(MIN_FEATURES).index.tolist()
+
+        max_features = 60
+        if len(useful_features) > max_features:
+            useful_features = useful_features[:max_features]
+
+        mi_removed = len(X_train.columns) - len(useful_features)
+        if mi_removed > 0:
+            print(f"  MI selection: keeping {len(useful_features)} of {len(X_train.columns)} "
+                  f"(threshold={mi_threshold}, removed {mi_removed})")
+            X_train = X_train[useful_features]
+            X_test = X_test[useful_features]
+            feature_cols = useful_features
+
+        print(f"  Top 5 features (MI): {', '.join(mi_series.head(5).index)}")
+        print(f"  Final features: {len(feature_cols)}")
+
+        self.feature_columns_by_target[target] = feature_cols
+
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        self.scalers[target] = scaler
+
+        if is_regression:
+            return self._train_regression_models(
+                target, config, X_train, X_test, X_train_scaled, X_test_scaled,
+                y_train, y_test, feature_cols, scaler, X, meta, df
+            )
+
+        from sklearn.utils.class_weight import compute_sample_weight
+        sample_weights = compute_sample_weight('balanced', y_train)
+
+        model_configs = self._build_model_configs(target, y_train=y_train)
+
+        self.models[target] = {}
+        results = {}
+        detailed_metrics = {}
+
+        is_binary = config['task'] == 'binary'
+        avg_method = 'binary' if is_binary else 'weighted'
+
+        print(f"\n  Training models...")
+        for name, mc in model_configs.items():
+            X_tr = X_train_scaled if mc['scaled'] else X_train
+            X_te = X_test_scaled if mc['scaled'] else X_test
+
+            base_model = mc['model']
+
+            proc = psutil.Process()
+            mem_before = proc.memory_info().rss / 1024 / 1024
+            cpu_before = proc.cpu_times()
+            t0 = time.time()
+
+            try:
+                if mc.get('sample_weight'):
+                    base_model.fit(X_tr, y_train, sample_weight=sample_weights)
+                else:
+                    base_model.fit(X_tr, y_train)
+                model = base_model
+            except Exception as e:
+                print(f"    {name}: training failed ({e})")
+                continue
+
+            train_time = time.time() - t0
+            cpu_after = proc.cpu_times()
+            cpu_train_s = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
+            mem_after = proc.memory_info().rss / 1024 / 1024
+            mem_delta = max(0.1, mem_after - mem_before)
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
+                tmp_path = tmp.name
+            joblib.dump(model, tmp_path, compress=3)
+            model_size_kb = os.path.getsize(tmp_path) / 1024
+            os.unlink(tmp_path)
+
+            t_pred = time.time()
+            y_pred = model.predict(X_te)
+            predict_time_ms = (time.time() - t_pred) * 1000
+            acc = accuracy_score(y_test, y_pred)
+
+            from collections import Counter
+            pred_dist = Counter(y_pred.tolist())
+            if len(pred_dist) == 1:
+                print(f"    WARNING: {name} predicts only class {list(pred_dist.keys())[0]}!")
+
+            prec = precision_score(y_test, y_pred, average=avg_method, zero_division=0)
+            rec = recall_score(y_test, y_pred, average=avg_method, zero_division=0)
+            f1 = f1_score(y_test, y_pred, average=avg_method, zero_division=0)
+
+            self.models[target][name] = {
+                'model': model, 'scaled': mc['scaled'], 'accuracy': acc,
+                'precision': prec, 'recall': rec, 'f1': f1,
+                'train_time_s': round(train_time, 2),
+                'predict_time_ms': round(predict_time_ms, 2),
+                'cpu_time_s': round(cpu_train_s, 2),
+                'memory_mb': round(mem_delta, 1),
+                'model_size_kb': round(model_size_kb, 1),
+            }
+            results[name] = acc
+            detailed_metrics[name] = {
+                'accuracy': round(acc, 4), 'precision': round(prec, 4),
+                'recall': round(rec, 4), 'f1': round(f1, 4),
+                'train_time_s': round(train_time, 2),
+                'predict_time_ms': round(predict_time_ms, 2),
+                'cpu_time_s': round(cpu_train_s, 2),
+                'memory_mb': round(mem_delta, 1),
+                'model_size_kb': round(model_size_kb, 1),
+            }
+            print(f"    {name}: acc={acc:.1%} f1={f1:.1%} [{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
+
+        tree_models = ['Random Forest', 'XGBoost', 'LightGBM']
+        ensemble_estimators = []
+        for name in tree_models:
+            if name in self.models[target]:
+                ensemble_estimators.append(
+                    (name.lower().replace(' ', '_'), clone(self.models[target][name]['model']))
+                )
+
+        if len(ensemble_estimators) >= 2:
+            proc = psutil.Process()
+            mem_before_ens = proc.memory_info().rss / 1024 / 1024
+            cpu_before_ens = proc.cpu_times()
+            t0 = time.time()
+            ensemble = VotingClassifier(estimators=ensemble_estimators, voting='soft', n_jobs=-1)
+            ensemble.fit(X_train, y_train, sample_weight=sample_weights)
+            ens_time = time.time() - t0
+            cpu_after_ens = proc.cpu_times()
+            cpu_ens_s = (cpu_after_ens.user - cpu_before_ens.user) + (cpu_after_ens.system - cpu_before_ens.system)
+            mem_ens = max(0.1, proc.memory_info().rss / 1024 / 1024 - mem_before_ens)
+
+            t_pred = time.time()
+            y_ens = ensemble.predict(X_test)
+            pred_time_ens = (time.time() - t_pred) * 1000
+            acc_ens = accuracy_score(y_test, y_ens)
+            prec_ens = precision_score(y_test, y_ens, average=avg_method, zero_division=0)
+            rec_ens = recall_score(y_test, y_ens, average=avg_method, zero_division=0)
+            f1_ens = f1_score(y_test, y_ens, average=avg_method, zero_division=0)
+            self.models[target]['Ensemble'] = {
+                'model': ensemble, 'scaled': False, 'accuracy': acc_ens,
+                'precision': prec_ens, 'recall': rec_ens, 'f1': f1_ens,
+                'train_time_s': round(ens_time, 2),
+                'predict_time_ms': round(pred_time_ens, 2),
+                'cpu_time_s': round(cpu_ens_s, 2),
+                'memory_mb': round(mem_ens, 1),
+            }
+            results['Ensemble'] = acc_ens
+            detailed_metrics['Ensemble'] = {
+                'accuracy': round(acc_ens, 4), 'precision': round(prec_ens, 4),
+                'recall': round(rec_ens, 4), 'f1': round(f1_ens, 4),
+                'train_time_s': round(ens_time, 2), 'predict_time_ms': round(pred_time_ens, 2),
+                'cpu_time_s': round(cpu_ens_s, 2), 'memory_mb': round(mem_ens, 1),
+            }
+            print(f"    Ensemble: acc={acc_ens:.1%} f1={f1_ens:.1%} [{ens_time:.1f}s, pred={pred_time_ens:.1f}ms]")
+
+        if len(ensemble_estimators) >= 2:
+            stacking_estimators = []
+            for name in tree_models:
+                if name in self.models[target]:
+                    stacking_estimators.append(
+                        (name.lower().replace(' ', '_'), clone(self.models[target][name]['model']))
+                    )
+            proc = psutil.Process()
+            mem_before_st = proc.memory_info().rss / 1024 / 1024
+            cpu_before_st = proc.cpu_times()
+            t0 = time.time()
+            stacking = StackingClassifier(
+                estimators=stacking_estimators,
+                final_estimator=LogisticRegression(max_iter=1000, C=1.0),
+                cv=3, stack_method='predict_proba', n_jobs=-1
+            )
+            stacking.fit(X_train, y_train, sample_weight=sample_weights)
+            stack_time = time.time() - t0
+            cpu_after_st = proc.cpu_times()
+            cpu_stack_s = (cpu_after_st.user - cpu_before_st.user) + (cpu_after_st.system - cpu_before_st.system)
+            mem_stack = max(0.1, proc.memory_info().rss / 1024 / 1024 - mem_before_st)
+
+            t_pred = time.time()
+            y_stack = stacking.predict(X_test)
+            pred_time_st = (time.time() - t_pred) * 1000
+            acc_stack = accuracy_score(y_test, y_stack)
+            prec_stack = precision_score(y_test, y_stack, average=avg_method, zero_division=0)
+            rec_stack = recall_score(y_test, y_stack, average=avg_method, zero_division=0)
+            f1_stack = f1_score(y_test, y_stack, average=avg_method, zero_division=0)
+            self.models[target]['Stacking'] = {
+                'model': stacking, 'scaled': False, 'accuracy': acc_stack,
+                'precision': prec_stack, 'recall': rec_stack, 'f1': f1_stack,
+                'train_time_s': round(stack_time, 2),
+                'predict_time_ms': round(pred_time_st, 2),
+                'cpu_time_s': round(cpu_stack_s, 2),
+                'memory_mb': round(mem_stack, 1),
+            }
+            results['Stacking'] = acc_stack
+            detailed_metrics['Stacking'] = {
+                'accuracy': round(acc_stack, 4), 'precision': round(prec_stack, 4),
+                'recall': round(rec_stack, 4), 'f1': round(f1_stack, 4),
+                'train_time_s': round(stack_time, 2), 'predict_time_ms': round(pred_time_st, 2),
+                'cpu_time_s': round(cpu_stack_s, 2), 'memory_mb': round(mem_stack, 1),
+            }
+            print(f"    Stacking: acc={acc_stack:.1%} f1={f1_stack:.1%} [{stack_time:.1f}s, pred={pred_time_st:.1f}ms]")
+
+        if HAS_TORCH and not is_regression:
+            try:
+                lstm = LSTMPredictor(num_classes=config['num_classes'], epochs=50)
+                lstm_meta = dict(meta)
+                for col in ['home_team', 'away_team']:
+                    if col in df.columns:
+                        lstm_meta[col] = df[col].loc[X_train.index]
+
+                proc = psutil.Process()
+                mem_before_lstm = proc.memory_info().rss / 1024 / 1024
+                cpu_before_lstm = proc.cpu_times()
+                t0 = time.time()
+                lstm.fit(X_train, y_train, meta=lstm_meta)
+                lstm_time = time.time() - t0
+                cpu_after_lstm = proc.cpu_times()
+                cpu_lstm_s = (cpu_after_lstm.user - cpu_before_lstm.user) + (cpu_after_lstm.system - cpu_before_lstm.system)
+                mem_lstm = max(0.1, proc.memory_info().rss / 1024 / 1024 - mem_before_lstm)
+
+                if lstm._fitted:
+                    lstm_state = lstm.get_state()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
+                        tmp_path = tmp.name
+                    joblib.dump(lstm_state, tmp_path, compress=3)
+                    lstm_size_kb = os.path.getsize(tmp_path) / 1024
+                    os.unlink(tmp_path)
+
+                    lstm_test_meta = dict(meta)
+                    for col in ['home_team', 'away_team']:
+                        if col in df.columns:
+                            lstm_test_meta[col] = df[col].loc[X_test.index]
+                    home_seqs_te, away_seqs_te, valid_te = lstm.build_sequences(
+                        X_test, meta=lstm_test_meta
+                    )
+                    if valid_te.sum() > 0:
+                        y_test_valid = y_test.values[valid_te]
+
+                        t_pred = time.time()
+                        proba = lstm.predict_proba((home_seqs_te[valid_te], away_seqs_te[valid_te]))
+                        pred_time_lstm = (time.time() - t_pred) * 1000
+
+                        y_pred_lstm = np.argmax(proba, axis=1)
+                        acc_lstm = accuracy_score(y_test_valid, y_pred_lstm)
+                        prec_lstm = precision_score(y_test_valid, y_pred_lstm, average=avg_method, zero_division=0)
+                        rec_lstm = recall_score(y_test_valid, y_pred_lstm, average=avg_method, zero_division=0)
+                        f1_lstm = f1_score(y_test_valid, y_pred_lstm, average=avg_method, zero_division=0)
+
+                        self.models[target]['LSTM'] = {
+                            'model': lstm, 'scaled': False, 'accuracy': acc_lstm,
+                            'precision': prec_lstm, 'recall': rec_lstm, 'f1': f1_lstm,
+                            'type': 'lstm',
+                            'train_time_s': round(lstm_time, 2),
+                            'predict_time_ms': round(pred_time_lstm, 2),
+                            'cpu_time_s': round(cpu_lstm_s, 2),
+                            'memory_mb': round(mem_lstm, 1),
+                            'model_size_kb': round(lstm_size_kb, 1),
+                            'n_sequences': int(valid_te.sum()),
+                        }
+                        results['LSTM'] = acc_lstm
+                        detailed_metrics['LSTM'] = {
+                            'accuracy': round(acc_lstm, 4), 'precision': round(prec_lstm, 4),
+                            'recall': round(rec_lstm, 4), 'f1': round(f1_lstm, 4),
+                            'train_time_s': round(lstm_time, 2),
+                            'predict_time_ms': round(pred_time_lstm, 2),
+                            'cpu_time_s': round(cpu_lstm_s, 2),
+                            'memory_mb': round(mem_lstm, 1),
+                            'model_size_kb': round(lstm_size_kb, 1),
+                        }
+                        print(f"    LSTM: acc={acc_lstm:.1%} f1={f1_lstm:.1%} "
+                              f"[{lstm_time:.1f}s, pred={pred_time_lstm:.1f}ms, "
+                              f"{lstm_size_kb:.0f}KB, {valid_te.sum()} seqs]")
+            except Exception as e:
+                print(f"    LSTM: error ({e})")
+
+        self.training_stats[target] = {
+            'total_matches': len(X),
+            'train_matches': len(X_train),
+            'test_matches': len(X_test),
+            'features': len(feature_cols),
+            'feature_names': feature_cols,
+            'mi_scores_top10': mi_series.head(10).to_dict(),
+            'results': results,
+            'detailed_metrics': detailed_metrics,
+        }
+
+        best = max(results, key=results.get) if results else '?'
+        best_acc = results.get(best, 0)
+        print(f"\n  Best for {target}: {best} ({best_acc:.1%})")
+
+        return results
+
+    def _build_regression_configs(self) -> Dict:
+        from sklearn.ensemble import GradientBoostingRegressor
+
+        configs = {
+            'Random Forest': {
+                'model': RandomForestRegressor(
+                    n_estimators=500, max_depth=15, min_samples_split=8,
+                    min_samples_leaf=4, max_features='sqrt',
+                    random_state=42, n_jobs=-1
+                ),
+                'scaled': False,
+            },
+            'Gradient Boosting': {
+                'model': GradientBoostingRegressor(
+                    n_estimators=400, max_depth=5, learning_rate=0.03,
+                    subsample=0.8, min_samples_leaf=10,
+                    loss='huber', alpha=0.9,
+                    random_state=42
+                ),
+                'scaled': False,
+            },
+        }
+        if HAS_XGBOOST:
+            configs['XGBoost'] = {
+                'model': XGBRegressor(
+                    n_estimators=500, max_depth=7, learning_rate=0.02,
+                    subsample=0.8, colsample_bytree=0.8,
+                    min_child_weight=5, gamma=0.1, reg_alpha=0.1,
+                    random_state=42, n_jobs=-1
+                ),
+                'scaled': False,
+            }
+        if HAS_LIGHTGBM:
+            configs['LightGBM'] = {
+                'model': LGBMRegressor(
+                    n_estimators=500, max_depth=12, learning_rate=0.02,
+                    subsample=0.8, colsample_bytree=0.8,
+                    min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
+                    random_state=42, n_jobs=-1, verbose=-1
+                ),
+                'scaled': False,
+            }
+        return configs
+
+    def _train_regression_models(self, target, config, X_train, X_test,
+                                  X_train_scaled, X_test_scaled,
+                                  y_train, y_test, feature_cols, scaler,
+                                  X, meta, df) -> Dict:
+        model_configs = self._build_regression_configs()
+        self.models[target] = {}
+        results = {}
+        detailed_metrics = {}
+
+        print(f"\n  Training regression models...")
+        for name, mc in model_configs.items():
+            X_tr = X_train_scaled if mc['scaled'] else X_train
+            X_te = X_test_scaled if mc['scaled'] else X_test
+
+            proc = psutil.Process()
+            mem_before = proc.memory_info().rss / 1024 / 1024
+            cpu_before = proc.cpu_times()
+            t0 = time.time()
+            model = mc['model']
+            model.fit(X_tr, y_train)
+            train_time = time.time() - t0
+            cpu_after = proc.cpu_times()
+            cpu_train_s = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
+            mem_delta = max(0.1, proc.memory_info().rss / 1024 / 1024 - mem_before)
+
+            t_pred = time.time()
+            y_pred = model.predict(X_te)
+            predict_time_ms = (time.time() - t_pred) * 1000
+
+            mae = mean_absolute_error(y_test, y_pred)
+            rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
+            r2 = r2_score(y_test, y_pred)
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
+                tmp_path = tmp.name
+            joblib.dump(model, tmp_path, compress=3)
+            model_size_kb = os.path.getsize(tmp_path) / 1024
+            os.unlink(tmp_path)
+
+            self.models[target][name] = {
+                'model': model, 'scaled': mc['scaled'],
+                'mae': mae, 'rmse': rmse, 'r2': r2,
+                'train_time_s': round(train_time, 2),
+                'predict_time_ms': round(predict_time_ms, 2),
+                'cpu_time_s': round(cpu_train_s, 2),
+                'memory_mb': round(mem_delta, 1),
+                'model_size_kb': round(model_size_kb, 1),
+                'task': 'regression',
+            }
+            results[name] = mae  # MAE as primary metric
+            detailed_metrics[name] = {
+                'mae': round(mae, 4), 'rmse': round(rmse, 4), 'r2': round(r2, 4),
+                'train_time_s': round(train_time, 2),
+                'predict_time_ms': round(predict_time_ms, 2),
+                'cpu_time_s': round(cpu_train_s, 2),
+                'memory_mb': round(mem_delta, 1),
+                'model_size_kb': round(model_size_kb, 1),
+            }
+            print(f"    {name}: MAE={mae:.3f} RMSE={rmse:.3f} R²={r2:.3f} "
+                  f"[{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
+
+        self.training_stats[target] = {
+            'total_matches': len(X),
+            'train_matches': len(X_train),
+            'test_matches': len(X_test),
+            'features': len(feature_cols),
+            'feature_names': feature_cols,
+            'results': results,
+            'detailed_metrics': detailed_metrics,
+        }
+
+        best = min(results, key=results.get) if results else '?'
+        print(f"\n  Best for {target}: {best} (MAE={results.get(best, 0):.3f})")
+        return results
+    
+    def predict_match(self, features: Dict, model_name: str = 'Ensemble',
+                      target: str = 'result') -> Dict:
+        if not self.trained:
+            raise ValueError("Models not trained. Call train_all_models() first.")
+
+        target_models = self.models.get(target, {})
+        if model_name not in target_models:
+            raise ValueError(f"Model '{model_name}' not found for target '{target}'. "
+                             f"Available: {list(target_models.keys())}")
+
+        model_data = target_models[model_name]
+        model = model_data['model']
+        config = TARGET_CONFIGS[target]
+
+        feat_cols = self.feature_columns_by_target.get(target, self.feature_columns)
+        scaler = self.scalers.get(target, self.scaler)
+
+        if config.get('task') == 'regression' or model_data.get('task') == 'regression':
+            feature_values = [[features.get(col, 0) for col in feat_cols]]
+            X = pd.DataFrame(feature_values, columns=feat_cols)
+            X_pred = scaler.transform(X) if model_data.get('scaled') else X
+            y_pred = model.predict(X_pred)[0]
+            return {
+                'prediction': round(float(y_pred), 2),
+                'model': model_name,
+                'task': 'regression',
+            }
+
+        class_names = config['class_names']
+
+        if model_data.get('type') == 'lstm' and hasattr(model, 'predict_single'):
+            lstm_features = dict(features)
+            lstm_features['_home_team'] = features.get('home_team', features.get('_home_team', ''))
+            lstm_features['_away_team'] = features.get('away_team', features.get('_away_team', ''))
+            lstm_features['_date'] = features.get('date', features.get('_date', 'z'))
+            proba = model.predict_single(lstm_features)
+            pred = int(np.argmax(proba))
+
+            result = {
+                'prediction': class_names.get(pred, str(pred)),
+                'prediction_int': pred,
+                'model': model_name,
+                'probabilities': {
+                    class_names[i]: round(float(p) * 100, 1)
+                    for i, p in enumerate(proba)
+                },
+                'confidence': round(float(max(proba)) * 100, 1),
+            }
+            return result
+
+        feature_values = [[features.get(col, 0) for col in feat_cols]]
+        X = pd.DataFrame(feature_values, columns=feat_cols)
+
+        if model_data['scaled']:
+            X_pred = scaler.transform(X)
+        else:
+            X_pred = X
+
+        pred = model.predict(X_pred)[0]
+        proba = model.predict_proba(X_pred)[0] if hasattr(model, 'predict_proba') else None
+
+        result = {
+            'prediction': class_names.get(int(pred), str(pred)),
+            'prediction_int': int(pred),
+            'model': model_name,
+        }
+
+        if proba is not None:
+            result['probabilities'] = {
+                class_names[i]: round(float(p) * 100, 1)
+                for i, p in enumerate(proba)
+            }
+            result['confidence'] = round(float(max(proba)) * 100, 1)
+
+        return result
+
+    def predict_match_all_models(self, features: Dict, target: str = 'result') -> Dict:
+        if not self.trained:
+            raise ValueError("Models not trained. Call train_all_models() first.")
+
+        target_models = self.models.get(target, {})
+        if not target_models:
+            return {}
+
+        config = TARGET_CONFIGS[target]
+
+        predictions = {}
+        for name in target_models.keys():
+            predictions[name] = self.predict_match(features, name, target)
+
+        if config.get('task') == 'regression':
+            values = [p['prediction'] for p in predictions.values() if 'prediction' in p]
+            avg_val = round(np.mean(values), 2) if values else 0
+            predictions['consensus'] = {
+                'prediction': avg_val,
+                'min': round(min(values), 2) if values else 0,
+                'max': round(max(values), 2) if values else 0,
+                'n_models': len(values),
+                'task': 'regression',
+            }
+            return predictions
+
+        class_names = config['class_names']
+        from collections import Counter
+        votes = [p['prediction_int'] for p in predictions.values() if 'prediction_int' in p]
+        if not votes:
+            return predictions
+
+        vote_counter = Counter(votes)
+
+        votes_breakdown = {class_names.get(k, str(k)): v for k, v in vote_counter.items()}
+        for label in class_names.values():
+            votes_breakdown.setdefault(label, 0)
+
+        all_probs = [p.get('probabilities', {}) for p in predictions.values() if p.get('probabilities')]
+        avg_probabilities = {}
+        if all_probs:
+            for label in class_names.values():
+                avg_probabilities[label] = round(
+                    sum(p.get(label, 0) for p in all_probs) / len(all_probs), 1
+                )
+
+        top_vote = vote_counter.most_common(1)[0]
+        if avg_probabilities:
+            best_label = max(avg_probabilities, key=avg_probabilities.get)
+            consensus_prediction = best_label
+        else:
+            consensus_prediction = class_names.get(top_vote[0], str(top_vote[0]))
+
+        predictions['consensus'] = {
+            'prediction': consensus_prediction,
+            'agreement': f"{top_vote[1]}/{len(votes)}",
+            'agreement_pct': round(top_vote[1] / len(votes) * 100, 1),
+            'votes': votes_breakdown,
+            'avg_probabilities': avg_probabilities,
+        }
+
+        return predictions
+
+    def predict_match_all_targets(self, features: Dict) -> Dict:
+        all_predictions = {}
+        for target in self.models.keys():
+            all_predictions[target] = self.predict_match_all_models(features, target)
+        return all_predictions
+    
+    def load_upcoming_matches(self, country: str, league: str) -> List[Dict]:
+        raw_dir = self.data_dir / 'league' / country / league / 'raw'
+        
+        if not raw_dir.exists():
+            return []
+        
+        upcoming = []
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        for file in raw_dir.glob('*.json'):
+            with open(file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            for match in data.get('matches', []):
+                status = match.get('status', {}).get('type', '')
+                match_date = match.get('date', '')
+                
+                if status in ['notstarted', 'inprogress'] and match_date >= today:
+                    upcoming.append({
+                        'match_id': match.get('match_id'),
+                        'home_team': match.get('home_team'),
+                        'away_team': match.get('away_team'),
+                        'date': match_date,
+                        'time': match.get('time', ''),
+                        'status': status,
+                        'country': country,
+                        'league': league,
+                        'round': match.get('round', {}).get('round', '')
+                    })
+        
+        return sorted(upcoming, key=lambda x: (x['date'], x.get('time', '')))
+    
+    def predict_upcoming(self, country: str, league: str, 
+                        model_name: str = 'Ensemble') -> List[Dict]:
+        df = self.load_league_data(country, league)
+        if df.empty:
+            return []
+        
+        upcoming = self.load_upcoming_matches(country, league)
+        predictions = []
+        
+        for match in upcoming:
+            features = self._get_match_features(
+                df, match['home_team'], match['away_team'], match['date']
+            )
+            
+            if features:
+                pred = self.predict_match_all_models(features)
+                predictions.append({
+                    **match,
+                    'predictions': pred
+                })
+        
+        return predictions
+    
+    def _get_match_features(self, df: pd.DataFrame, home_team: str, 
+                           away_team: str, match_date: str) -> Optional[Dict]:
+        df_sorted = df.sort_values('date', ascending=False)
+        
+        home_matches = df_sorted[
+            (df_sorted['home_team'] == home_team) | 
+            (df_sorted['away_team'] == home_team)
+        ]
+        
+        away_matches = df_sorted[
+            (df_sorted['home_team'] == away_team) | 
+            (df_sorted['away_team'] == away_team)
+        ]
+        
+        if home_matches.empty or away_matches.empty:
+            return None
+        
+        latest_home = home_matches.iloc[0]
+        latest_away = away_matches.iloc[0]
+        
+        features = {}
+        
+        for col in self.feature_columns:
+            if col.startswith('home_'):
+                home_as_home = df_sorted[df_sorted['home_team'] == home_team]
+                if not home_as_home.empty:
+                    features[col] = home_as_home.iloc[0].get(col, 0)
+                else:
+                    features[col] = latest_home.get(col, 0)
+            elif col.startswith('away_'):
+                away_as_away = df_sorted[df_sorted['away_team'] == away_team]
+                if not away_as_away.empty:
+                    features[col] = away_as_away.iloc[0].get(col, 0)
+                else:
+                    features[col] = latest_away.get(col, 0)
+            elif col.endswith('_diff'):
+                base = col.replace('_diff', '')
+                home_val = features.get(f'home_{base}', features.get(f'home_form_{base}', 0))
+                away_val = features.get(f'away_{base}', features.get(f'away_form_{base}', 0))
+                features[col] = home_val - away_val if home_val and away_val else 0
+            else:
+                features[col] = 0
+        
+        return features
+    
+    def compare_predictions(self, predictions: List[Dict], 
+                           actual_results: Dict[int, Dict]) -> Dict:
+        comparison = {
+            'matches': [],
+            'model_accuracy': {name: {'correct': 0, 'total': 0} 
+                              for name in list(self.models.keys()) + ['consensus']}
+        }
+        
+        for pred in predictions:
+            match_id = pred['match_id']
+            if match_id not in actual_results:
+                continue
+            
+            actual = actual_results[match_id]
+            hs, as_ = actual['home_score'], actual['away_score']
+            
+            if hs > as_:
+                actual_result = 'HOME'
+            elif hs < as_:
+                actual_result = 'AWAY'
+            else:
+                actual_result = 'DRAW'
+            
+            match_comparison = {
+                'match': f"{pred['home_team']} vs {pred['away_team']}",
+                'date': pred['date'],
+                'actual_result': actual_result,
+                'actual_score': f"{hs}:{as_}",
+                'model_results': {}
+            }
+            
+            for model_name, model_pred in pred['predictions'].items():
+                if isinstance(model_pred, dict) and 'prediction' in model_pred:
+                    predicted = model_pred['prediction']
+                    correct = predicted == actual_result
+                    
+                    match_comparison['model_results'][model_name] = {
+                        'predicted': predicted,
+                        'correct': correct
+                    }
+                    
+                    comparison['model_accuracy'][model_name]['total'] += 1
+                    if correct:
+                        comparison['model_accuracy'][model_name]['correct'] += 1
+            
+            comparison['matches'].append(match_comparison)
+        
+        for model in comparison['model_accuracy']:
+            data = comparison['model_accuracy'][model]
+            if data['total'] > 0:
+                data['accuracy'] = round(data['correct'] / data['total'] * 100, 1)
+            else:
+                data['accuracy'] = 0
+        
+        return comparison
+    
+    def predict_confident_only(self, features_list: List[Dict], 
+                               min_confidence: float = 55.0,
+                               model_name: str = 'Ensemble') -> Tuple[List[Dict], Dict]:
+        confident = []
+        all_preds = []
+        
+        for features in features_list:
+            pred = self.predict_match(features, model_name)
+            all_preds.append(pred)
+            
+            if pred.get('confidence', 0) >= min_confidence:
+                confident.append({**features, 'prediction': pred})
+        
+        stats = {
+            'total_matches': len(features_list),
+            'confident_matches': len(confident),
+            'coverage': round(len(confident) / len(features_list) * 100, 1) if features_list else 0,
+            'min_confidence': min_confidence
+        }
+        
+        return confident, stats
+    
+    def save_models(self, path: str):
+        """Save trained models to disk (multi-target format v2)."""
+        if not self.trained:
+            raise ValueError("No trained models to save")
+
+        lstm_states = {}
+        models_for_joblib = {}
+
+        for target, target_models in self.models.items():
+            models_for_joblib[target] = {}
+            for name, data in target_models.items():
+                if data.get('type') == 'lstm' and hasattr(data['model'], 'get_state'):
+                    lstm_states[f"{target}/{name}"] = data['model'].get_state()
+                    placeholder = {
+                        'model': None, 'scaled': False, 'type': 'lstm',
+                    }
+                    for k in ('accuracy', 'f1', 'mae', 'rmse', 'r2', 'task'):
+                        if k in data:
+                            placeholder[k] = data[k]
+                    models_for_joblib[target][name] = placeholder
+                else:
+                    models_for_joblib[target][name] = data
+
+        save_data = {
+            'version': 2,
+            'models': models_for_joblib,
+            'scalers': self.scalers,
+            'feature_columns_by_target': self.feature_columns_by_target,
+            'training_stats': self.training_stats,
+            'lstm_states': lstm_states,
+        }
+
+        joblib.dump(save_data, path, compress=3)
+        print(f"Models saved to: {path}")
+
+    def load_models(self, path: str):
+        """Load trained models from disk (handles v1 and v2 format)."""
+        save_data = joblib.load(path)
+
+        version = save_data.get('version', 1)
+
+        if version >= 2:
+            self.models = save_data['models']
+            self.scalers = save_data.get('scalers', {})
+            self.feature_columns_by_target = save_data.get('feature_columns_by_target', {})
+            self.training_stats = save_data.get('training_stats', {})
+
+            lstm_states = save_data.get('lstm_states', {})
+            for key, state in lstm_states.items():
+                if '/' in key and state is not None and HAS_TORCH:
+                    target, name = key.split('/', 1)
+                    if target in self.models and name in self.models[target]:
+                        lstm = LSTMPredictor()
+                        lstm.load_state(state)
+                        self.models[target][name]['model'] = lstm
+        else:
+            # Legacy v1: flat models dict -> wrap as 'result' target
+            self.models = {'result': save_data['models']}
+            self.scalers = {'result': save_data.get('scaler', StandardScaler())}
+            self.feature_columns_by_target = {
+                'result': save_data.get('feature_columns', [])
+            }
+            self.training_stats = save_data.get('training_stats', {})
+
+        if 'result' in self.feature_columns_by_target:
+            self.feature_columns = self.feature_columns_by_target['result']
+        if 'result' in self.scalers:
+            self.scaler = self.scalers['result']
+
+        self.trained = True
+
+        targets = list(self.models.keys())
+        for t in targets:
+            models_in_t = list(self.models[t].keys())
+            print(f"  [{t}] Loaded: {', '.join(models_in_t)}")
+
+
+    def run_scaling_tests(self, df: pd.DataFrame, target: str = 'result',
+                          fractions: Optional[List[float]] = None,
+                          model_name: str = 'XGBoost') -> List[Dict]:
+        if fractions is None:
+            fractions = [0.1, 0.25, 0.5, 0.75, 1.0]
+
+        config = TARGET_CONFIGS[target]
+        is_regression = config.get('task') == 'regression'
+
+        X, y, meta = self.prepare_data(df, target)
+
+        dates = meta.get('date')
+        if dates is not None:
+            sorted_idx = dates.sort_values().index
+            split = int(len(sorted_idx) * 0.8)
+            test_idx = sorted_idx[split:]
+            full_train_idx = sorted_idx[:split]
+        else:
+            full_train_idx = X.index[:int(len(X) * 0.8)]
+            test_idx = X.index[int(len(X) * 0.8):]
+
+        X_test = X.loc[test_idx]
+        y_test = y.loc[test_idx]
+
+        results = []
+        print(f"\n{'='*70}")
+        print(f"  SCALING TEST: {target.upper()} with {model_name}")
+        print(f"  Test set: {len(X_test)} matches (fixed)")
+        print(f"{'='*70}")
+
+        for frac in fractions:
+            n_train = max(100, int(len(full_train_idx) * frac))
+            train_idx = full_train_idx[:n_train]
+
+            X_train = X.loc[train_idx]
+            y_train = y.loc[train_idx]
+
+            feature_cols = X_train.columns.tolist()
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test)
+
+            if is_regression:
+                model_configs = self._build_regression_configs()
+            else:
+                model_configs = self._build_model_configs(target, y_train=y_train)
+
+            if model_name not in model_configs:
+                available = list(model_configs.keys())
+                print(f"    Model '{model_name}' not available. Using '{available[0]}'")
+                model_name = available[0]
+
+            mc = model_configs[model_name]
+            model = clone(mc['model']) if hasattr(mc['model'], 'get_params') else mc['model']
+            X_tr = X_train_scaled if mc.get('scaled') else X_train
+            X_te = X_test_scaled if mc.get('scaled') else X_test
+
+            proc = psutil.Process()
+            mem_before = proc.memory_info().rss / 1024 / 1024
+            cpu_before = proc.cpu_times()
+            t0 = time.time()
+
+            if not is_regression and mc.get('sample_weight'):
+                from sklearn.utils.class_weight import compute_sample_weight
+                sw = compute_sample_weight('balanced', y_train)
+                model.fit(X_tr, y_train, sample_weight=sw)
+            else:
+                model.fit(X_tr, y_train)
+
+            train_time = time.time() - t0
+            cpu_after = proc.cpu_times()
+            cpu_s = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
+            mem_delta = max(0.1, proc.memory_info().rss / 1024 / 1024 - mem_before)
+
+            t_pred = time.time()
+            y_pred = model.predict(X_te)
+            predict_time_ms = (time.time() - t_pred) * 1000
+
+            entry = {
+                'data_fraction': frac,
+                'n_train': len(X_train),
+                'n_test': len(X_test),
+                'n_features': len(feature_cols),
+                'train_time_s': round(train_time, 2),
+                'predict_time_ms': round(predict_time_ms, 2),
+                'cpu_time_s': round(cpu_s, 2),
+                'memory_mb': round(mem_delta, 1),
+            }
+
+            if is_regression:
+                mae = mean_absolute_error(y_test, y_pred)
+                rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
+                r2 = r2_score(y_test, y_pred)
+                entry.update({'mae': round(mae, 4), 'rmse': round(rmse, 4), 'r2': round(r2, 4)})
+                print(f"    {frac*100:5.0f}% ({n_train:>6} rows): MAE={mae:.3f} R²={r2:.3f} "
+                      f"[train={train_time:.1f}s, pred={predict_time_ms:.1f}ms, RAM={mem_delta:.1f}MB]")
+            else:
+                acc = accuracy_score(y_test, y_pred)
+                avg_method = 'binary' if config['task'] == 'binary' else 'weighted'
+                f1 = f1_score(y_test, y_pred, average=avg_method, zero_division=0)
+                entry.update({'accuracy': round(acc, 4), 'f1': round(f1, 4)})
+                print(f"    {frac*100:5.0f}% ({n_train:>6} rows): acc={acc:.1%} f1={f1:.1%} "
+                      f"[train={train_time:.1f}s, pred={predict_time_ms:.1f}ms, RAM={mem_delta:.1f}MB]")
+
+            results.append(entry)
+
+        return results
+
+    def export_metrics_json(self, output_path: Optional[str] = None,
+                            scaling_results: Optional[Dict] = None) -> str:
+        """Export training metrics to JSON (for frontend display)."""
+        if output_path is None:
+            output_path = str(self.data_dir / 'models' / 'training_metrics.json')
+
+        metrics = {
+            'exported_at': datetime.now().isoformat(),
+            'targets': {},
+        }
+
+        all_targets = set(self.models.keys())
+        if scaling_results:
+            all_targets.update(scaling_results.keys())
+
+        for target in sorted(all_targets):
+            config = TARGET_CONFIGS.get(target, {})
+
+            target_data = {
+                'task': config.get('task', 'unknown'),
+                'class_names': config.get('class_names'),
+                'stats': self.training_stats.get(target, {}),
+                'models': {},
+            }
+
+            stats_copy = dict(target_data['stats'])
+            stats_copy.pop('feature_names', None)  # too large for JSON
+            target_data['stats'] = stats_copy
+
+            target_models = self.models.get(target, {})
+            for model_name, model_data in target_models.items():
+                model_metrics = {}
+                for key, value in model_data.items():
+                    if key == 'model':
+                        continue
+                    if isinstance(value, (int, float, str, bool, type(None))):
+                        model_metrics[key] = value
+                    elif isinstance(value, np.floating):
+                        model_metrics[key] = float(value)
+                    elif isinstance(value, np.integer):
+                        model_metrics[key] = int(value)
+
+                target_data['models'][model_name] = model_metrics
+
+            if scaling_results and target in scaling_results:
+                target_data['scaling_tests'] = scaling_results[target]
+
+            metrics['targets'][target] = target_data
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2, ensure_ascii=False, default=str)
+
+        print(f"\nMetrics exported to: {output_path}")
+        return output_path
+
+
+def quick_predict(data_dir: str, country: str, league: str) -> Dict:
+    predictor = UniversalPredictor(data_dir)
+    print(f"\nLoading data for {country}/{league}...")
+    df = predictor.load_league_data(country, league)
+    
+    if df.empty:
+        return {'error': f'No data for {country}/{league}'}
+
+    results = predictor.train_all_models(df)
+    upcoming = predictor.predict_upcoming(country, league)
+    
+    return {
+        'training_results': results,
+        'upcoming_predictions': upcoming
+    }
+
+
+def predict_all_leagues(data_dir: str, countries: Optional[List[str]] = None) -> Dict:
+    """Train on all leagues and predict upcoming matches."""
+    predictor = UniversalPredictor(data_dir)
+    print("Loading all league data...")
+    df = predictor.load_all_leagues(countries)
+    
+    if df.empty:
+        return {'error': 'No data found'}
+
+    results = predictor.train_all_models(df)
+    all_predictions = {}
+    discovered = predictor.discover_leagues()
+    
+    for country, leagues in discovered.items():
+        if countries and country not in countries:
+            continue
+        for league in leagues:
+            upcoming = predictor.predict_upcoming(country, league)
+            if upcoming:
+                all_predictions[f"{country}/{league}"] = upcoming
+    
+    return {
+        'training_results': results,
+        'total_training_matches': len(df),
+        'predictions_by_league': all_predictions
+    }

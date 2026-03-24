@@ -243,41 +243,4 @@ type PlayerExtended = Player & {
     }>
 }
 
-export interface Article {
-    id: string;
-    title: string;
-    content: string;
-    image?: string;
-    tags: string[];
-    created_at: string;
-    updated_at: string;
-    author: string;
-    author_picture?: string;
-    status: "pending" | "approved" | "rejected";
-    admin_comment?: string | null;
-    comment_count: number;
-}
-
-export interface Comment {
-    id: string;
-    article_id: string;
-    user_id: string;
-    content: string;
-    created_at: string;
-    updated_at: string;
-    author: string;
-    profile_picture: string;
-    article_title: string;
-}
-
-export interface User {
-    id: string;
-    nickname: string;
-    email: string;
-    profile_picture: string;
-    role: string;
-    first_name: string;
-    last_name: string;
-}
-
 export { Standing, Team, AllFixtures, Fixture, Player, PlayerExtended };

@@ -15,10 +15,6 @@ type PageProps = {
     }
 }
 
-export async function getTeamInfo(teamId: number, season: number) : Promise<Team | undefined> {
-    return await getTeamInfoByTeamId(teamId, season);
-}
-
 export default async function Team({ params } : PageProps) {
     const teamId = parseInt(params.id);
     const season = getCurrentSeason();

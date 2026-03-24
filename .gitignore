@@ -40,3 +40,20 @@ next-env.d.ts
 
 # user avatars
 /public/avatars/
+
+# IDE / editor config
+.vscode/
+
+# SofascoreData - large data files (models, scraped data, reports)
+SofascoreData/data/
+SofascoreData/reports/
+SofascoreData/top_picks/*.json
+SofascoreData/**/__pycache__/
+SofascoreData/*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

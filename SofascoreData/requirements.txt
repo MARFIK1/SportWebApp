@@ -1,0 +1,14 @@
+selenium
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+torch
+matplotlib
+seaborn
+tqdm
+joblib
+psutil
+ipykernel
+ipywidgets
