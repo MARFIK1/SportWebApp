@@ -239,8 +239,8 @@ def scrape_competition(scraper, comp_type, country, league, seasons_to_scrape=No
     
     if seasons_to_scrape is None:
         if comp['seasons']:
-            seasons_to_scrape = list(comp['seasons'].items())
-            print(f"[CONFIG] Using {len(seasons_to_scrape)} seasons from configuration")
+            seasons_to_scrape = list(comp['seasons'].items())[:num_seasons]
+            print(f"[CONFIG] Using {len(seasons_to_scrape)} of {len(comp['seasons'])} seasons from configuration")
         else:
             seasons_api = scraper.get_seasons(tournament_id)
             seasons_to_scrape = [(s['name'], s['id']) for s in seasons_api[:num_seasons]]

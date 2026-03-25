@@ -1182,7 +1182,7 @@ def print_predictions(results: list, target_date: str):
     finished = sum(1 for r in results if r['match']['result'])
     postponed = sum(1 for r in results if r['match'].get('status') == 'postponed')
     inprogress = sum(1 for r in results if r['match'].get('status') == 'inprogress')
-    upcoming = total - finished - postponed
+    upcoming = total - finished - postponed - inprogress
     
     print(f"Total matches: {total}")
     print(f"  - Finished: {finished}")
@@ -1474,7 +1474,7 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
         elif new_status in ['postponed', 'inprogress'] and match['status'] == 'upcoming':
             match['status'] = new_status
 
-            market_preds = r.get('market_predictions', {})
+        market_preds = r.get('market_predictions', {})
         if market_preds and match.get('market_predictions'):
             for t_name, t_data in market_preds.items():
                 if not isinstance(t_data, dict):
