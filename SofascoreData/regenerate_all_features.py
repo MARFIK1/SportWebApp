@@ -39,6 +39,8 @@ def create_generator():
 
 def is_match_finished(match):
     """Check if match is finished (backwards compatible)."""
+    if match.get('status') in ('postponed', 'canceled'):
+        return False
     if match.get('status') == 'finished':
         return True
     if match.get('status') == 'upcoming':
@@ -101,6 +103,23 @@ def generate_season_features(raw_file_path, matches, player_stats, generator):
     upcoming_count = 0
 
     for match in matches:
+        status = match.get('status')
+
+        if status in ('postponed', 'canceled', 'upcoming'):
+            season_samples.append({
+                'event_id': match.get('event_id'),
+                'date': match.get('date'),
+                'time': match.get('time', ''),
+                'round': match.get('round'),
+                'status': status,
+                'home_team': match.get('home_team'),
+                'home_team_id': match.get('home_team_id'),
+                'away_team': match.get('away_team'),
+                'away_team_id': match.get('away_team_id'),
+            })
+            upcoming_count += 1
+            continue
+
         finished = is_match_finished(match)
         try:
             if finished:
@@ -138,19 +157,6 @@ def generate_season_features(raw_file_path, matches, player_stats, generator):
                 features['label_over_2_5'] = 1 if total_goals > 2.5 else 0
                 features['label_over_1_5'] = 1 if total_goals > 1.5 else 0
                 finished_count += 1
-            else:
-                features = {
-                    'event_id': match.get('event_id'),
-                    'date': match.get('date'),
-                    'time': match.get('time', ''),
-                    'round': match.get('round'),
-                    'status': 'upcoming',
-                    'home_team': match.get('home_team'),
-                    'home_team_id': match.get('home_team_id'),
-                    'away_team': match.get('away_team'),
-                    'away_team_id': match.get('away_team_id'),
-                }
-                upcoming_count += 1
             season_samples.append(features)
         except Exception:
             continue

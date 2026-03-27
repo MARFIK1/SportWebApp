@@ -616,29 +616,47 @@ class MLFeatureGenerator:
             'total_team_assists': 0,
             'avg_minutes_starters': 90,
             'squad_avg_age': 26,
+            'avg_xg': 0,
+            'avg_xa': 0,
+            'avg_key_passes': 0,
+            'avg_shots_on_target': 0,
+            'avg_pass_accuracy': 0,
+            'avg_duels_won_pct': 0,
+            'avg_tackles': 0,
+            'avg_interceptions': 0,
+            'avg_clearances': 0,
+            'avg_fouls_committed': 0,
+            'avg_yellow_cards': 0,
+            'starter_avg_rating': 6.5,
+            'sub_avg_rating': 6.0,
+            'avg_possession_lost': 0,
+            'avg_dribbles_won': 0,
+            'avg_aerial_duels_won': 0,
         }
-        
+
         if not player_stats:
             return default
-        
+
         team_stats = [
             ps for ps in player_stats
-            if ps.get('team') == team and 
+            if ps.get('team') == team and
                (ps.get('date') or '') < before_date
         ]
-        
+
         if not team_stats:
             return default
-        
+
         match_dates = sorted(set(ps.get('date') for ps in team_stats if ps.get('date')), reverse=True)[:n_matches]
         recent_stats = [ps for ps in team_stats if ps.get('date') in match_dates]
-        
+
         if not recent_stats:
             return default
-        
+
+        n_matches_actual = len(match_dates)
+
         ratings = [ps.get('rating', 0) for ps in recent_stats if ps.get('rating')]
         avg_rating = sum(ratings) / len(ratings) if ratings else 6.5
-        
+
         player_goals = {}
         player_assists = {}
         for ps in team_stats:  # all time, not just recent
@@ -646,14 +664,37 @@ class MLFeatureGenerator:
             if pid:
                 player_goals[pid] = player_goals.get(pid, 0) + (ps.get('goals', 0) or 0)
                 player_assists[pid] = player_assists.get(pid, 0) + (ps.get('assists', 0) or 0)
-        
+
         top_scorer_goals = max(player_goals.values()) if player_goals else 0
         total_goals = sum(ps.get('goals', 0) or 0 for ps in recent_stats)
         total_assists = sum(ps.get('assists', 0) or 0 for ps in recent_stats)
-        
+
         starters = [ps for ps in recent_stats if ps.get('is_starter')]
+        subs = [ps for ps in recent_stats if not ps.get('is_starter')]
         avg_minutes = sum(ps.get('minutes_played', 0) or 0 for ps in starters) / len(starters) if starters else 90
-        
+
+        starter_ratings = [ps.get('rating', 0) for ps in starters if ps.get('rating')]
+        starter_avg_rating = sum(starter_ratings) / len(starter_ratings) if starter_ratings else 6.5
+        sub_ratings = [ps.get('rating', 0) for ps in subs if ps.get('rating')]
+        sub_avg_rating = sum(sub_ratings) / len(sub_ratings) if sub_ratings else 6.0
+
+        total_xg = sum(ps.get('expected_goals', 0) or 0 for ps in recent_stats)
+        total_xa = sum(ps.get('expected_assists', 0) or 0 for ps in recent_stats)
+
+        def safe_avg(key):
+            vals = [ps.get(key, 0) or 0 for ps in recent_stats]
+            return round(sum(vals) / n_matches_actual, 2) if n_matches_actual else 0
+
+        pass_totals = [ps.get('accurate_passes', 0) or 0 for ps in recent_stats]
+        pass_attempts = [ps.get('total_passes', 0) or 0 for ps in recent_stats]
+        total_accurate = sum(pass_totals)
+        total_attempts = sum(pass_attempts)
+        pass_accuracy = round(total_accurate / total_attempts * 100, 1) if total_attempts else 0
+
+        duels_won = sum(ps.get('duels_won', 0) or 0 for ps in recent_stats)
+        duels_total = sum(ps.get('duels_total', 0) or 0 for ps in recent_stats)
+        duels_won_pct = round(duels_won / duels_total * 100, 1) if duels_total else 0
+
         ages = []
         for ps in recent_stats:
             dob = ps.get('date_of_birth')
@@ -667,7 +708,7 @@ class MLFeatureGenerator:
                 except:
                     pass
         avg_age = round(sum(ages) / len(ages), 1) if ages else 26
-        
+
         return {
             'avg_player_rating': round(avg_rating, 2),
             'top_scorer_goals': top_scorer_goals,
@@ -675,6 +716,22 @@ class MLFeatureGenerator:
             'total_team_assists': total_assists,
             'avg_minutes_starters': round(avg_minutes, 1),
             'squad_avg_age': avg_age,
+            'avg_xg': round(total_xg / n_matches_actual, 3) if n_matches_actual else 0,
+            'avg_xa': round(total_xa / n_matches_actual, 3) if n_matches_actual else 0,
+            'avg_key_passes': safe_avg('key_passes'),
+            'avg_shots_on_target': safe_avg('shots_on_target'),
+            'avg_pass_accuracy': pass_accuracy,
+            'avg_duels_won_pct': duels_won_pct,
+            'avg_tackles': safe_avg('tackles_total'),
+            'avg_interceptions': safe_avg('interceptions'),
+            'avg_clearances': safe_avg('clearances'),
+            'avg_fouls_committed': safe_avg('fouls_committed'),
+            'avg_yellow_cards': safe_avg('yellow_cards'),
+            'starter_avg_rating': round(starter_avg_rating, 2),
+            'sub_avg_rating': round(sub_avg_rating, 2),
+            'avg_possession_lost': safe_avg('possession_lost'),
+            'avg_dribbles_won': safe_avg('dribbles_won'),
+            'avg_aerial_duels_won': safe_avg('aerial_duels_won'),
         }
     
     def generate_match_features(self, match, all_matches, player_stats=None, elo_table=None):
@@ -866,21 +923,21 @@ class MLFeatureGenerator:
             home_player_feats = self.compute_player_features(home_team, player_stats, match_date)
             for k, v in home_player_feats.items():
                 features[f'home_{k}'] = v
-            
+
             away_player_feats = self.compute_player_features(away_team, player_stats, match_date)
             for k, v in away_player_feats.items():
                 features[f'away_{k}'] = v
-            
-            features['player_rating_diff'] = features.get('home_avg_player_rating', 6.5) - features.get('away_avg_player_rating', 6.5)
         else:
-            for side in ['home', 'away']:
-                features[f'{side}_avg_player_rating'] = 6.5
-                features[f'{side}_top_scorer_goals'] = 0
-                features[f'{side}_total_team_goals'] = 0
-                features[f'{side}_total_team_assists'] = 0
-                features[f'{side}_avg_minutes_starters'] = 90
-                features[f'{side}_squad_avg_age'] = 26
-            features['player_rating_diff'] = 0
+            home_player_feats = self.compute_player_features(None, None, None)
+            for k, v in home_player_feats.items():
+                features[f'home_{k}'] = v
+                features[f'away_{k}'] = v
+
+        features['player_rating_diff'] = features.get('home_avg_player_rating', 6.5) - features.get('away_avg_player_rating', 6.5)
+        features['player_xg_diff'] = features.get('home_avg_xg', 0) - features.get('away_avg_xg', 0)
+        features['player_pass_accuracy_diff'] = features.get('home_avg_pass_accuracy', 0) - features.get('away_avg_pass_accuracy', 0)
+        features['player_duels_won_diff'] = features.get('home_avg_duels_won_pct', 0) - features.get('away_avg_duels_won_pct', 0)
+        features['starter_rating_diff'] = features.get('home_starter_avg_rating', 6.5) - features.get('away_starter_avg_rating', 6.5)
         
         odds_home = match.get('odds_home_win')
         odds_draw = match.get('odds_draw')
@@ -973,13 +1030,17 @@ class MLFeatureGenerator:
         return features
     
     def generate_dataset(self, matches_data, min_round=5):
-        """Generate ML dataset from matches (skips first N rounds - no history)"""
+        """Generate ML dataset from finished matches only (skips upcoming, postponed, first N rounds)"""
         sorted_matches = sorted(matches_data, key=lambda x: (x.get('date') or '', x.get('round') or 0))
 
         elo_table = self._compute_elo_table(sorted_matches)
 
         dataset = []
         for match in sorted_matches:
+            if match.get('home_score') is None:
+                continue
+            if match.get('status') in ('postponed', 'canceled', 'upcoming'):
+                continue
             if match.get('round', 0) and match.get('round') < min_round:
                 continue
             features = self.generate_match_features(match, sorted_matches, elo_table=elo_table)

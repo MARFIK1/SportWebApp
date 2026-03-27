@@ -11,8 +11,10 @@ from datetime import datetime
 
 
 def extract_match_data(match):
+    status_type = match.get('status', {}).get('type', '')
     return {
         'event_id': match.get('id'),
+        'status': status_type if status_type else None,
         'date': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%Y-%m-%d'),
         'round': match.get('roundInfo', {}).get('round'),
         'home_team_id': match.get('homeTeam', {}).get('id'),
@@ -195,24 +197,42 @@ def load_existing_data(filepath):
 
 
 def get_existing_event_ids(dm, season_name):
+    """Returns (finished_ids, postponed_ids) - sets of event IDs."""
     slug = dm._season_slug(season_name)
     filepath = os.path.join(dm.paths['raw'], f'{slug}.json')
-    
+
+    finished_ids = set()
+    postponed_ids = set()
     existing = load_existing_data(filepath)
     if existing and 'matches' in existing:
-        return set(m.get('event_id') for m in existing['matches'] if m.get('event_id'))
-    return set()
+        for m in existing['matches']:
+            eid = m.get('event_id')
+            if not eid:
+                continue
+            if m.get('status') in ('postponed', 'canceled'):
+                postponed_ids.add(eid)
+            elif m.get('home_score') is not None:
+                finished_ids.add(eid)
+    return finished_ids, postponed_ids
+
+
+def _match_key(m):
+    """Composite key: postponed/canceled entries use separate key so both versions coexist."""
+    eid = m.get('event_id')
+    if m.get('status') in ('postponed', 'canceled'):
+        return f"{eid}__{m['status']}"
+    return eid
 
 
 def merge_and_sort_matches(existing_matches, new_matches):
-    all_matches = {m.get('event_id'): m for m in existing_matches}
+    all_matches = {_match_key(m): m for m in existing_matches}
 
     for m in new_matches:
-        all_matches[m.get('event_id')] = m
-    
+        all_matches[_match_key(m)] = m
+
     sorted_matches = sorted(
         all_matches.values(),
         key=lambda x: (x.get('date') or '', x.get('round') or 0)
     )
-    
+
     return sorted_matches

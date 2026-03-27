@@ -42,11 +42,13 @@ def create_stealth_driver(headless=False):
     options.add_argument('--disable-gpu')
     options.add_argument('--lang=en-US,en')
     options.add_argument('--disable-extensions')
-    
+    options.add_argument('--log-level=3')
+    options.add_argument('--silent')
+
     if headless:
         options.add_argument('--headless=new')
-    
-    options.add_experimental_option('excludeSwitches', ['enable-automation'])
+
+    options.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
     options.add_experimental_option('useAutomationExtension', False)
     
     options.set_capability("goog:loggingPrefs", {"performance": "ALL"})

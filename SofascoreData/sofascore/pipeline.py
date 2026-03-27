@@ -22,8 +22,24 @@ from .utils import (
 )
 
 
+def _extract_upcoming_basic(match):
+    """Extract minimal data for upcoming/notstarted matches."""
+    from datetime import datetime as dt
+    return {
+        'event_id': match.get('id'),
+        'status': 'upcoming',
+        'date': dt.fromtimestamp(match.get('startTimestamp', 0)).strftime('%Y-%m-%d'),
+        'time': dt.fromtimestamp(match.get('startTimestamp', 0)).strftime('%H:%M'),
+        'round': match.get('roundInfo', {}).get('round'),
+        'home_team': match.get('homeTeam', {}).get('name'),
+        'home_team_id': match.get('homeTeam', {}).get('id'),
+        'away_team': match.get('awayTeam', {}).get('name'),
+        'away_team_id': match.get('awayTeam', {}).get('id'),
+    }
+
+
 def scrape_season_matches_incremental(scraper, dm, fg, tournament_id, season_id, season_name,
-                                       delay=0.5, checkpoint_every=25, update_recent_days=0):
+                                       delay=0.5, checkpoint_every=50, update_recent_days=0):
     print(f"\n{'='*50}")
     print(f"[DOWNLOADING] {season_name}")
     print(f"{'='*50}")
@@ -48,84 +64,150 @@ def scrape_season_matches_incremental(scraper, dm, fg, tournament_id, season_id,
             }, f, ensure_ascii=False, indent=2)
         return all_matches
     
-    existing_ids = get_existing_event_ids(dm, season_name)
+    finished_ids, postponed_ids = get_existing_event_ids(dm, season_name)
     existing_data = load_existing_data(raw_filepath)
     existing_matches = existing_data.get('matches', []) if existing_data else []
-    print(f"   Existing matches in database: {len(existing_ids)}")
+    print(f"   Existing matches in database: {len(finished_ids)} finished, {len(postponed_ids)} postponed")
 
-    all_matches = scraper.get_all_season_matches(tournament_id, season_id)
-    finished = [m for m in all_matches if m.get('status', {}).get('type') == 'finished']
+    past_matches = scraper.get_all_season_matches(tournament_id, season_id)
+    upcoming_matches = scraper.get_all_upcoming_matches(tournament_id, season_id)
+    finished = [m for m in past_matches if m.get('status', {}).get('type') == 'finished']
+    postponed = [m for m in past_matches if m.get('status', {}).get('type') in ('postponed', 'canceled')]
+    notstarted = upcoming_matches
     print(f"   Finished matches in API: {len(finished)}")
-    
+    if postponed:
+        print(f"   Postponed/canceled in API: {len(postponed)}")
+    if notstarted:
+        print(f"   Upcoming in API: {len(notstarted)}")
+
     cutoff_date = None
     if update_recent_days > 0:
         cutoff_date = (datetime.now() - timedelta(days=update_recent_days)).strftime('%Y-%m-%d')
         print(f"   [DATE] Updating matches from: {cutoff_date}")
-    
+
     new_matches_raw = []
     update_matches_raw = []
-    
+
     for m in finished:
         match_id = m.get('id')
-        if match_id not in existing_ids:
+        if match_id not in finished_ids:
             new_matches_raw.append(m)
         elif cutoff_date:
             match_timestamp = m.get('startTimestamp', 0)
             match_date = datetime.fromtimestamp(match_timestamp).strftime('%Y-%m-%d')
             if match_date >= cutoff_date:
                 update_matches_raw.append(m)
-    
+
+    new_postponed = []
+    for m in postponed:
+        match_id = m.get('id')
+        if match_id not in postponed_ids:
+            new_postponed.append(m)
+
     matches_to_fetch = new_matches_raw + update_matches_raw
     print(f"   New matches to fetch: {len(new_matches_raw)}")
     if update_matches_raw:
         print(f"   Matches to update (last {update_recent_days} days): {len(update_matches_raw)}")
-    
+    if new_postponed:
+        print(f"   New postponed/canceled to save: {len(new_postponed)}")
+
+    basic_to_save = []
+    from .utils import extract_match_data
+    for m in new_postponed:
+        data = extract_match_data(m)
+        data['home_score'] = None
+        data['away_score'] = None
+        basic_to_save.append(data)
+    for m in notstarted:
+        data = _extract_upcoming_basic(m)
+        basic_to_save.append(data)
+
+    if basic_to_save:
+        existing_matches = merge_and_sort_matches(existing_matches, basic_to_save)
+        save_checkpoint(existing_matches, [])
+        if new_postponed:
+            print(f"   [SAVED] {len(new_postponed)} postponed/canceled matches")
+        if notstarted:
+            print(f"   [SAVED] {len(notstarted)} upcoming matches")
+
+    def regenerate_features(all_matches_data):
+        dm.save_processed_data(season_name, all_matches_data)
+        dataset = fg.generate_dataset(all_matches_data, min_round=5)
+
+        # Add upcoming/postponed/canceled matches as basic entries
+        for m in all_matches_data:
+            status = m.get('status')
+            if status in ('upcoming', 'postponed', 'canceled'):
+                dataset.append({
+                    'event_id': m.get('event_id'),
+                    'date': m.get('date'),
+                    'time': m.get('time', ''),
+                    'round': m.get('round'),
+                    'status': status,
+                    'home_team': m.get('home_team'),
+                    'home_team_id': m.get('home_team_id'),
+                    'away_team': m.get('away_team'),
+                    'away_team_id': m.get('away_team_id'),
+                })
+
+        dataset.sort(key=lambda x: (x.get('date') or '', x.get('round') or 0))
+
+        features_path = os.path.join(dm.paths['features'], f'features_{slug}.json')
+        with open(features_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'metadata': {
+                    'season': season_name,
+                    'total_samples': len(dataset),
+                    'last_update': datetime.now().isoformat(),
+                },
+                'samples': dataset
+            }, f, ensure_ascii=False, indent=2)
+        return dataset
+
     if not matches_to_fetch:
-        print("   [OK] No new matches - data is up to date!")
+        if basic_to_save:
+            dataset = regenerate_features(existing_matches)
+            print(f"   [OK] Features regenerated: {len(dataset)} samples")
+        else:
+            print("   [OK] No new matches - data is up to date!")
         return existing_matches, None
-    
+
     new_matches_data = []
     total = len(matches_to_fetch)
-    
-    for i, match in enumerate(tqdm(matches_to_fetch, desc=f"Matches ({season_name[:15]}...)")):
+    errors = 0
+    last_checkpoint = 0
+
+    pbar = tqdm(matches_to_fetch, desc=f"   Matches", bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+    for i, match in enumerate(pbar):
         try:
             data = scrape_full_match_data(scraper, match, delay=delay)
             data['season'] = season_name
             new_matches_data.append(data)
-            
+
             if (i + 1) % checkpoint_every == 0:
                 save_checkpoint(existing_matches, new_matches_data)
-                print(f"   [CHECKPOINT] Saved {len(existing_matches) + len(new_matches_data)} matches")
-                
+                last_checkpoint = i + 1
+                pbar.set_postfix_str(f"checkpoint @ {len(existing_matches) + len(new_matches_data)}")
+
         except Exception as e:
-            print(f"   [ERROR] Match {match.get('id')}: {e}")
-            if new_matches_data:
+            errors += 1
+            pbar.set_postfix_str(f"err #{errors}: {match.get('id')}")
+            if new_matches_data and (i + 1) - last_checkpoint >= checkpoint_every:
                 save_checkpoint(existing_matches, new_matches_data)
-                print(f"   [CHECKPOINT] (after error) Saved {len(existing_matches) + len(new_matches_data)} matches")
-    
+                last_checkpoint = i + 1
+    pbar.close()
+
     if not new_matches_data:
         return existing_matches, None
-    
+
     all_matches_data = save_checkpoint(existing_matches, new_matches_data)
-    
-    dm.save_processed_data(season_name, all_matches_data)
-    dataset = fg.generate_dataset(all_matches_data, min_round=5)
-    features_path = os.path.join(dm.paths['features'], f'features_{slug}.json')
-    with open(features_path, 'w', encoding='utf-8') as f:
-        json.dump({
-            'metadata': {
-                'season': season_name,
-                'total_samples': len(dataset),
-                'last_update': datetime.now().isoformat(),
-            },
-            'samples': dataset
-        }, f, ensure_ascii=False, indent=2)
-    
+    dataset = regenerate_features(all_matches_data)
+
     print(f"   [OK] Saved: +{len(new_matches_data)} new, {len(all_matches_data)} total")
     return all_matches_data, dataset
 
 
-def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5, checkpoint_every=25, update_recent_days=0):
+def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5, checkpoint_every=50, update_recent_days=0):
     print(f"   [DOWNLOADING] Fetching player data...")
     
     slug = pdm._season_slug(season_name)
@@ -147,6 +229,12 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
     
     new_matches = []
     for m in matches:
+        # Skip non-played matches (no lineups to fetch)
+        if m.get('status') in ('upcoming', 'postponed', 'canceled'):
+            continue
+        if m.get('home_score') is None:
+            continue
+
         event_id = m.get('event_id')
         match_date = m.get('date', '')
 
@@ -175,11 +263,15 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
                 if p.get('id'):
                     player_registry[p['id']] = p
     
-    for i, match in enumerate(tqdm(new_matches, desc="Players")):
+    errors = 0
+    last_checkpoint = 0
+
+    pbar = tqdm(new_matches, desc="   Players", bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+    for i, match in enumerate(pbar):
         event_id = match.get('event_id') or match.get('id')
         if not event_id:
             continue
-        
+
         match_info = {
             'match_id': f"{season_name.replace(' ', '_')}_{event_id}",
             'event_id': event_id,
@@ -191,7 +283,7 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
             'home_score': match.get('home_score'),
             'away_score': match.get('away_score'),
         }
-        
+
         try:
             lineups_data = scraper.get_api_data(f"/event/{event_id}/lineups")
             if lineups_data and 'home' in lineups_data:
@@ -203,17 +295,28 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
                         for p in lineup[side]['starters'] + lineup[side]['substitutes']:
                             if p['id'] and p['id'] not in player_registry:
                                 player_registry[p['id']] = p
-            
+            else:
+                all_lineups.append({
+                    'event_id': event_id,
+                    'date': match.get('date'),
+                    'season': season_name,
+                    'no_data': True,
+                })
+
             if (i + 1) % checkpoint_every == 0:
                 pdm.save_season_data(season_name, all_lineups, all_player_stats, player_registry)
-                print(f"   [CHECKPOINT] Players: {len(all_lineups)} lineups saved")
-                
+                last_checkpoint = i + 1
+                pbar.set_postfix_str(f"checkpoint @ {len(all_lineups)} lineups")
+
         except Exception as e:
-            if all_lineups:
+            errors += 1
+            pbar.set_postfix_str(f"err #{errors}: {event_id}")
+            if all_lineups and (i + 1) - last_checkpoint >= checkpoint_every:
                 pdm.save_season_data(season_name, all_lineups, all_player_stats, player_registry)
-                print(f"   [CHECKPOINT] (after error) {len(all_lineups)} lineups saved")
-        
+                last_checkpoint = i + 1
+
         time.sleep(random_delay(delay))
+    pbar.close()
     
     all_lineups = sorted(all_lineups, key=lambda x: (x.get('date') or '', x.get('event_id') or 0))
     all_player_stats = sorted(all_player_stats, key=lambda x: (x.get('date') or '', x.get('event_id') or 0))
