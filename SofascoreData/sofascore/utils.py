@@ -16,6 +16,7 @@ def extract_match_data(match):
         'event_id': match.get('id'),
         'status': status_type if status_type else None,
         'date': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%Y-%m-%d'),
+        'time': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%H:%M'),
         'round': match.get('roundInfo', {}).get('round'),
         'home_team_id': match.get('homeTeam', {}).get('id'),
         'home_team': match.get('homeTeam', {}).get('name'),

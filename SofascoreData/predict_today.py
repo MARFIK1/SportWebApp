@@ -204,6 +204,7 @@ def find_matches_for_date(target_date: str) -> list:
                             'result': result,
                             'score': f"{home_score}-{away_score}" if home_score is not None else None,
                             'status': status,
+                            'start_time': match.get('time', ''),
                             'features': None,
                             'total_cards': total_cards,
                             'total_corners': total_corners,
@@ -246,7 +247,8 @@ def find_matches_for_date(target_date: str) -> list:
                                 'away_team_id': match.get('away_team_id'),
                                 'result': match.get('label_result'),
                                 'score': score,
-                                'status': 'finished' if match.get('status') == 'finished' else 'upcoming',
+                                'status': 'upcoming' if match.get('status') in ('upcoming', 'postponed', 'canceled') else 'finished',
+                                'start_time': match.get('time', ''),
                                 'features': match
                             }
             except Exception:
@@ -281,6 +283,7 @@ def find_matches_for_date(target_date: str) -> list:
                                     'result': None,
                                     'score': None,
                                     'status': 'upcoming',
+                                    'start_time': match.get('time', ''),
                                     'features': None,
                                     'total_cards': None,
                                     'total_corners': None,
@@ -1371,6 +1374,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'comp_type': comp_type,
             'home_team': m['home'],
             'away_team': m['away'],
+            'start_time': m.get('start_time', ''),
             'status': match_status,
             'actual_result': actual_result,
             'actual_score': m.get('score'),

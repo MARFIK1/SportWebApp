@@ -71,12 +71,17 @@ def get_season_files(base_path):
         return []
     files = []
     season_pattern = re.compile(r'_(\d{2}_\d{2})\.json$')
+    tournament_pattern = re.compile(r'_(\d{4})\.json$')
     for f in os.listdir(raw_path):
         if not f.endswith('.json'):
             continue
         if f == 'all_seasons.json' or 'upcoming' in f.lower():
             continue
         match = season_pattern.search(f)
+        if match:
+            files.append((f, match.group(1)))
+            continue
+        match = tournament_pattern.search(f)
         if match:
             files.append((f, match.group(1)))
     return sorted(files, key=lambda x: x[1])
@@ -166,7 +171,7 @@ def generate_season_features(raw_file_path, matches, player_stats, generator):
 
 def regenerate_competition_features(comp_type, country, comp_name,
                                     force=False, current_only=False):
-    if country == comp_name:
+    if comp_type in ('european', 'international') or country == comp_name:
         base_path = f'data/{comp_type}/{comp_name}'
     else:
         base_path = f'data/{comp_type}/{country}/{comp_name}'
@@ -180,7 +185,9 @@ def regenerate_competition_features(comp_type, country, comp_name,
         return None
 
     if current_only:
-        season_files = [(f, s) for f, s in season_files if s == current_season]
+        current_year = str(datetime.now().year)
+        season_files = [(f, s) for f, s in season_files
+                        if s == current_season or s == current_year]
         if not season_files:
             return None
 
@@ -258,9 +265,10 @@ def regenerate_competition_features(comp_type, country, comp_name,
             print(f"  Season {season}: {fin} fin + {upc} up [REGENERATED]")
 
     if current_only:
+        current_year = str(datetime.now().year)
         old_season_files = get_season_files(base_path)
         for raw_file, season in old_season_files:
-            if season == current_season:
+            if season == current_season or season == current_year:
                 continue  # already recalculated above
             feat_file = os.path.join(features_path,
                                      f'features_{comp_name}_{season}.json')
@@ -309,20 +317,24 @@ def discover_competitions(comp_type):
     if not os.path.exists(base_dir):
         return []
     comps = []
+    seen_comp_names = set()
     for entry1 in sorted(os.listdir(base_dir)):
         entry1_path = os.path.join(base_dir, entry1)
         if not os.path.isdir(entry1_path):
             continue
 
         if os.path.exists(os.path.join(entry1_path, 'raw')):
-            comps.append((entry1, entry1))
-        else:
+            if entry1 not in seen_comp_names:
+                comps.append((entry1, entry1))
+                seen_comp_names.add(entry1)
+        elif comp_type not in ('european', 'international'):
             for entry2 in sorted(os.listdir(entry1_path)):
                 entry2_path = os.path.join(entry1_path, entry2)
                 if os.path.isdir(entry2_path):
                     raw_path = os.path.join(entry2_path, 'raw')
-                    if os.path.exists(raw_path):
+                    if os.path.exists(raw_path) and entry2 not in seen_comp_names:
                         comps.append((entry1, entry2))
+                        seen_comp_names.add(entry2)
     return comps
 
 

@@ -266,6 +266,21 @@ def _conflicts_with(market: str, used_markets: set) -> bool:
     return False
 
 
+def _group_bets_by_match(bets: list) -> list:
+    grouped = OrderedDict()
+    for bet in bets:
+        match_name = bet['match']
+        if match_name not in grouped:
+            grouped[match_name] = {
+                'match': match_name,
+                'league': bet.get('league', ''),
+                'kick_off': bet.get('kick_off', ''),
+                'bets': [],
+            }
+        grouped[match_name]['bets'].append(bet)
+    return list(grouped.values())
+
+
 def select_top_picks(bets: list, max_bets: int = 15, min_confidence: float = 50.0,
                      max_per_match: int = 3) -> list:
     from collections import defaultdict
