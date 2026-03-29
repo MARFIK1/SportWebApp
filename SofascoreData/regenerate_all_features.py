@@ -75,7 +75,8 @@ def load_all_league_player_stats(data_dir='data'):
                             if pid not in index:
                                 index[pid] = []
                             index[pid].append(record)
-                except Exception:
+                except Exception as e:
+                    print(f"Failed to load {fname}: {e}")
                     continue
     for pid in index:
         index[pid].sort(key=lambda r: r.get('date', ''), reverse=True)
@@ -98,7 +99,8 @@ def load_lineups(base_path):
                 eid = entry.get('event_id')
                 if eid:
                     index[str(eid)] = entry
-        except Exception:
+        except Exception as e:
+            print(f"Failed to load {fname}: {e}")
             continue
     return index
 

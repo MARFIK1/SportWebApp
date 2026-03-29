@@ -734,6 +734,12 @@ class MLFeatureGenerator:
             'avg_aerial_duels_won': safe_avg('aerial_duels_won'),
         }
     
+    def _apply_squad_defaults(self, features):
+        defaults = self.compute_squad_club_features([], [], {}, '')
+        for k, v in defaults.items():
+            features[f'home_{k}'] = v
+            features[f'away_{k}'] = v
+
     def compute_squad_club_features(self, starters, substitutes,
                                      club_stats_index, before_date,
                                      n_matches=10):
@@ -1046,15 +1052,9 @@ class MLFeatureGenerator:
                 for k, v in away_squad.items():
                     features[f'away_{k}'] = v
             else:
-                squad_default = self.compute_squad_club_features([], [], {}, '')
-                for k, v in squad_default.items():
-                    features[f'home_{k}'] = v
-                    features[f'away_{k}'] = v
+                self._apply_squad_defaults(features)
         else:
-            squad_default = self.compute_squad_club_features([], [], {}, '')
-            for k, v in squad_default.items():
-                features[f'home_{k}'] = v
-                features[f'away_{k}'] = v
+            self._apply_squad_defaults(features)
 
         features['squad_rating_diff'] = features.get('home_squad_avg_rating', 6.5) - features.get('away_squad_avg_rating', 6.5)
         features['squad_xg_diff'] = features.get('home_squad_avg_xg', 0) - features.get('away_squad_avg_xg', 0)

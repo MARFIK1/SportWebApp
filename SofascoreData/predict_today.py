@@ -658,10 +658,8 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
                                   lineups=None, club_stats_index=None) -> dict:
     fg = MLFeatureGenerator()
 
-    home_id = match.get('home_team_id') or 0
-    away_id = match.get('away_team_id') or 0
     upcoming_match = {
-        'event_id': home_id * 1000 + away_id,
+        'event_id': None,
         'date': match.get('date', datetime.now().strftime('%Y-%m-%d')),
         'round': 0,
         'home_team': match['home'],
