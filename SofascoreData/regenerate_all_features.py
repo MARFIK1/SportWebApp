@@ -48,6 +48,61 @@ def is_match_finished(match):
     return match.get('home_score') is not None
 
 
+def load_all_league_player_stats(data_dir='data'):
+    """Load player_stats from ALL league competitions, indexed by player_id."""
+    index = {}
+    league_dir = os.path.join(data_dir, 'league')
+    if not os.path.exists(league_dir):
+        return index
+    for country in os.listdir(league_dir):
+        country_path = os.path.join(league_dir, country)
+        if not os.path.isdir(country_path):
+            continue
+        for league in os.listdir(country_path):
+            ps_dir = os.path.join(country_path, league, 'player_stats')
+            if not os.path.isdir(ps_dir):
+                continue
+            for fname in os.listdir(ps_dir):
+                if not fname.endswith('.json'):
+                    continue
+                try:
+                    with open(os.path.join(ps_dir, fname), 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    for record in data.get('player_stats', []):
+                        record['_league'] = league
+                        pid = record.get('player_id')
+                        if pid:
+                            if pid not in index:
+                                index[pid] = []
+                            index[pid].append(record)
+                except Exception:
+                    continue
+    for pid in index:
+        index[pid].sort(key=lambda r: r.get('date', ''), reverse=True)
+    return index
+
+
+def load_lineups(base_path):
+    """Load lineups from competition directory, indexed by event_id."""
+    lineups_path = os.path.join(base_path, 'lineups')
+    if not os.path.exists(lineups_path):
+        return {}
+    index = {}
+    for fname in os.listdir(lineups_path):
+        if not fname.endswith('.json'):
+            continue
+        try:
+            with open(os.path.join(lineups_path, fname), 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            for entry in data.get('lineups', []):
+                eid = entry.get('event_id')
+                if eid:
+                    index[str(eid)] = entry
+        except Exception:
+            continue
+    return index
+
+
 def load_player_stats(base_path):
     player_stats_path = os.path.join(base_path, 'player_stats')
     if not os.path.exists(player_stats_path):
@@ -99,7 +154,8 @@ def is_season_stale(raw_path, features_path, raw_file, comp_name, season):
     return raw_mtime > feat_mtime
 
 
-def generate_season_features(raw_file_path, matches, player_stats, generator):
+def generate_season_features(raw_file_path, matches, player_stats, generator,
+                             lineups=None, club_stats_index=None):
     """Generate features for a single season. Returns (samples, finished, upcoming)."""
     elo_table = generator._compute_elo_table(matches)
 
@@ -130,7 +186,8 @@ def generate_season_features(raw_file_path, matches, player_stats, generator):
             if finished:
                 features = generator.generate_match_features(
                     match=match, all_matches=matches,
-                    player_stats=player_stats, elo_table=elo_table
+                    player_stats=player_stats, elo_table=elo_table,
+                    lineups=lineups, club_stats_index=club_stats_index
                 )
                 features['event_id'] = match.get('event_id')
                 features['date'] = match.get('date')
@@ -170,7 +227,8 @@ def generate_season_features(raw_file_path, matches, player_stats, generator):
 
 
 def regenerate_competition_features(comp_type, country, comp_name,
-                                    force=False, current_only=False):
+                                    force=False, current_only=False,
+                                    club_stats_index=None):
     if comp_type in ('european', 'international') or country == comp_name:
         base_path = f'data/{comp_type}/{comp_name}'
     else:
@@ -193,6 +251,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
 
     player_stats = None
     generator = None
+    lineups_data = None
 
     all_samples = []
     total_finished = 0
@@ -227,6 +286,9 @@ def regenerate_competition_features(comp_type, country, comp_name,
             player_stats = load_player_stats(base_path)
             generator = create_generator()
 
+        if comp_type in ('european', 'international') and lineups_data is None:
+            lineups_data = load_lineups(base_path)
+
         try:
             with open(raw_file_full, 'r', encoding='utf-8') as f:
                 raw_data = json.load(f)
@@ -239,7 +301,8 @@ def regenerate_competition_features(comp_type, country, comp_name,
             continue
 
         season_samples, fin, upc = generate_season_features(
-            raw_file_full, matches, player_stats, generator
+            raw_file_full, matches, player_stats, generator,
+            lineups=lineups_data, club_stats_index=club_stats_index
         )
 
         if season_samples:
@@ -374,11 +437,17 @@ Examples:
     print("=" * 60)
 
     results_by_type = {}
+    club_stats_index = None
 
     for comp_type in COMPETITION_TYPES:
         print(f"\n{'='*60}")
         print(f"[{comp_type.upper()}]")
         print("=" * 60)
+
+        if comp_type in ('european', 'international') and club_stats_index is None:
+            print("  Loading club player stats index...")
+            club_stats_index = load_all_league_player_stats()
+            print(f"  Loaded stats for {len(club_stats_index)} players")
 
         competitions = discover_competitions(comp_type)
         if not competitions:
@@ -391,7 +460,8 @@ Examples:
             result = regenerate_competition_features(
                 comp_type, country, comp,
                 force=args.force,
-                current_only=args.current
+                current_only=args.current,
+                club_stats_index=club_stats_index if comp_type in ('european', 'international') else None
             )
             if result:
                 results.append({'competition': f'{country}/{comp}', **result})

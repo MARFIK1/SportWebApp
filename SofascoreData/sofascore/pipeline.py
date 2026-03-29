@@ -523,12 +523,3 @@ def scrape_upcoming_matches(scraper, dm, fg, tournament_id, season_id, season_na
     print(f"   Saved {len(upcoming_processed)} upcoming matches to {upcoming_filepath}")
     
     return upcoming_features
-
-
-def scrape_upcoming_for_date(scraper, dm, fg, tournament_id, season_id, season_name, target_date, delay=0.5):
-    upcoming = scrape_upcoming_matches(scraper, dm, fg, tournament_id, season_id, season_name, delay)
-    
-    matches_for_date = [m for m in upcoming if m.get('date', '').startswith(target_date)]
-    
-    print(f"   Matches on {target_date}: {len(matches_for_date)}")
-    return matches_for_date

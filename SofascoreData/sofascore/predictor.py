@@ -453,7 +453,7 @@ class UniversalPredictor:
                     validation_fraction=0.15, random_state=42
                 ),
                 'scaled': True,
-                'sample_weight': True,  # pass sample_weight for imbalanced targets
+                'sample_weight': False,
             },
         }
 

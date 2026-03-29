@@ -46,7 +46,6 @@ from .pipeline import (
     scrape_competition,
     combine_all_seasons_data,
     scrape_upcoming_matches,
-    scrape_upcoming_for_date,
 )
 
 __all__ = [
@@ -80,7 +79,6 @@ __all__ = [
     'scrape_competition',
     'combine_all_seasons_data',
     'scrape_upcoming_matches',
-    'scrape_upcoming_for_date',
 ]
 
 __version__ = '1.0.0'

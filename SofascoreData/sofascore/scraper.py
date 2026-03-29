@@ -119,9 +119,6 @@ class SofascoreSeleniumScraper:
         data = self.get_api_data(f"/event/{event_id}/shotmap")
         return data.get('shotmap', []) if data else None
     
-    def get_match_lineups(self, event_id):
-        return self.get_api_data(f"/event/{event_id}/lineups")
-    
     def get_match_incidents(self, event_id):
         """Get incidents (goals, cards) for a match"""
         data = self.get_api_data(f"/event/{event_id}/incidents")
@@ -150,14 +147,3 @@ class SofascoreSeleniumScraper:
         data = self.get_api_data(f"/event/{event_id}")
         return data.get('event', data) if data and isinstance(data, dict) else None
 
-    def get_scheduled_matches_for_date(self, tournament_id, season_id, target_date):
-        all_upcoming = self.get_all_upcoming_matches(tournament_id, season_id)
-        from datetime import datetime
-        
-        scheduled = []
-        for m in all_upcoming:
-            match_ts = m.get('startTimestamp', 0)
-            match_date = datetime.fromtimestamp(match_ts).strftime('%Y-%m-%d')
-            if match_date == target_date:
-                scheduled.append(m)
-        return scheduled

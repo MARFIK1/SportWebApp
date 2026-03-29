@@ -34,13 +34,7 @@ COMPETITIONS = {
             },
             'premier_league': {
                 'tournament_id': 17,
-                'seasons': {
-                    "Premier League 21/22": 37036,
-                    "Premier League 22/23": 41886,
-                    "Premier League 23/24": 52186,
-                    "Premier League 24/25": 61627,
-                    "Premier League 25/26": 76986,
-                }
+                'seasons': {}
             },
         },
         'france': {
@@ -120,6 +114,18 @@ COMPETITIONS = {
         'turkey': {
             'super_lig': {
                 'tournament_id': 52,
+                'seasons': {}
+            },
+        },
+        'usa': {
+            'mls': {
+                'tournament_id': 242,
+                'seasons': {}
+            },
+        },
+        'saudi_arabia': {
+            'saudi_pro_league': {
+                'tournament_id': 955,
                 'seasons': {}
             },
         },

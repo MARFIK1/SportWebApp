@@ -155,8 +155,9 @@ def find_matches_for_date(target_date: str) -> list:
                         
                         home = match.get('home_team')
                         away = match.get('away_team')
-                        match_key = f"{comp_type}_{country}_{comp_name}_{home}_{away}"
-                        
+                        event_id = match.get('event_id')
+                        match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{home}_{away}"
+
                         home_score = match.get('home_score')
                         away_score = match.get('away_score')
                         raw_status = match.get('status', '')
@@ -228,7 +229,8 @@ def find_matches_for_date(target_date: str) -> list:
                     if match.get('date', '').startswith(target_date):
                         home = match.get('home_team')
                         away = match.get('away_team')
-                        match_key = f"{comp_type}_{country}_{comp_name}_{home}_{away}"
+                        event_id = match.get('event_id')
+                        match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{home}_{away}"
                         
                         if match_key in seen_matches:
                             seen_matches[match_key]['features'] = match
@@ -269,8 +271,9 @@ def find_matches_for_date(target_date: str) -> list:
                         if match.get('date', '').startswith(target_date):
                             home = match.get('home_team')
                             away = match.get('away_team')
-                            match_key = f"{comp_type}_{country}_{comp_name}_{home}_{away}"
-                            
+                            event_id = match.get('event_id')
+                            match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{home}_{away}"
+
                             if match_key not in seen_matches:
                                 match_entry = {
                                     'comp_type': comp_type,
@@ -651,12 +654,10 @@ def load_historical_matches(comp_type: str, country: str, league: str) -> list:
     return unique_matches
 
 
-def compute_features_for_upcoming(match: dict, historical_matches: list) -> dict:
-    class DummyDM:
-        pass
-    
-    fg = MLFeatureGenerator(DummyDM())
-    
+def compute_features_for_upcoming(match: dict, historical_matches: list,
+                                  lineups=None, club_stats_index=None) -> dict:
+    fg = MLFeatureGenerator()
+
     home_id = match.get('home_team_id') or 0
     away_id = match.get('away_team_id') or 0
     upcoming_match = {
@@ -671,8 +672,10 @@ def compute_features_for_upcoming(match: dict, historical_matches: list) -> dict
                      'odds_btts_yes', 'odds_btts_no']:
         if match.get(odds_key):
             upcoming_match[odds_key] = match[odds_key]
-    
-    features = fg.generate_match_features(upcoming_match, historical_matches)
+
+    features = fg.generate_match_features(upcoming_match, historical_matches,
+                                          lineups=lineups,
+                                          club_stats_index=club_stats_index)
     return features
 
 
@@ -906,21 +909,41 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
 def predict_matches(matches: list, predictor) -> list:
     results = []
     total = len(matches)
-    
+
     historical_cache = {}
-    
+    lineups_cache = {}
+    club_stats_index = None
+
+    has_intl = any(m.get('comp_type') in ('european', 'international') for m in matches)
+    if has_intl:
+        from regenerate_all_features import load_all_league_player_stats, load_lineups
+        print("  Loading club player stats for squad features...")
+        club_stats_index = load_all_league_player_stats()
+        print(f"  Loaded stats for {len(club_stats_index)} players")
+
     for i, match in enumerate(matches, 1):
         safe_print(f"  [{i}/{total}] {match.get('home', '?')} vs {match.get('away', '?')}...")
-        
+
         comp_type = match.get('comp_type', 'league')
         cache_key = f"{comp_type}/{match['country']}/{match['league']}"
         if cache_key not in historical_cache:
             historical_cache[cache_key] = load_historical_matches(
                 comp_type, match['country'], match['league']
             )
-        
+
+        match_lineups = None
+        if comp_type in ('european', 'international') and club_stats_index:
+            if cache_key not in lineups_cache:
+                from regenerate_all_features import load_lineups
+                from sofascore.config import get_competition_path
+                comp_path = get_competition_path(comp_type, match['country'], match['league'])
+                lineups_cache[cache_key] = load_lineups(comp_path)
+            match_lineups = lineups_cache[cache_key]
+
         if match.get('status') == 'upcoming' or match.get('features') is None:
-            features = compute_features_for_upcoming(match, historical_cache[cache_key])
+            features = compute_features_for_upcoming(
+                match, historical_cache[cache_key],
+                lineups=match_lineups, club_stats_index=club_stats_index)
         else:
             features = match['features']
         
@@ -1780,9 +1803,7 @@ def main():
     parser.add_argument('--scrape', action='store_true',
                         help='Fetch upcoming matches from Sofascore API')
     parser.add_argument('--update', action='store_true',
-                        help='Update report with finished match results')
-    parser.add_argument('--update-results', action='store_true',
-                        help='Fetch current match results from API (for inprogress/upcoming matches)')
+                        help='Update report with finished match results from API')
     parser.add_argument('--force', action='store_true',
                         help='Force re-scraping (ignore cache)')
     parser.add_argument('--no-report', action='store_true',
@@ -1797,7 +1818,7 @@ def main():
     print(f"Data: {target_date}")
     print()
     
-    if args.update or args.update_results:
+    if args.update:
         update_match_results(target_date)
 
         existing_report = load_existing_report(target_date)

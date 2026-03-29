@@ -16,7 +16,7 @@ class FootballDataManager:
         self.country = country
         self.league = league
 
-        if comp_type == 'european':
+        if comp_type in ('european', 'international'):
             self.competition_dir = os.path.join(base_dir, comp_type, league)
         else:
             self.competition_dir = os.path.join(base_dir, comp_type, country, league)

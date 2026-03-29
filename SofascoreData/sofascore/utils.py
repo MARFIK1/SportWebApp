@@ -229,7 +229,11 @@ def merge_and_sort_matches(existing_matches, new_matches):
     all_matches = {_match_key(m): m for m in existing_matches}
 
     for m in new_matches:
-        all_matches[_match_key(m)] = m
+        key = _match_key(m)
+        existing = all_matches.get(key)
+        if existing and existing.get('home_score') is not None and m.get('home_score') is None:
+            continue
+        all_matches[key] = m
 
     sorted_matches = sorted(
         all_matches.values(),

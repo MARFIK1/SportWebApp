@@ -8,8 +8,8 @@ from collections import defaultdict
 
 class MLFeatureGenerator:
     
-    def __init__(self, data_manager):
-        self.dm = data_manager
+    def __init__(self, data_manager=None):
+        pass
     
     def _safe_get(self, data, key, default=0):
         val = data.get(key)
@@ -734,7 +734,96 @@ class MLFeatureGenerator:
             'avg_aerial_duels_won': safe_avg('aerial_duels_won'),
         }
     
-    def generate_match_features(self, match, all_matches, player_stats=None, elo_table=None):
+    def compute_squad_club_features(self, starters, substitutes,
+                                     club_stats_index, before_date,
+                                     n_matches=10):
+        TOP_5_LEAGUES = {
+            'premier_league', 'la_liga', 'serie_a', 'bundesliga', 'ligue_1'
+        }
+        default = {
+            'squad_avg_rating': 6.5,
+            'squad_avg_xg': 0.0,
+            'squad_avg_xa': 0.0,
+            'squad_top5_rating': 6.5,
+            'squad_gk_rating': 6.5,
+            'squad_minutes_pct': 0.5,
+            'squad_top5_league_pct': 0.5,
+        }
+
+        if not club_stats_index or not starters:
+            return default
+
+        def _player_recent_stats(player_id):
+            records = club_stats_index.get(player_id, [])
+            if not before_date:
+                return records[:n_matches]
+            return [r for r in records if (r.get('date') or '') < before_date][:n_matches]
+
+        def _player_avg(records, key):
+            vals = [r.get(key) for r in records if r.get(key) is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        starter_ratings = []
+        starter_xgs = []
+        starter_xas = []
+        starter_minutes_regular = 0
+        gk_rating = None
+
+        for player in starters:
+            pid = player.get('id')
+            if not pid:
+                continue
+            recent = _player_recent_stats(pid)
+            if not recent:
+                continue
+
+            avg_r = _player_avg(recent, 'rating')
+            avg_xg = _player_avg(recent, 'expected_goals')
+            avg_xa = _player_avg(recent, 'expected_assists')
+            avg_min = _player_avg(recent, 'minutes_played')
+
+            if avg_r is not None:
+                starter_ratings.append(avg_r)
+            if avg_xg is not None:
+                starter_xgs.append(avg_xg)
+            if avg_xa is not None:
+                starter_xas.append(avg_xa)
+            if avg_min is not None and avg_min >= 60:
+                starter_minutes_regular += 1
+
+            if player.get('position') == 'G' and avg_r is not None:
+                gk_rating = avg_r
+
+        all_players = starters + substitutes
+        top5_count = 0
+        total_with_league = 0
+        for player in all_players:
+            pid = player.get('id')
+            if not pid:
+                continue
+            records = club_stats_index.get(pid, [])
+            if not records:
+                continue
+            total_with_league += 1
+            league = records[0].get('_league', '')
+            if league in TOP_5_LEAGUES:
+                top5_count += 1
+
+        sorted_ratings = sorted(starter_ratings, reverse=True)
+        top5_ratings = sorted_ratings[:5] if len(sorted_ratings) >= 5 else sorted_ratings
+
+        return {
+            'squad_avg_rating': round(sum(starter_ratings) / len(starter_ratings), 2) if starter_ratings else 6.5,
+            'squad_avg_xg': round(sum(starter_xgs) / len(starter_xgs), 4) if starter_xgs else 0.0,
+            'squad_avg_xa': round(sum(starter_xas) / len(starter_xas), 4) if starter_xas else 0.0,
+            'squad_top5_rating': round(sum(top5_ratings) / len(top5_ratings), 2) if top5_ratings else 6.5,
+            'squad_gk_rating': round(gk_rating, 2) if gk_rating is not None else 6.5,
+            'squad_minutes_pct': round(starter_minutes_regular / len(starters), 2) if starters else 0.5,
+            'squad_top5_league_pct': round(top5_count / total_with_league, 2) if total_with_league >= 5 else 0.5,
+        }
+
+    def generate_match_features(self, match, all_matches, player_stats=None, elo_table=None,
+                                lineups=None, club_stats_index=None):
         home_team = match.get('home_team')
         away_team = match.get('away_team')
         match_date = match.get('date')
@@ -938,7 +1027,39 @@ class MLFeatureGenerator:
         features['player_pass_accuracy_diff'] = features.get('home_avg_pass_accuracy', 0) - features.get('away_avg_pass_accuracy', 0)
         features['player_duels_won_diff'] = features.get('home_avg_duels_won_pct', 0) - features.get('away_avg_duels_won_pct', 0)
         features['starter_rating_diff'] = features.get('home_starter_avg_rating', 6.5) - features.get('away_starter_avg_rating', 6.5)
-        
+
+        if lineups and club_stats_index:
+            event_id = match.get('event_id')
+            match_lineup = lineups.get(str(event_id)) or lineups.get(event_id)
+            if match_lineup:
+                home_starters = match_lineup.get('home', {}).get('starters', [])
+                home_subs = match_lineup.get('home', {}).get('substitutes', [])
+                home_squad = self.compute_squad_club_features(
+                    home_starters, home_subs, club_stats_index, match_date)
+                for k, v in home_squad.items():
+                    features[f'home_{k}'] = v
+
+                away_starters = match_lineup.get('away', {}).get('starters', [])
+                away_subs = match_lineup.get('away', {}).get('substitutes', [])
+                away_squad = self.compute_squad_club_features(
+                    away_starters, away_subs, club_stats_index, match_date)
+                for k, v in away_squad.items():
+                    features[f'away_{k}'] = v
+            else:
+                squad_default = self.compute_squad_club_features([], [], {}, '')
+                for k, v in squad_default.items():
+                    features[f'home_{k}'] = v
+                    features[f'away_{k}'] = v
+        else:
+            squad_default = self.compute_squad_club_features([], [], {}, '')
+            for k, v in squad_default.items():
+                features[f'home_{k}'] = v
+                features[f'away_{k}'] = v
+
+        features['squad_rating_diff'] = features.get('home_squad_avg_rating', 6.5) - features.get('away_squad_avg_rating', 6.5)
+        features['squad_xg_diff'] = features.get('home_squad_avg_xg', 0) - features.get('away_squad_avg_xg', 0)
+        features['squad_top5_rating_diff'] = features.get('home_squad_top5_rating', 6.5) - features.get('away_squad_top5_rating', 6.5)
+
         odds_home = match.get('odds_home_win')
         odds_draw = match.get('odds_draw')
         odds_away = match.get('odds_away_win')
