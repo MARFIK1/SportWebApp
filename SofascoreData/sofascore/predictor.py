@@ -18,12 +18,13 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score, TimeSeriesSplit
 from sklearn.metrics import (
     accuracy_score, classification_report,
     precision_score, recall_score, f1_score,
     mean_absolute_error, mean_squared_error, r2_score,
 )
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestRegressor
 import joblib
@@ -417,13 +418,6 @@ class UniversalPredictor:
         config = TARGET_CONFIGS[target]
         is_binary = config['task'] == 'binary'
 
-        spw = 1.0
-        if is_binary and y_train is not None:
-            neg = (y_train == 0).sum()
-            pos = (y_train == 1).sum()
-            if pos > 0:
-                spw = neg / pos
-
         model_configs = {
             'Logistic Regression': {
                 'model': LogisticRegression(
@@ -467,7 +461,6 @@ class UniversalPredictor:
             if is_binary:
                 xgb_params['eval_metric'] = 'logloss'
                 xgb_params['objective'] = 'binary:logistic'
-                xgb_params['scale_pos_weight'] = spw
             else:
                 xgb_params['eval_metric'] = 'mlogloss'
             model_configs['XGBoost'] = {
@@ -612,6 +605,15 @@ class UniversalPredictor:
         from sklearn.utils.class_weight import compute_sample_weight
         sample_weights = compute_sample_weight('balanced', y_train)
 
+        train_dates = meta.get('date')
+        if train_dates is not None:
+            train_dates_dt = pd.to_datetime(train_dates.loc[X_train.index], errors='coerce')
+            max_date = train_dates_dt.max()
+            days_ago = (max_date - train_dates_dt).dt.days.fillna(0).values
+            temporal_weights = np.exp(-days_ago / 365.0)
+            sample_weights = sample_weights * temporal_weights
+            print(f"Temporal weighting: decay=365d, range=[{temporal_weights.min():.3f}, {temporal_weights.max():.3f}]")
+
         model_configs = self._build_model_configs(target, y_train=y_train)
 
         self.models[target] = {}
@@ -689,6 +691,55 @@ class UniversalPredictor:
                 'model_size_kb': round(model_size_kb, 1),
             }
             print(f"    {name}: acc={acc:.1%} f1={f1:.1%} [{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
+
+        print(f"\n  Calibrating models...")
+        for name, mdata in list(self.models[target].items()):
+            try:
+                cal_model = CalibratedClassifierCV(mdata['model'], cv='prefit', method='sigmoid')
+                X_cal = X_test_scaled if mdata['scaled'] else X_test
+                cal_model.fit(X_cal, y_test)
+                self.models[target][name]['calibrated_model'] = cal_model
+                print(f"{name}: calibrated (sigmoid/Platt)")
+            except Exception as e:
+                print(f"{name}: calibration skipped ({e})")
+        feature_importances = {}
+        for name in ['Random Forest', 'XGBoost', 'LightGBM']:
+            if name in self.models[target]:
+                model_obj = self.models[target][name]['model']
+                if hasattr(model_obj, 'feature_importances_'):
+                    imp = pd.Series(model_obj.feature_importances_, index=feature_cols)
+                    feature_importances[name] = imp.sort_values(ascending=False).head(15).to_dict()
+                    print(f"{name} top 3: {', '.join(imp.sort_values(ascending=False).head(3).index)}")
+        if feature_importances:
+            print(f"Tree feature importances extracted for {len(feature_importances)} models")
+        cv_results = {}
+        if dates is not None:
+            print(f"\n  Temporal cross-validation (5-fold)...")
+            tscv = TimeSeriesSplit(n_splits=5)
+            train_dates_sorted = pd.to_datetime(
+                meta.get('date', pd.Series(dtype=str)).loc[X_train.index], errors='coerce'
+            )
+            sort_idx = train_dates_sorted.sort_values().index
+            X_train_sorted = X_train.loc[sort_idx]
+            y_train_sorted = y_train.loc[sort_idx]
+
+            for name, mdata in self.models[target].items():
+                if name in ('Ensemble', 'Stacking', 'LSTM'):
+                    continue
+                try:
+                    X_cv = scaler.transform(X_train_sorted) if mdata['scaled'] else X_train_sorted.values
+                    scores = cross_val_score(
+                        clone(mdata['model']), X_cv, y_train_sorted,
+                        cv=tscv, scoring='accuracy', n_jobs=-1
+                    )
+                    cv_results[name] = {
+                        'mean': round(float(scores.mean()), 4),
+                        'std': round(float(scores.std()), 4),
+                        'folds': [round(float(s), 4) for s in scores],
+                    }
+                    print(f"{name}: CV={scores.mean():.1%} (+/- {scores.std():.1%})")
+                except Exception as e:
+                    print(f"{name}: CV skipped ({e})")
 
         tree_models = ['Random Forest', 'XGBoost', 'LightGBM']
         ensemble_estimators = []
@@ -806,13 +857,18 @@ class UniversalPredictor:
                     lstm_size_kb = os.path.getsize(tmp_path) / 1024
                     os.unlink(tmp_path)
 
-                    lstm_test_meta = dict(meta)
+                    X_full = pd.concat([X_train, X_test])
+                    lstm_full_meta = dict(meta)
                     for col in ['home_team', 'away_team']:
                         if col in df.columns:
-                            lstm_test_meta[col] = df[col].loc[X_test.index]
-                    home_seqs_te, away_seqs_te, valid_te = lstm.build_sequences(
-                        X_test, meta=lstm_test_meta
+                            lstm_full_meta[col] = df[col].loc[X_full.index]
+                    home_seqs_all, away_seqs_all, valid_all = lstm.build_sequences(
+                        X_full, meta=lstm_full_meta
                     )
+                    n_tr = len(X_train)
+                    home_seqs_te = home_seqs_all[n_tr:]
+                    away_seqs_te = away_seqs_all[n_tr:]
+                    valid_te = valid_all[n_tr:]
                     if valid_te.sum() > 0:
                         y_test_valid = y_test.values[valid_te]
 
@@ -862,6 +918,8 @@ class UniversalPredictor:
             'mi_scores_top10': mi_series.head(10).to_dict(),
             'results': results,
             'detailed_metrics': detailed_metrics,
+            'feature_importances': feature_importances,
+            'cv_results': cv_results,
         }
 
         best = max(results, key=results.get) if results else '?'
@@ -1047,13 +1105,17 @@ class UniversalPredictor:
         else:
             X_pred = X
 
-        pred = model.predict(X_pred)[0]
-        proba = model.predict_proba(X_pred)[0] if hasattr(model, 'predict_proba') else None
+        cal_model = model_data.get('calibrated_model')
+        predict_model = cal_model if cal_model is not None else model
+
+        pred = predict_model.predict(X_pred)[0]
+        proba = predict_model.predict_proba(X_pred)[0] if hasattr(predict_model, 'predict_proba') else None
 
         result = {
             'prediction': class_names.get(int(pred), str(pred)),
             'prediction_int': int(pred),
             'model': model_name,
+            'calibrated': cal_model is not None,
         }
 
         if proba is not None:
