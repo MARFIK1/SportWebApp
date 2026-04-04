@@ -17,24 +17,50 @@ except ImportError:
 
 SEQUENCE_FEATURES_HOME = [
     'home_form_avg_points', 'home_form_goals_for', 'home_form_goals_against',
-    'home_form_xg_for', 'home_form_xg_against', 'home_form_clean_sheets',
+    'home_form_wins', 'home_form_losses',
+    'home_form_goal_diff', 'home_form_xg_for', 'home_form_xg_against',
+    'home_form_xg_diff', 'home_form_clean_sheets',
+    'home_form10_avg_points', 'home_form10_goals_for', 'home_form10_goals_against',
+    'home_form10_goal_diff', 'home_form10_xg_for', 'home_form10_xg_diff',
+    'home_form10_clean_sheets',
     'home_table_position', 'home_table_ppg',
-    'home_elo', 'home_wform_ppg',
-    'home_momentum_points', 'home_momentum_goals',
-    'home_rest_days', 'home_venue_form_ppg',
+    'home_table_points', 'home_table_goal_diff',
+    'home_elo',
+    'home_wform_ppg', 'home_wform_goals_for', 'home_wform_goals_against',
+    'home_wform_xg_diff', 'home_wform_clean_sheets',
+    'home_momentum_points', 'home_momentum_goals', 'home_momentum_xg',
+    'home_rest_days',
+    'home_venue_form_ppg', 'home_venue_form_goals_for',
+    'home_venue_form_goals_against', 'home_venue_form_clean_sheets',
+    'home_clean_sheet_pct', 'home_failed_to_score_pct',
+    'home_fatigue_matches',
+    'home_sos_avg_position',
 ]
 
 SEQUENCE_FEATURES_AWAY = [
     'away_form_avg_points', 'away_form_goals_for', 'away_form_goals_against',
-    'away_form_xg_for', 'away_form_xg_against', 'away_form_clean_sheets',
+    'away_form_wins', 'away_form_losses',
+    'away_form_goal_diff', 'away_form_xg_for', 'away_form_xg_against',
+    'away_form_xg_diff', 'away_form_clean_sheets',
+    'away_form10_avg_points', 'away_form10_goals_for', 'away_form10_goals_against',
+    'away_form10_goal_diff', 'away_form10_xg_for', 'away_form10_xg_diff',
+    'away_form10_clean_sheets',
     'away_table_position', 'away_table_ppg',
-    'away_elo', 'away_wform_ppg',
-    'away_momentum_points', 'away_momentum_goals',
-    'away_rest_days', 'away_venue_form_ppg',
+    'away_table_points', 'away_table_goal_diff',
+    'away_elo',
+    'away_wform_ppg', 'away_wform_goals_for', 'away_wform_goals_against',
+    'away_wform_xg_diff', 'away_wform_clean_sheets',
+    'away_momentum_points', 'away_momentum_goals', 'away_momentum_xg',
+    'away_rest_days',
+    'away_venue_form_ppg', 'away_venue_form_goals_for',
+    'away_venue_form_goals_against', 'away_venue_form_clean_sheets',
+    'away_clean_sheet_pct', 'away_failed_to_score_pct',
+    'away_fatigue_matches',
+    'away_sos_avg_position',
 ]
 
 SEQ_LEN = 5
-INPUT_SIZE = 14
+INPUT_SIZE = len(SEQUENCE_FEATURES_HOME)
 
 
 if not HAS_TORCH:
@@ -89,8 +115,8 @@ else:
 
     class LSTMPredictor:
 
-        def __init__(self, num_classes=3, hidden_size=64, num_layers=2,
-                     dropout=0.3, lr=0.001, epochs=50, batch_size=256):
+        def __init__(self, num_classes=3, hidden_size=128, num_layers=2,
+                     dropout=0.3, lr=0.001, epochs=100, batch_size=256):
             self.num_classes = num_classes
             self.hidden_size = hidden_size
             self.num_layers = num_layers
@@ -158,14 +184,14 @@ else:
 
             n_valid = valid.sum()
             if n_valid < 100:
-                print(f"    LSTM: not enough complete sequences ({n_valid}), skipping")
+                print(f"LSTM: not enough complete sequences ({n_valid}), skipping")
                 return self
 
             home_seqs = home_seqs[valid]
             away_seqs = away_seqs[valid]
             y_valid = np.array(y)[valid] if hasattr(y, '__len__') else y.values[valid]
 
-            print(f"    LSTM: {n_valid} training sequences (out of {len(valid)})")
+            print(f"LSTM: {n_valid} training sequences (out of {len(valid)})")
             self._home_mean = home_seqs.mean(axis=(0, 1))
             self._home_std = home_seqs.std(axis=(0, 1)) + 1e-8
             self._away_mean = away_seqs.mean(axis=(0, 1))
@@ -174,8 +200,20 @@ else:
             home_seqs = (home_seqs - self._home_mean) / self._home_std
             away_seqs = (away_seqs - self._away_mean) / self._away_std
 
-            dataset = MatchSequenceDataset(home_seqs, away_seqs, y_valid)
-            loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+            val_size = max(256, int(len(y_valid) * 0.15))
+            indices = np.arange(len(y_valid))
+            np.random.seed(42)
+            np.random.shuffle(indices)
+            val_idx, train_idx = indices[:val_size], indices[val_size:]
+
+            train_dataset = MatchSequenceDataset(
+                home_seqs[train_idx], away_seqs[train_idx], y_valid[train_idx]
+            )
+            val_dataset = MatchSequenceDataset(
+                home_seqs[val_idx], away_seqs[val_idx], y_valid[val_idx]
+            )
+            train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False)
 
             self.model = MatchLSTM(
                 input_size=INPUT_SIZE, hidden_size=self.hidden_size,
@@ -192,13 +230,14 @@ else:
             optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=1e-4)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
-            self.model.train()
-            best_loss = float('inf')
+            best_val_acc = 0.0
+            best_state = None
             patience_counter = 0
 
             for epoch in range(self.epochs):
+                self.model.train()
                 total_loss = 0
-                for h_batch, a_batch, labels in loader:
+                for h_batch, a_batch, labels in train_loader:
                     h_batch = h_batch.to(self.device)
                     a_batch = a_batch.to(self.device)
                     labels = labels.to(self.device)
@@ -212,20 +251,45 @@ else:
 
                     total_loss += loss.item()
 
-                avg_loss = total_loss / len(loader)
-                scheduler.step(avg_loss)
+                self.model.eval()
+                val_correct = 0
+                val_total = 0
+                val_loss = 0
+                with torch.no_grad():
+                    for h_batch, a_batch, labels in val_loader:
+                        h_batch = h_batch.to(self.device)
+                        a_batch = a_batch.to(self.device)
+                        labels = labels.to(self.device)
+                        outputs = self.model(h_batch, a_batch)
+                        val_loss += criterion(outputs, labels).item()
+                        preds = outputs.argmax(dim=1)
+                        val_correct += (preds == labels).sum().item()
+                        val_total += labels.size(0)
 
-                if avg_loss < best_loss - 0.001:
-                    best_loss = avg_loss
+                val_acc = val_correct / val_total
+                avg_val_loss = val_loss / len(val_loader)
+                scheduler.step(avg_val_loss)
+
+                if val_acc > best_val_acc + 0.001:
+                    best_val_acc = val_acc
+                    best_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
                     patience_counter = 0
                 else:
                     patience_counter += 1
-                    if patience_counter >= 10:
-                        print(f"    LSTM: early stopping at epoch {epoch + 1} (loss: {avg_loss:.4f})")
+                    if patience_counter >= 15:
+                        avg_train = total_loss / len(train_loader)
+                        print(f"LSTM: early stopping at epoch {epoch + 1} "
+                              f"(train_loss={avg_train:.4f}, val_acc={val_acc:.4f})")
                         break
 
-            if patience_counter < 10:
-                print(f"    LSTM: trained {self.epochs} epochs (final loss: {avg_loss:.4f})")
+            if patience_counter < 15:
+                avg_train = total_loss / len(train_loader)
+                print(f"LSTM: trained {self.epochs} epochs "
+                      f"(train_loss={avg_train:.4f}, val_acc={val_acc:.4f})")
+
+            if best_state is not None:
+                self.model.load_state_dict(best_state)
+                self.model.to(self.device)
 
             self._fitted = True
             return self
