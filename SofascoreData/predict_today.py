@@ -953,6 +953,9 @@ def predict_matches(matches: list, predictor) -> list:
         for target_name in predictor.models.keys():
             feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
             target_features = {col: features.get(col, 0) for col in feat_cols}
+            target_features['home_team'] = features.get('home_team', match.get('home', ''))
+            target_features['away_team'] = features.get('away_team', match.get('away', ''))
+            target_features['date'] = features.get('date', match.get('date', ''))
             all_target_preds[target_name] = predictor.predict_match_all_models(target_features, target_name)
 
         preds = all_target_preds.get('result', {})
@@ -1804,6 +1807,8 @@ def main():
                         help='Update report with finished match results from API')
     parser.add_argument('--force', action='store_true',
                         help='Force re-scraping (ignore cache)')
+    parser.add_argument('--repredict', action='store_true',
+                        help='Re-run predictions on existing report (no scraping)')
     parser.add_argument('--no-report', action='store_true',
                         help='Do not save report to file')
     
@@ -1816,6 +1821,45 @@ def main():
     print(f"Data: {target_date}")
     print()
     
+    if args.repredict:
+        existing_report = load_existing_report(target_date)
+        if not existing_report:
+            print(f"No existing report for {target_date}.")
+            return
+
+        matches = find_matches_for_date(target_date)
+        if not matches:
+            print(f"No match data found for {target_date}.")
+            return
+
+        predictor = load_models()
+        print(f"\nRe-predicting {len(matches)} matches...")
+        results = predict_matches(matches, predictor)
+
+        for match_entry in existing_report.get('matches', []):
+            _mk = lambda h, a: f"{h}_vs_{a}".replace(' ', '_').lower()
+            key = _mk(match_entry['home_team'], match_entry['away_team'])
+            for r in results:
+                m = r['match']
+                r_key = _mk(m['home'], m['away'])
+                if r_key == key:
+                    match_entry['predictions'] = r.get('predictions', {})
+                    match_entry['consensus'] = r.get('consensus', {})
+                    if match_entry.get('actual_result'):
+                        actual = match_entry['actual_result']
+                        for pred_data in match_entry['predictions'].values():
+                            if pred_data.get('prediction'):
+                                pred_data['correct'] = (pred_data['prediction'] == actual)
+                        cons = match_entry.get('consensus', {})
+                        if cons.get('prediction'):
+                            cons['correct'] = (cons['prediction'] == actual)
+                    break
+
+        existing_report['summary']['model_accuracy'] = calculate_model_accuracy(existing_report['matches'])
+        report_path = save_report(existing_report, target_date)
+        print(f"Report updated: {report_path}")
+        return
+
     if args.update:
         update_match_results(target_date)
 

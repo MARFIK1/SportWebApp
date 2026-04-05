@@ -26,6 +26,7 @@ from sklearn.metrics import (
 )
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import clone
+from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
 import joblib
 import time
@@ -692,12 +693,18 @@ class UniversalPredictor:
             }
             print(f"    {name}: acc={acc:.1%} f1={f1:.1%} [{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
 
-        print(f"\n  Calibrating models...")
+        cal_size = max(200, int(len(X_train) * 0.15))
+        cal_indices = np.random.RandomState(42).permutation(len(X_train))[:cal_size]
+        X_cal_raw = X_train.iloc[cal_indices]
+        X_cal_scaled = scaler.transform(X_cal_raw)
+        y_cal = y_train.iloc[cal_indices]
+
+        print(f"\n  Calibrating models (cal set={cal_size})...")
         for name, mdata in list(self.models[target].items()):
             try:
                 cal_model = CalibratedClassifierCV(mdata['model'], cv='prefit', method='sigmoid')
-                X_cal = X_test_scaled if mdata['scaled'] else X_test
-                cal_model.fit(X_cal, y_test)
+                X_cal = X_cal_scaled if mdata['scaled'] else X_cal_raw
+                cal_model.fit(X_cal, y_cal)
                 self.models[target][name]['calibrated_model'] = cal_model
                 print(f"{name}: calibrated (sigmoid/Platt)")
             except Exception as e:
@@ -727,9 +734,15 @@ class UniversalPredictor:
                 if name in ('Ensemble', 'Stacking', 'LSTM'):
                     continue
                 try:
-                    X_cv = scaler.transform(X_train_sorted) if mdata['scaled'] else X_train_sorted.values
+                    if mdata['scaled']:
+                        cv_estimator = Pipeline([
+                            ('scaler', StandardScaler()),
+                            ('model', clone(mdata['model'])),
+                        ])
+                    else:
+                        cv_estimator = clone(mdata['model'])
                     scores = cross_val_score(
-                        clone(mdata['model']), X_cv, y_train_sorted,
+                        cv_estimator, X_train_sorted, y_train_sorted,
                         cv=tscv, scoring='accuracy', n_jobs=-1
                     )
                     cv_results[name] = {
