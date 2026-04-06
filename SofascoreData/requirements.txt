@@ -13,3 +13,4 @@ psutil
 ipykernel
 ipywidgets
 shap
+optuna

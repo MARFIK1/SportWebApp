@@ -33,22 +33,11 @@ import time
 import psutil
 import tempfile
 
-try:
-    from xgboost import XGBClassifier, XGBRegressor
-    HAS_XGBOOST = True
-except ImportError:
-    HAS_XGBOOST = False
-
-try:
-    from lightgbm import LGBMClassifier, LGBMRegressor
-    HAS_LIGHTGBM = True
-except ImportError:
-    HAS_LIGHTGBM = False
-
-try:
-    from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
-except ImportError:
-    HAS_TORCH = False
+from xgboost import XGBClassifier, XGBRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
+from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
+import optuna
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
@@ -415,7 +404,70 @@ class UniversalPredictor:
 
         return all_results
 
-    def _build_model_configs(self, target: str, y_train: pd.Series = None) -> Dict:
+    def _optuna_tune(self, X_train, y_train, sample_weights, target, n_trials=50):
+        config = TARGET_CONFIGS[target]
+        is_binary = config['task'] == 'binary'
+        tscv = TimeSeriesSplit(n_splits=3)
+
+        xgb_best = {}
+        lgb_best = {}
+
+        def xgb_objective(trial):
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 200, 800),
+                'max_depth': trial.suggest_int('max_depth', 4, 12),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+                'subsample': trial.suggest_float('subsample', 0.6, 0.95),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.95),
+                'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+                'gamma': trial.suggest_float('gamma', 0.0, 0.5),
+                'random_state': 42, 'n_jobs': -1,
+            }
+            if is_binary:
+                params['eval_metric'] = 'logloss'
+                params['objective'] = 'binary:logistic'
+            else:
+                params['eval_metric'] = 'mlogloss'
+            model = XGBClassifier(**params)
+            scores = cross_val_score(model, X_train, y_train, cv=tscv,
+                                     scoring='accuracy', n_jobs=-1,
+                                     params={'sample_weight': sample_weights})
+            return scores.mean()
+
+        study = optuna.create_study(direction='maximize')
+        study.optimize(xgb_objective, n_trials=n_trials, show_progress_bar=False)
+        xgb_best = study.best_params
+        print(f"Optuna XGBoost: acc={study.best_value:.4f} ({n_trials} trials)")
+
+        def lgb_objective(trial):
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 200, 800),
+                'max_depth': trial.suggest_int('max_depth', 4, 15),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+                'subsample': trial.suggest_float('subsample', 0.6, 0.95),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.95),
+                'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 1.0),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 1.0),
+                'is_unbalance': True,
+                'random_state': 42, 'n_jobs': -1, 'verbose': -1,
+            }
+            if is_binary:
+                params['objective'] = 'binary'
+            model = LGBMClassifier(**params)
+            scores = cross_val_score(model, X_train, y_train, cv=tscv,
+                                     scoring='accuracy', n_jobs=-1)
+            return scores.mean()
+
+        study = optuna.create_study(direction='maximize')
+        study.optimize(lgb_objective, n_trials=n_trials, show_progress_bar=False)
+        lgb_best = study.best_params
+        print(f"Optuna LightGBM: acc={study.best_value:.4f} ({n_trials} trials)")
+
+        return xgb_best, lgb_best
+
+    def _build_model_configs(self, target: str, y_train: pd.Series = None,
+                             xgb_params: Dict = None, lgb_params: Dict = None) -> Dict:
         config = TARGET_CONFIGS[target]
         is_binary = config['task'] == 'binary'
 
@@ -452,38 +504,45 @@ class UniversalPredictor:
             },
         }
 
-        if HAS_XGBOOST:
-            xgb_params = dict(
-                n_estimators=400, max_depth=7, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8,
-                min_child_weight=3, gamma=0.1,
-                random_state=42, n_jobs=-1,
-            )
-            if is_binary:
-                xgb_params['eval_metric'] = 'logloss'
-                xgb_params['objective'] = 'binary:logistic'
-            else:
-                xgb_params['eval_metric'] = 'mlogloss'
-            model_configs['XGBoost'] = {
-                'model': XGBClassifier(**xgb_params),
-                'scaled': False,
-                'sample_weight': True,
-            }
+        xgb_defaults = dict(
+            n_estimators=400, max_depth=7, learning_rate=0.03,
+            subsample=0.8, colsample_bytree=0.8,
+            min_child_weight=3, gamma=0.1,
+            random_state=42, n_jobs=-1,
+        )
+        if xgb_params:
+            xgb_defaults.update(xgb_params)
+            xgb_defaults['random_state'] = 42
+            xgb_defaults['n_jobs'] = -1
+        if is_binary:
+            xgb_defaults['eval_metric'] = 'logloss'
+            xgb_defaults['objective'] = 'binary:logistic'
+        else:
+            xgb_defaults['eval_metric'] = 'mlogloss'
+        model_configs['XGBoost'] = {
+            'model': XGBClassifier(**xgb_defaults),
+            'scaled': False,
+            'sample_weight': True,
+        }
 
-        if HAS_LIGHTGBM:
-            lgb_params = dict(
-                n_estimators=400, max_depth=12, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8, is_unbalance=True,
-                min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
-                random_state=42, n_jobs=-1, verbose=-1,
-            )
-            if is_binary:
-                lgb_params['objective'] = 'binary'
-            model_configs['LightGBM'] = {
-                'model': LGBMClassifier(**lgb_params),
-                'scaled': False,
-                'sample_weight': False,
-            }
+        lgb_defaults = dict(
+            n_estimators=400, max_depth=12, learning_rate=0.03,
+            subsample=0.8, colsample_bytree=0.8, is_unbalance=True,
+            min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
+            random_state=42, n_jobs=-1, verbose=-1,
+        )
+        if lgb_params:
+            lgb_defaults.update(lgb_params)
+            lgb_defaults['random_state'] = 42
+            lgb_defaults['n_jobs'] = -1
+            lgb_defaults['verbose'] = -1
+        if is_binary:
+            lgb_defaults['objective'] = 'binary'
+        model_configs['LightGBM'] = {
+            'model': LGBMClassifier(**lgb_defaults),
+            'scaled': False,
+            'sample_weight': False,
+        }
 
         return model_configs
 
@@ -615,7 +674,14 @@ class UniversalPredictor:
             sample_weights = sample_weights * temporal_weights
             print(f"Temporal weighting: decay=365d, range=[{temporal_weights.min():.3f}, {temporal_weights.max():.3f}]")
 
-        model_configs = self._build_model_configs(target, y_train=y_train)
+        xgb_tuned, lgb_tuned = self._optuna_tune(
+            X_train, y_train, sample_weights, target, n_trials=50
+        )
+
+        model_configs = self._build_model_configs(
+            target, y_train=y_train,
+            xgb_params=xgb_tuned, lgb_params=lgb_tuned,
+        )
 
         self.models[target] = {}
         results = {}
@@ -763,11 +829,19 @@ class UniversalPredictor:
                 )
 
         if len(ensemble_estimators) >= 2:
+            ensemble_weights = []
+            for name in tree_models:
+                if name in self.models[target]:
+                    ensemble_weights.append(self.models[target][name].get('accuracy', 0.5))
+
             proc = psutil.Process()
             mem_before_ens = proc.memory_info().rss / 1024 / 1024
             cpu_before_ens = proc.cpu_times()
             t0 = time.time()
-            ensemble = VotingClassifier(estimators=ensemble_estimators, voting='soft', n_jobs=-1)
+            ensemble = VotingClassifier(
+                estimators=ensemble_estimators, voting='soft',
+                weights=ensemble_weights, n_jobs=-1,
+            )
             ensemble.fit(X_train, y_train, sample_weight=sample_weights)
             ens_time = time.time() - t0
             cpu_after_ens = proc.cpu_times()
@@ -963,26 +1037,24 @@ class UniversalPredictor:
                 'scaled': False,
             },
         }
-        if HAS_XGBOOST:
-            configs['XGBoost'] = {
-                'model': XGBRegressor(
-                    n_estimators=500, max_depth=7, learning_rate=0.02,
-                    subsample=0.8, colsample_bytree=0.8,
-                    min_child_weight=5, gamma=0.1, reg_alpha=0.1,
-                    random_state=42, n_jobs=-1
-                ),
-                'scaled': False,
-            }
-        if HAS_LIGHTGBM:
-            configs['LightGBM'] = {
-                'model': LGBMRegressor(
-                    n_estimators=500, max_depth=12, learning_rate=0.02,
-                    subsample=0.8, colsample_bytree=0.8,
-                    min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
-                    random_state=42, n_jobs=-1, verbose=-1
-                ),
-                'scaled': False,
-            }
+        configs['XGBoost'] = {
+            'model': XGBRegressor(
+                n_estimators=500, max_depth=7, learning_rate=0.02,
+                subsample=0.8, colsample_bytree=0.8,
+                min_child_weight=5, gamma=0.1, reg_alpha=0.1,
+                random_state=42, n_jobs=-1
+            ),
+            'scaled': False,
+        }
+        configs['LightGBM'] = {
+            'model': LGBMRegressor(
+                n_estimators=500, max_depth=12, learning_rate=0.02,
+                subsample=0.8, colsample_bytree=0.8,
+                min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
+                random_state=42, n_jobs=-1, verbose=-1
+            ),
+            'scaled': False,
+        }
         return configs
 
     def _train_regression_models(self, target, config, X_train, X_test,
