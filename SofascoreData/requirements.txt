@@ -12,3 +12,4 @@ joblib
 psutil
 ipykernel
 ipywidgets
+shap
