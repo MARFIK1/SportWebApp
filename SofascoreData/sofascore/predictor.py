@@ -414,13 +414,13 @@ class UniversalPredictor:
 
         def xgb_objective(trial):
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 200, 800),
-                'max_depth': trial.suggest_int('max_depth', 4, 12),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-                'subsample': trial.suggest_float('subsample', 0.6, 0.95),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.95),
-                'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
-                'gamma': trial.suggest_float('gamma', 0.0, 0.5),
+                'n_estimators': trial.suggest_int('n_estimators', 300, 600),
+                'max_depth': trial.suggest_int('max_depth', 4, 8),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.08, log=True),
+                'subsample': trial.suggest_float('subsample', 0.7, 0.9),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
+                'min_child_weight': trial.suggest_int('min_child_weight', 3, 10),
+                'gamma': trial.suggest_float('gamma', 0.05, 0.5),
                 'random_state': 42, 'n_jobs': -1,
             }
             if is_binary:
@@ -441,14 +441,14 @@ class UniversalPredictor:
 
         def lgb_objective(trial):
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 200, 800),
-                'max_depth': trial.suggest_int('max_depth', 4, 15),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-                'subsample': trial.suggest_float('subsample', 0.6, 0.95),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.95),
-                'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 1.0),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 1.0),
+                'n_estimators': trial.suggest_int('n_estimators', 300, 600),
+                'max_depth': trial.suggest_int('max_depth', 6, 14),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.08, log=True),
+                'subsample': trial.suggest_float('subsample', 0.7, 0.9),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
+                'min_child_samples': trial.suggest_int('min_child_samples', 15, 40),
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.05, 0.5),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.05, 0.5),
                 'is_unbalance': True,
                 'random_state': 42, 'n_jobs': -1, 'verbose': -1,
             }
