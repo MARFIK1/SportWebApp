@@ -1,40 +1,109 @@
-import { getCurrentSeason } from "@/app/util/league/season";
-import { getStandings, getFixtures, getTopScorers, getTopAssistants } from "@/app/util/dataFetch/fetchData";
-import MainPage from "./components/home/MainPage";
+import { listReportDates, loadPredictionReport } from "./util/data/predictionService";
+import { getCompetitionByDataPath } from "./util/league/leagueRegistry";
+import { buildTeamIdMap, loadAllSeasons } from "./util/data/dataService";
+import DatePicker from "./components/home/DatePicker";
+import LeagueSection from "./components/home/LeagueSection";
+import { getServerT } from "./util/i18n/getLocale";
 
-export default async function Home() {
-    const season = getCurrentSeason();
-    const standingsData = await getStandings(season);
-    const filteredFixtures = await getFixtures(season);
+interface PageProps {
+    searchParams: { date?: string };
+}
 
-    const topScorersData = await Promise.all(
-        standingsData.map(async (standing) => {
-            const leagueId = standing.league.id;
-            return {
-                leagueId,
-                topScorers: await getTopScorers(leagueId, season)
-            };
-        })
-    )
+function resolveCompetition(dataPath: string) {
+    const comp = getCompetitionByDataPath(dataPath);
+    if (comp) return comp;
+    const parts = dataPath.split("/");
+    if (parts.length > 2) {
+        return getCompetitionByDataPath(parts.slice(0, 2).join("/"));
+    }
+    return undefined;
+}
 
-    const topAssistantsData = await Promise.all(
-        standingsData.map(async (standing) => {
-            const leagueId = standing.league.id;
-            return {
-                leagueId,
-                topAssistants: await getTopAssistants(leagueId, season)
-            };
-        })
-    )
+function buildLookups(leagueDataPaths: string[]): { teamIds: Record<string, number>; eventIds: Record<string, number> } {
+    const teamIds: Record<string, number> = {};
+    const eventIds: Record<string, number> = {};
+    for (const dataPath of leagueDataPaths) {
+        const comp = resolveCompetition(dataPath);
+        if (!comp) continue;
+        const matches = loadAllSeasons(comp);
+        for (const m of matches) {
+            if (!(m.home_team in teamIds)) teamIds[m.home_team] = m.home_team_id;
+            if (!(m.away_team in teamIds)) teamIds[m.away_team] = m.away_team_id;
+            const key = `${m.home_team}_vs_${m.away_team}_${m.date.slice(0, 10)}`;
+            eventIds[key] = m.event_id;
+        }
+    }
+    return { teamIds, eventIds };
+}
+
+export default async function Home({ searchParams }: PageProps) {
+    const dates = listReportDates();
+    const selectedDate = searchParams.date || dates[dates.length - 1] || "";
+    const report = selectedDate ? loadPredictionReport(selectedDate) : null;
+
+    const t = getServerT();
+
+    if (!report || dates.length === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-gray-500 dark:text-gray-400">
+                <p className="text-xl">{t("no_data")}</p>
+            </div>
+        );
+    }
+
+    const leagueDataPaths = Array.from(new Set(report.matches.map((m) => `${m.comp_type}/${m.league}`)));
+    const { teamIds, eventIds } = buildLookups(leagueDataPaths);
+
+    const matchesByLeague: Record<string, typeof report.matches> = {};
+    for (const match of report.matches) {
+        const key = `${match.comp_type}/${match.league}`;
+        if (!matchesByLeague[key]) matchesByLeague[key] = [];
+        matchesByLeague[key].push(match);
+    }
+
+    const leagueSections = Object.entries(matchesByLeague).map(([dataPath, matches]) => {
+        const comp = resolveCompetition(dataPath);
+        return {
+            dataPath,
+            leagueName: comp?.name ?? dataPath,
+            slug: comp?.slug ?? dataPath,
+            priority: comp?.priority ?? 999,
+            matches,
+        };
+    }).sort((a, b) => a.priority - b.priority);
+
+    const totalMatches = report.summary.total_matches;
+    const finishedMatches = report.summary.finished_matches;
 
     return (
-        <div className="flex flex-col w-full justify-center items-center md:p-10">
-            <MainPage
-                standingsData={standingsData}
-                filteredFixtures={filteredFixtures}
-                topScorersData={topScorersData}
-                topAssistantsData={topAssistantsData}
-            />
+        <div className="flex flex-col w-full max-w-[1600px] mx-auto px-6 py-6">
+            <div className="text-center mb-6">
+                <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
+                    {totalMatches} {t("matches_analyzed")}
+                </h1>
+                <p className="text-gray-500 dark:text-gray-400 mt-1">
+                    {finishedMatches === totalMatches
+                        ? t("all_completed")
+                        : `${finishedMatches} ${t("finished")}, ${totalMatches - finishedMatches} ${t("pending")}`}
+                </p>
+            </div>
+
+            <DatePicker dates={dates} selectedDate={selectedDate} />
+
+            <div className="mt-6">
+                {leagueSections.map(({ dataPath, leagueName, slug, matches }) => (
+                    <LeagueSection
+                        key={dataPath}
+                        league={dataPath}
+                        leagueName={leagueName}
+                        slug={slug}
+                        matches={matches}
+                        teamIds={teamIds}
+                        eventIds={eventIds}
+                        selectedDate={selectedDate}
+                    />
+                ))}
+            </div>
         </div>
-    )
+    );
 }
