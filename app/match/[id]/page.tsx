@@ -1,427 +1,383 @@
-import Link from "next/link";
 import Image from "next/image";
+import Link from "next/link";
+import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
+import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
+import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
+import { PredictionMatch, ModelPrediction, ConsensusPrediction, AnalysisMatch } from "@/types/predictions";
+import type { SofascoreMatch } from "@/types/sofascore";
+import MatchPredictions from "./MatchPredictions";
+import MatchStatistics from "./MatchStatistics";
+import { getServerT } from "@/app/util/i18n/getLocale";
 
-import { getCurrentSeason } from "@/app/util/league/season";
-import { getFixtureByFixtureId } from "@/app/util/dataFetch/getFixtureByFixtureId";
-import LocalTime from "@/app/components/common/LocalTime";
-import ScrollToTop from "@/app/components/common/ScrollToTop";
-import CountdownTimer from "@/app/components/common/CountdownTimer";
-import MatchDetails from "../MatchDetails";
+const STAT_MAP: [string, string, string][] = [
+    ["Ball Possession", "home_ballpossession", "away_ballpossession"],
+    ["Expected Goals (xG)", "home_xg", "away_xg"],
+    ["Total Shots", "home_totalshotsongoal", "away_totalshotsongoal"],
+    ["Shots on Goal", "home_shotsongoal", "away_shotsongoal"],
+    ["Shots off Goal", "home_shotsoffgoal", "away_shotsoffgoal"],
+    ["Blocked Shots", "home_blockedscoringattempt", "away_blockedscoringattempt"],
+    ["Corner Kicks", "home_cornerkicks", "away_cornerkicks"],
+    ["Fouls", "home_fouls", "away_fouls"],
+    ["Yellow Cards", "home_yellowcards", "away_yellowcards"],
+    ["Goalkeeper Saves", "home_goalkeepersaves", "away_goalkeepersaves"],
+    ["Total Passes", "home_passes", "away_passes"],
+    ["Accurate Passes", "home_accuratepasses", "away_accuratepasses"],
+    ["Tackles", "home_totaltackle", "away_totaltackle"],
+];
 
-type PageProps = {
-    params: {
-        id: string
+function buildMatchStats(m: SofascoreMatch): { type: string; homeValue: number; awayValue: number }[] {
+    const raw = m as unknown as Record<string, unknown>;
+    const stats: { type: string; homeValue: number; awayValue: number }[] = [];
+    for (const [label, hKey, aKey] of STAT_MAP) {
+        const hVal = raw[hKey] as number | null;
+        const aVal = raw[aKey] as number | null;
+        if (hVal !== null || aVal !== null) {
+            stats.push({ type: label, homeValue: hVal ?? 0, awayValue: aVal ?? 0 });
+        }
     }
+    return stats;
 }
 
-function formatStatName(statName: string) : string {
-    return statName
-        .replace(/_/g, " ")
-        .replace(/\b\w/g, (char) => char.toUpperCase());
+interface PageProps {
+    params: { id: string };
+    searchParams: { date?: string };
 }
 
-function renderLineup(lineup: any, teamId: number) {
-    const formation = lineup.formation || "Unknown";
-    const players = lineup.startXI;
-    const coach = lineup.coach;
-    if (!players || players.length === 0) {
-        return <p className="text-white">No lineup available.</p>;
+function teamLogoUrl(teamId: number): string {
+    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
+}
+
+function findPredictionMatch(report: { matches: PredictionMatch[] }, homeTeam: string, awayTeam: string): PredictionMatch | undefined {
+    return report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
+}
+
+export default async function Match({ params, searchParams }: PageProps) {
+    const eventId = parseInt(params.id);
+    const competitions = getAllCompetitions();
+    const result = findMatchInCompetitions(eventId, competitions);
+
+    const t = getServerT();
+
+    if (!result) {
+        return (
+            <div className="flex justify-center items-center min-h-[60vh] text-gray-500 dark:text-gray-400">
+                <p className="text-xl">{t("match_not_found")}</p>
+            </div>
+        );
     }
 
-    const goalkeeper = players[0];
-    const fieldPlayers = players.slice(1);
-    const rows = formation.split("-").map(Number);
-    let startIndex = 0;
+    const { match, competition } = result;
+    const date = searchParams.date || match.date.slice(0, 10);
+
+    const predReport = loadPredictionReport(date);
+    const analysisReport = loadAnalysisReport(date);
+    const predMatch = predReport ? findPredictionMatch(predReport, match.home_team, match.away_team) : null;
+
+    const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
+    const analysis = analysisReport?.matches?.[analysisKey] ?? null;
+
+    const isFinished = match.status === "finished";
+    const matchStats = isFinished ? buildMatchStats(match) : [];
+
+    const consensus = predMatch?.predictions?.consensus as ConsensusPrediction | undefined;
+    const models = predMatch ? Object.entries(predMatch.predictions).filter(([key]) => key !== "consensus") as [string, ModelPrediction][] : [];
+
+    const h2hMatches: SofascoreMatch[] = [];
+    for (const comp of competitions) {
+        const allMatches = loadAllSeasons(comp);
+        const meetings = allMatches.filter((m) =>
+            m.status === "finished" && m.event_id !== eventId && (
+                (m.home_team_id === match.home_team_id && m.away_team_id === match.away_team_id) ||
+                (m.home_team_id === match.away_team_id && m.away_team_id === match.home_team_id)
+            )
+        );
+        h2hMatches.push(...meetings);
+    }
+    const h2h = Array.from(
+        h2hMatches.reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values()
+    ).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
+
+    const h2hStats = { homeWins: 0, draws: 0, awayWins: 0 };
+    for (const m of h2h) {
+        const homeIsHome = m.home_team_id === match.home_team_id;
+        if (m.home_score! > m.away_score!) {
+            homeIsHome ? h2hStats.homeWins++ : h2hStats.awayWins++;
+        } else if (m.home_score! < m.away_score!) {
+            homeIsHome ? h2hStats.awayWins++ : h2hStats.homeWins++;
+        } else {
+            h2hStats.draws++;
+        }
+    }
 
     return (
-        <div className="flex flex-col items-center space-y-6">
-            <div className="flex flex-col items-center mb-6">
-                {
-                    coach?.photo && (
-                        <Image
-                            src={coach.photo}
-                            alt={coach.name}
-                            width={64}
-                            height={64}
-                            className="rounded-full object-cover mb-2"
-                            style={{ width: "64px", height: "64px" }}
-                        />
-                    )
-                }
-                <span className="text-white text-lg">
-                    {coach?.name || "Unknown Coach"}
-                </span>
+        <div className="flex flex-col w-full max-w-[1400px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
+            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
+                <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
+                <span>/</span>
+                <Link href={`/?date=${date}`} className="hover:text-gray-900 dark:hover:text-white transition-colors">{competition.name}</Link>
+                <span>/</span>
+                <span className="text-gray-700 dark:text-gray-300">Round {match.round}</span>
             </div>
-            <p className="text-gray-400 text-lg mb-4">
-                Formation: {formation}
-            </p>
-            <div className="flex flex-col items-center mb-6">
-                <Link href={`/player/${goalkeeper.player.id}`}>
-                    <Image
-                        src={goalkeeper.player.photo || "/default-player.png"}
-                        alt={goalkeeper.player.name}
-                        title={goalkeeper.player.name}
-                        width={64}
-                        height={64}
-                        className="rounded-full object-cover"
-                        style={{ width: "64px", height: "64px" }}
-                    />
-                </Link>
-                <span
-                    className="text-white text-sm text-center mt-2 truncate"
-                    style={{ width: "80px" }}
-                >
-                    {goalkeeper.player.name}
-                </span>
-            </div>
-            {
-                rows.map((count: number, rowIndex: number) => {
-                    const playersInRow = fieldPlayers.slice(startIndex, startIndex + count);
-                    startIndex += count;
 
-                    return (
-                        <div
-                            key={rowIndex}
-                            className="flex justify-center gap-x-4 mt-4"
-                            style={{ width: "100%", justifyContent: "space-evenly" }}
-                        >
-                            {
-                                playersInRow.map((player: any) => (
+            <div className="flex flex-col lg:flex-row gap-8">
+                <div className="flex-1">
+                    <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-8 mb-6">
+                        <div className="text-center text-xs text-gray-500 dark:text-gray-400 mb-6">
+                            {competition.country.toUpperCase()} {"\u2022"} {competition.name} {"\u2022"} {match.date.slice(0, 10)}
+                        </div>
+
+                        <div className="flex items-center justify-center gap-8">
+                            <div className="flex flex-col items-center gap-3 w-[200px]">
+                                <Image
+                                    src={teamLogoUrl(match.home_team_id)}
+                                    alt={match.home_team}
+                                    width={80}
+                                    height={80}
+                                    className="object-contain"
+                                    style={{ width: "80px", height: "80px" }}
+                                />
+                                <span className="text-lg font-semibold text-center">{match.home_team}</span>
+                            </div>
+
+                            <div className="flex flex-col items-center gap-2">
+                                {isFinished ? (
+                                    <>
+                                        <span className="text-5xl font-bold">
+                                            {match.home_score} - {match.away_score}
+                                        </span>
+                                        <span className="bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+                                            {t("full_time")}
+                                        </span>
+                                        {match.home_score_pen != null && match.away_score_pen != null && (
+                                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                                                PEN: {match.home_score_pen} - {match.away_score_pen}
+                                            </span>
+                                        )}
+                                        {match.home_score_ht !== null && match.away_score_ht !== null && (
+                                            <span className="text-xs text-gray-400 dark:text-gray-500">
+                                                HT: {match.home_score_ht} - {match.away_score_ht}
+                                            </span>
+                                        )}
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="text-3xl font-semibold text-emerald-400">vs</span>
+                                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                                            {match.status === "postponed" ? t("postponed") : t("not_started")}
+                                        </span>
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="flex flex-col items-center gap-3 w-[200px]">
+                                <Image
+                                    src={teamLogoUrl(match.away_team_id)}
+                                    alt={match.away_team}
+                                    width={80}
+                                    height={80}
+                                    className="object-contain"
+                                    style={{ width: "80px", height: "80px" }}
+                                />
+                                <span className="text-lg font-semibold text-center">{match.away_team}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {analysis?.goals?.expected_goals_home != null && analysis?.goals?.expected_goals_away != null && (
+                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mb-6">
+                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("expected_goals")}</h3>
+                            <div className="flex items-center gap-4">
+                                <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{analysis.goals.expected_goals_home.toFixed(2)}</span>
+                                <div className="flex-1 flex h-6 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700">
                                     <div
-                                        key={player.player.id}
-                                        className="flex flex-col items-center"
-                                        style={{ width: "80px", alignItems: "center" }}
+                                        className="bg-emerald-500 h-full"
+                                        style={{ width: `${(analysis.goals.expected_goals_home / (analysis.goals.expected_goals_home + analysis.goals.expected_goals_away)) * 100}%` }}
+                                    />
+                                    <div
+                                        className="bg-blue-500 h-full"
+                                        style={{ width: `${(analysis.goals.expected_goals_away / (analysis.goals.expected_goals_home + analysis.goals.expected_goals_away)) * 100}%` }}
+                                    />
+                                </div>
+                                <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{analysis.goals.expected_goals_away.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {isFinished && matchStats.length > 0 && (
+                        <MatchStatistics stats={matchStats} />
+                    )}
+
+                    {h2h.length > 0 && (
+                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mt-6">
+                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("head_to_head")}</h3>
+                            <div className="flex items-center justify-center gap-6 mb-4">
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold text-emerald-400">{h2hStats.homeWins}</div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">{match.home_team}</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold text-gray-500 dark:text-gray-400">{h2hStats.draws}</div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">{t("draws")}</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold text-blue-400">{h2hStats.awayWins}</div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">{match.away_team}</div>
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                {h2h.map((m) => (
+                                    <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                        <div className="flex items-center gap-2 flex-1">
+                                            <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={20} height={20} className="object-contain" style={{ width: "20px", height: "20px" }} />
+                                            <span className="text-sm truncate">{m.home_team}</span>
+                                        </div>
+                                        <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
+                                        <div className="flex items-center gap-2 flex-1 justify-end">
+                                            <span className="text-sm truncate text-right">{m.away_team}</span>
+                                            <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={20} height={20} className="object-contain" style={{ width: "20px", height: "20px" }} />
+                                        </div>
+                                        <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="w-full lg:w-[400px] space-y-6">
+                    {consensus && (
+                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t("match_insight")}</h3>
+                                <span className="text-xs text-emerald-400 font-semibold">{t("consensus")}</span>
+                            </div>
+                            <div className="flex justify-between gap-3 mb-4">
+                                {(["HOME", "DRAW", "AWAY"] as const).map((outcome) => (
+                                    <div
+                                        key={outcome}
+                                        className={`flex-1 text-center p-3 rounded-xl ${
+                                            consensus.prediction === outcome ? "bg-emerald-600/30 border border-emerald-500" : "bg-gray-100 dark:bg-gray-800"
+                                        }`}
                                     >
-                                        <Link href={`/player/${player.player.id}`}>
-                                            <Image
-                                                src={player.player.photo || "/default-player.png"}
-                                                alt={player.player.name}
-                                                title={player.player.name}
-                                                width={64}
-                                                height={64}
-                                                className="rounded-full object-cover"
-                                                style={{ width: "64px", height: "64px" }}
-                                            />
-                                        </Link>
-                                        <span
-                                            className="text-white text-sm text-center mt-2 truncate"
-                                            style={{ width: "80px" }}
-                                        >
-                                            {player.player.name}
+                                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                            {outcome === "HOME" ? "HOME" : outcome === "AWAY" ? "AWAY" : "DRAW"}
+                                        </div>
+                                        <div className="text-xl font-bold">
+                                            {(consensus.avg_probabilities?.[outcome] ?? 0).toFixed(0)}%
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500 dark:text-gray-400">{t("model_confidence")}</span>
+                                    <span className="text-gray-900 dark:text-white font-semibold">
+                                        {Math.max(...Object.values(consensus.avg_probabilities ?? {})).toFixed(0)}%
+                                    </span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500 dark:text-gray-400">{t("agreement")}</span>
+                                    <span className="text-gray-900 dark:text-white font-semibold">{consensus.agreement}</span>
+                                </div>
+                                {isFinished && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 dark:text-gray-400">{t("result")}</span>
+                                        <span className={`font-semibold ${consensus.correct ? "text-emerald-400" : "text-red-400"}`}>
+                                            {consensus.correct ? t("correct") : t("incorrect")}
                                         </span>
                                     </div>
-                                ))
-                            }
+                                )}
+                            </div>
                         </div>
-                    )
-                })
-            }
-        </div>
-    )
-}
+                    )}
 
-export default async function Match({ params } : PageProps) {
-    const season = getCurrentSeason();
-    const fixtureByFixtureId = await getFixtureByFixtureId(parseInt(params.id), season);
-    if (!fixtureByFixtureId) {
-        return (
-            <div className="flex w-full justify-center items-center py-5">
-                <div className="flex max-w-7xl p-5 w-full md:flex-row justify-center items-center text-neutral-100">
-                    No fixture found
+                    {predMatch?.market_predictions && (
+                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
+                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("advanced_markets")}</h3>
+                            <div className="grid grid-cols-2 gap-3">
+                                {[
+                                    { key: "btts", label: "BTTS (Yes)" },
+                                    { key: "over_2_5", label: "Over 2.5" },
+                                    { key: "over_1_5", label: "Over 1.5" },
+                                    { key: "corners_over_8_5", label: "Corners 8.5+" },
+                                    { key: "cards_over_3_5", label: "Cards 3.5+" },
+                                ].map(({ key, label }) => {
+                                    const market = predMatch.market_predictions[key as keyof typeof predMatch.market_predictions];
+                                    if (!market?.consensus) return null;
+                                    const prob = Math.max(...Object.values(market.consensus.avg_probabilities || {}));
+                                    return (
+                                        <div key={key} className="bg-gray-100 dark:bg-gray-800 rounded-xl p-3">
+                                            <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</div>
+                                            <div className="text-xl font-bold text-emerald-400">{prob.toFixed(0)}%</div>
+                                            <div className="text-xs text-gray-500 dark:text-gray-400">{market.consensus.prediction}</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
+                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
+                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("pre_match_analysis")}</h3>
+                            <div className="space-y-3 text-sm">
+                                {analysis.goals?.btts_pct != null && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 dark:text-gray-400">{t("btts_probability")}</span>
+                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.goals.btts_pct.toFixed(0)}%</span>
+                                    </div>
+                                )}
+                                {analysis.goals?.over_2_5_pct != null && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 dark:text-gray-400">{t("over_25")}</span>
+                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.goals.over_2_5_pct.toFixed(0)}%</span>
+                                    </div>
+                                )}
+                                {analysis.corners?.expected_total != null && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 dark:text-gray-400">{t("expected_corners")}</span>
+                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.corners.expected_total.toFixed(1)}</span>
+                                    </div>
+                                )}
+                                {analysis.cards?.expected_total != null && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 dark:text-gray-400">{t("expected_cards")}</span>
+                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.cards.expected_total.toFixed(1)}</span>
+                                    </div>
+                                )}
+                                {analysis.form?.home && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 dark:text-gray-400">{t("home_form")}</span>
+                                        <div className="flex gap-1">
+                                            {analysis.form.home.split("").map((c, i) => (
+                                                <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                                                    c === "W" ? "bg-emerald-600" : c === "D" ? "bg-gray-600" : "bg-red-600"
+                                                }`}>{c}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {analysis.form?.away && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 dark:text-gray-400">{t("away_form")}</span>
+                                        <div className="flex gap-1">
+                                            {analysis.form.away.split("").map((c, i) => (
+                                                <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                                                    c === "W" ? "bg-emerald-600" : c === "D" ? "bg-gray-600" : "bg-red-600"
+                                                }`}>{c}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
-        )
-    }
 
-    const { teams, fixture, score, statistics, lineups, events } = fixtureByFixtureId;
-    const extraTimeScore = score.extratime && (score.extratime.home !== null || score.extratime.away !== null) ? `${score.extratime.home ?? "-"} - ${score.extratime.away ?? "-"}` : "-";
-
-    return (
-        <div className="flex flex-col w-full justify-center items-center py-10 md:p-10 text-neutral-100">
-            <ScrollToTop />
-                <div className="flex w-full max-w-7xl items-center justify-center perspective pb-10 md:pb-20">
-                    <div
-                        className={`w-1/3 flex justify-center rounded-full ${fixture.status.long === "Match Finished" ? teams.home.winner ? "logo-shadow-green" : teams.away.winner ? "logo-shadow-red" : "logo-shadow-yellow" : "logo-shadow"} animate-logo-pop-left`}
-                    >
-                        <Link href={`../team/${teams.home.id}`}>
-                            <Image
-                                src={teams.home.logo}
-                                alt={`${teams.home.name} Logo`}
-                                width={250}
-                                height={250}
-                                className="object-contain"
-                                style={{ width: "250px", height: "250px" }}
-                            />
-                        </Link>
-                    </div>
-                    <div className="w-1/3 flex justify-center items-center flex-col h-56">
-                        <div className="flex flex-row justify-center items-center text-sm md:text-xl text-center space-x-2">
-                            <span>
-                                <LocalTime fixture={fixtureByFixtureId}/>
-                            </span>
-                            <span>
-                                - {fixtureByFixtureId.league.name}
-                            </span>
-                        </div>
-                        {
-                            fixture.status.long !== 'Match Finished' && (
-                                <div className="text-center text-lg mt-4 text-yellow-400">
-                                    <CountdownTimer startTime={fixture.date} />
-                                </div>
-                            )
-                        }
-                        <div className="text-center text-sm md:text-lg font-semibold mt-2">
-                            <span
-                                className={`${fixture.status.long === "Match Finished" ? teams.home.winner? "text-green-500" : teams.away.winner ? "text-red-500" : "text-yellow-500" : "text-gray-300"}`}
-                            >
-                                {teams.home.name}
-                            </span>
-                            <span className="text-gray-300"> - </span>
-                            <span
-                                className={`${fixture.status.long === "Match Finished" ? teams.away.winner ? "text-green-500" : teams.home.winner ? "text-red-500" : "text-yellow-500" : "text-gray-300"}`}
-                            >
-                                {teams.away.name}
-                            </span>
-                        </div>
-                        <div className="h-3/5 flex justify-center items-center md:text-5xl text-2xl mt-2">
-                            <div className="flex flex-col justify-center items-center">
-                                {score.fulltime.home}
-                            </div>
-                            <div> - </div>
-                            <div className="flex flex-col justify-center items-center">
-                                {score.fulltime.away}
-                            </div>
-                        </div>
-                        {
-                            extraTimeScore && fixture.status.long === "Match Finished" ? (
-                                <div className="text-center text-gray-300 mt-2 text-sm">
-                                    <p>
-                                        Extra Time: {extraTimeScore}
-                                    </p>
-                                </div>
-                            ) : (
-                                fixture.status.long !== "Match Finished" && (
-                                    <div className="text-center text-gray-300 mt-2 text-sm">
-                                        <p>
-                                            Extra Time: -
-                                        </p>
-                                    </div>
-                                )
-                            )
-                        }
-                        {
-                            score.penalties && (
-                                <div className="text-center text-gray-300 mt-2 text-sm">
-                                    <p>
-                                        Penalties: {score.penalties.home} - {score.penalties.away}
-                                    </p>
-                                </div>
-                            )
-                        }
-                        <div className="text-center text-gray-300 mt-4">
-                            <p>
-                                Referee: {fixture.referee || "Unknown"}
-                            </p>
-                            <p>
-                                Stadium: {fixture.venue?.name || "Unknown"}, {fixture.venue?.city || "Unknown"}
-                            </p>
-                        </div>
-                    </div>
-                    <div
-                        className={`w-1/3 flex justify-center rounded-full ${fixture.status.long === "Match Finished" ? teams.away.winner ? "logo-shadow-green" : teams.home.winner ? "logo-shadow-red" : "logo-shadow-yellow" : "logo-shadow"} animate-logo-pop-right`}
-                    >
-                        <Link href={`../team/${teams.away.id}`}>
-                            <Image
-                                src={teams.away.logo}
-                                alt={`${teams.away.name} Logo`}
-                                width={250}
-                                height={250}
-                                className="object-contain"
-                                style={{ width: "250px", height: "250px" }}
-                            />
-                        </Link>
-                    </div>
-                </div>
-
-                <MatchDetails fixtureDate={fixture.date}>
-                    <div className="flex flex-col w-full max-w-2xl bg-gray-800 rounded-lg p-6 mb-10 mx-auto">
-                        <h3 className="text-xl text-center text-white mb-4">
-                            Match Events
-                        </h3>
-                        {
-                            ["First Half", "Second Half", "First Half Extra Time", "Second Half Extra Time", "Penalties"].map((period) => {
-                                const periodEvents = events?.filter((event) => {
-                                    if (period === "First Half") {
-                                        return event.time.elapsed <= 45;
-                                    }
-                                    if (period === "Second Half") {
-                                        return event.time.elapsed > 45 && event.time.elapsed <= 90;
-                                    }
-                                    if (period === "First Half Extra Time") {
-                                        return event.time.elapsed > 90 && event.time.elapsed <= 105;
-                                    }
-                                    if (period === "Second Half Extra Time") {
-                                        return event.time.elapsed > 105 && event.time.elapsed <= 120 && !event.detail?.includes("Penalty");
-                                    }
-                                    if (period === "Penalties") {
-                                        return event.detail?.includes("Penalty");
-                                    }
-                                    return false;
-                                });
-
-                                return (
-                                    <div
-                                        key={period}
-                                        className="mb-6"
-                                    >
-                                        <h4 className="text-lg text-center text-gray-400 mb-4">
-                                            {period}
-                                        </h4>
-                                        <ul className="text-white text-sm space-y-4">
-                                            {
-                                                periodEvents && periodEvents.length === 0 ? (
-                                                    <li className="text-center text-gray-500">
-                                                        Nothing happened.
-                                                    </li>
-                                                ) : period === "Penalties" ? (
-                                                        periodEvents?.map((event, index) => {
-                                                            const homeEvents = periodEvents.filter((e) => e.team.id === teams.home.id);
-                                                            const awayEvents = periodEvents.filter((e) => e.team.id === teams.away.id);
-                                                            const alternatingEvent = index % 2 === 0 ? homeEvents[Math.floor(index / 2)] : awayEvents[Math.floor(index / 2)];
-                                                            if (!alternatingEvent) {
-                                                                return null;
-                                                            }
-
-                                                            const penaltyResult = alternatingEvent.detail?.includes("Missed") ? "❌" : "✔";
-                                                            const isAlternatingHomeTeam = alternatingEvent.team.id === teams.home.id;
-
-                                                            return (
-                                                                <li
-                                                                    key={index}
-                                                                    className={`flex ${isAlternatingHomeTeam ? "justify-start" : "justify-end"}`}
-                                                                >
-                                                                    <span className="text-gray-300">
-                                                                        {alternatingEvent.time.elapsed}'
-                                                                    </span>
-                                                                    <div className={`flex items-center ${isAlternatingHomeTeam ? "ml-4 text-left" : "mr-4 text-right"}`}>
-                                                                        <span className={`mx-2 ${penaltyResult === "✔" ? "text-green-500" : "text-red-500"}`}>
-                                                                            {penaltyResult}
-                                                                        </span>
-                                                                        <span>
-                                                                            {alternatingEvent.player.name}
-                                                                        </span>
-                                                                    </div>
-                                                                </li>
-                                                            )
-                                                        }).reverse()
-                                                    ) : (
-                                                        periodEvents?.map((event, index) => {
-                                                            const isHomeTeam = event.team.id === teams.home.id;
-
-                                                            return (
-                                                                <li
-                                                                    key={index}
-                                                                    className={`flex ${isHomeTeam ? "justify-start" : "justify-end"}`}
-                                                                >
-                                                                    <span className="text-gray-300">
-                                                                        {event.time.elapsed}'
-                                                                    </span>
-                                                                    <div className={`flex items-center ${isHomeTeam ? "ml-4 text-left" : "mr-4 text-right"}`}>
-                                                                        {event.type === "Goal" && <span className="text-green-500 mx-2">⚽</span>}
-                                                                        {event.type === "Card" && (
-                                                                            <span className={`mx-2 ${event.detail === "Red Card" ? "text-red-500" : "text-yellow-500"}`}>
-                                                                                {event.detail === "Red Card" ? "🟥" : "🟨"}
-                                                                            </span>
-                                                                        )}
-                                                                        {event.type === "subst" && <span className="text-blue-500 mx-2">🔄</span>}
-                                                                        <span>
-                                                                            {event.type === "Goal" && `${event.player.name} ${event.assist?.name ? `(Assist: ${event.assist.name})` : ""}`}
-                                                                            {event.type === "Card" && `${event.player.name}`}
-                                                                            {event.type === "subst" && `Out: ${event.player.name}, In: ${event.assist?.name || "Unknown"}`}
-                                                                        </span>
-                                                                    </div>
-                                                                </li>
-                                                            )
-                                                        })
-                                                    )
-                                            }
-                                        </ul>
-                                    </div>
-                                )
-                            })
-                        }
-                    </div>
-                    <div className="flex w-full max-w-7xl justify-between mt-10 gap-x-12">
-                        <div className="flex flex-col w-1/2 items-center">
-                            <h3 className="text-lg text-center text-green-400 mb-4">
-                                {teams.home.name} Formation
-                            </h3>
-                            {lineups?.[0] ? renderLineup(lineups[0], teams.home.id) : <p className="text-white">No lineup available.</p>}
-                        </div>
-                        <div className="flex flex-col w-1/2 items-center">
-                            <h3 className="text-lg text-center text-blue-400 mb-4">
-                                {teams.away.name} Formation
-                            </h3>
-                            {lineups?.[1] ? renderLineup(lineups[1], teams.away.id) : <p className="text-white">No lineup available.</p>}
-                        </div>
-                    </div>
-                    <div className="flex w-full max-w-5xl justify-center mt-16">
-                        <div className="w-full bg-gray-800 rounded-lg p-6">
-                            <h3 className="text-xl text-center text-white mb-4">
-                                Statistics
-                            </h3>
-                            {
-                                statistics && statistics[0]?.statistics?.length > 0 ? (
-                                    <div className="space-y-8">
-                                        {
-                                            statistics[0].statistics.map((stat, index) => {
-                                                const homeValue = parseInt(stat.value?.toString() || "0");
-                                                const awayValue = parseInt(statistics[1]?.statistics[index]?.value?.toString() || "0");
-                                                const homePercentage = (homeValue / (homeValue + awayValue)) * 100 || 0;
-                                                const awayPercentage = (awayValue / (homeValue + awayValue)) * 100 || 0;
-
-                                                return (
-                                                    <div
-                                                        key={index}
-                                                        className="flex items-center justify-between w-full"
-                                                    >
-                                                        <div className="relative flex items-center h-6 w-1/2 pr-12">
-                                                            <div
-                                                                className={`absolute right-0 top-0 h-full ${homeValue > awayValue ? "bg-green-500" : "bg-red-500"}`}
-                                                                style={{ width: `${homePercentage}%` }}
-                                                            >
-                                                            </div>
-                                                            <span className="absolute right-0 transform translate-x-20 text-white text-sm">
-                                                                {homeValue}
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex justify-center items-center w-80 text-center text-white text-sm px-24">
-                                                            {formatStatName(stat.type)}
-                                                        </div>
-                                                        <div className="relative flex items-center h-6 w-1/2 pl-12">
-                                                            <div
-                                                                className={`absolute left-0 top-0 h-full ${awayValue > homeValue ? "bg-green-500" : "bg-red-500"}`}
-                                                                style={{ width: `${awayPercentage}%` }}
-                                                            >
-                                                            </div>
-                                                            <span className="absolute left-0 transform -translate-x-20 text-white text-sm">
-                                                                {awayValue}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                )
-                                            })
-                                        }
-                                    </div>
-                                ) : (
-                                    <p className="text-center text-gray-400 text-sm mt-4">
-                                        Statistics not available
-                                    </p>
-                                    )
-                            }
-                        </div>
-                    </div>
-                </MatchDetails>
+            {models.length > 0 && (
+                <MatchPredictions models={models} />
+            )}
         </div>
-    )
+    );
 }
