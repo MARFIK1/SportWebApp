@@ -1,467 +1,202 @@
 import Image from "next/image";
+import Link from "next/link";
+import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
+import { findPlayerInCompetitions, findTeamData, loadAllSeasons, type PlayerInfo } from "@/app/util/data/dataService";
+import type { SofascoreMatch } from "@/types/sofascore";
+import { getServerT, getServerLocale } from "@/app/util/i18n/getLocale";
 
-import { fetchPlayerDetails } from "@/app/util/dataFetch/fetchData";
-import { getCurrentSeason } from "@/app/util/league/season";
-import type { PlayerExtended } from "@/types";
-import { calculateAge } from "@/app/util/helpers/calculateAge";
-import FlagImage from "@/app/components/common/FlagImage";
-import ScrollToTop from "@/app/components/common/ScrollToTop";
-
-type PageProps = {
-    params: {
-        id: string
-    }
+interface PageProps {
+    params: { id: string };
 }
 
-function getRatingColor(rating: number): string {
-    if (rating >= 9.0) return "text-green-500";
-    if (rating >= 8.0) return "text-green-400";
-    if (rating >= 7.0) return "text-yellow-400";
-    if (rating >= 6.0) return "text-yellow-500";
-    if (rating >= 5.0) return "text-orange-400";
-    return "text-red-500";
+function playerImageUrl(playerId: number): string {
+    return `https://api.sofascore.app/api/v1/player/${playerId}/image`;
 }
 
-export default async function PlayerPage({ params } : PageProps) {
-    const season = getCurrentSeason();
+function teamLogoUrl(teamId: number): string {
+    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
+}
 
-    const player: PlayerExtended = await fetchPlayerDetails(
-        params.id,
-        season
-    )
+const POSITION_KEYS: Record<string, string> = {
+    G: "goalkeeper",
+    D: "defender",
+    M: "midfielder",
+    F: "forward",
+};
 
-    const clubStats = player.statistics.filter((stat) => stat.team?.id && stat.league.country !== "World" || ["UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League", "Friendlies Clubs", "Premier League International Cup"].includes(stat.league.name));
-    const nationalTeamStats = player.statistics.filter((stat) => stat.league.country === "World" && !["UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League", "Friendlies Clubs", "Premier League International Cup"].includes(stat.league.name));             
-    const uniqueClubStats = Array.from(new Map(clubStats.map(stat => [stat.league.id, stat])).values());
-    const uniqueNationalTeamStats = Array.from(new Map(nationalTeamStats.map(stat => [stat.league.id, stat])).values());
-
-    const filterStatsByPosition = (position: string, stat: any) => {
-        const formatValue = (value: any): any => {
-            if (typeof value === "string") {
-                return value !== "N/A" ? value : 0;
-            }
-            return value !== undefined && value !== null ? value : 0;
-        }
-    
-        if (position === "Goalkeeper") {
-            return {
-                GoalSaves: formatValue(stat.goals.saves),
-                GoalsConceded: formatValue(stat.goals.conceded),
-                PenaltySaved: formatValue(stat.penalty.saved)
-            };
-        }
-        if (position === "Defender") {
-            return {
-                TotalTackles: formatValue(stat.tackles.total),
-                TotalBlocks: formatValue(stat.tackles.blocks),
-                Interceptions: formatValue(stat.tackles.interceptions),
-                TotalDuels: formatValue(stat.duels.total),
-                DuelsWon: formatValue(stat.duels.won),
-                PenaltyCommited: formatValue(stat.penalty.commited)
-            };
-        }
-        if (position === "Midfielder") {
-            return {
-                TotalPasses: formatValue(stat.passes.total),
-                KeyPasses: formatValue(stat.passes.key),
-                PassAccuracy: stat.passes.accuracy && stat.passes.accuracy > 0 ? `${stat.passes.accuracy}%` : "N/A",
-                TotalDribbles: formatValue(stat.dribbles.attempts),
-                DribblesSuccess: formatValue(stat.dribbles.success),
-                DribblesPast: formatValue(stat.dribbles.past)
-            };
-        }
-        if (position === "Attacker") {
-            return {
-                TotalShots: formatValue(stat.shots.total),
-                ShotsOnTarget: formatValue(stat.shots.on),
-                PenaltyScored: formatValue(stat.penalty.scored),
-                PenaltyMissed: formatValue(stat.penalty.missed),
-                TotalDribbles: formatValue(stat.dribbles.attempts),
-                DribblesSuccess: formatValue(stat.dribbles.success)
-            };
-        }
-        return {
-            null: 0,
-        };
+function calculateAge(dateOfBirth: string): number {
+    const birth = new Date(dateOfBirth);
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const monthDiff = now.getMonth() - birth.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) {
+        age--;
     }
+    return age;
+}
+
+export default async function PlayerPage({ params }: PageProps) {
+    const playerId = parseInt(params.id);
+    const competitions = getAllCompetitions();
+    const result = findPlayerInCompetitions(playerId, competitions);
+
+    const t = getServerT();
+
+    if (!result) {
+        return (
+            <div className="flex justify-center items-center min-h-[60vh] text-gray-500 dark:text-gray-400">
+                <p className="text-xl">{t("player_not_found")}</p>
+            </div>
+        );
+    }
+
+    const { player } = result;
+    const age = player.date_of_birth ? calculateAge(player.date_of_birth) : null;
+
+    const { teamName, data: teamData } = findTeamData(0, []);
+    let teamId: number | null = null;
+
+    for (const comp of competitions) {
+        const matches = loadAllSeasons(comp);
+        for (const m of matches) {
+            if (m.home_team === player.team) { teamId = m.home_team_id; break; }
+            if (m.away_team === player.team) { teamId = m.away_team_id; break; }
+        }
+        if (teamId) break;
+    }
+
+    const recentMatches: SofascoreMatch[] = [];
+    if (teamId) {
+        for (const comp of competitions) {
+            const matches = loadAllSeasons(comp);
+            const teamMatches = matches.filter((m) =>
+                (m.home_team_id === teamId || m.away_team_id === teamId) && m.status === "finished"
+            );
+            recentMatches.push(...teamMatches);
+        }
+    }
+
+    const uniqueRecent = Array.from(
+        recentMatches.reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values()
+    ).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
 
     return (
-        <div className="flex flex-col items-center text-neutral-100 py-5">
-            <ScrollToTop />
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-9xl w-full px-10">
-                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg text-center max-h-fit">
-                        <div className="flex flex-col items-center mb-6">
-                            <Image
-                                src={player.photo}
-                                alt={`${player.firstname} ${player.lastname} photo`}
-                                width={150}
-                                height={150}
-                                className="rounded-full object-contain w-1/3"
-                                style={{ width: "150px", height: "150px" }}
-                            />
-                            <div className="text-3xl font-bold mt-4 text-gray-300">
-                                {`${player.firstname} ${player.lastname}`}
-                            </div>
+        <div className="flex flex-col w-full max-w-[1000px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
+            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
+                <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
+                <span>/</span>
+                {teamId && (
+                    <>
+                        <Link href={`/team/${teamId}`} className="hover:text-gray-900 dark:hover:text-white transition-colors">{player.team}</Link>
+                        <span>/</span>
+                    </>
+                )}
+                <span className="text-gray-700 dark:text-gray-300">{player.name}</span>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-8 mb-6">
+                <div className="flex flex-col sm:flex-row items-center gap-6">
+                    <Image
+                        src={playerImageUrl(playerId)}
+                        alt={player.name}
+                        width={120}
+                        height={120}
+                        className="rounded-full object-contain"
+                        style={{ width: "120px", height: "120px" }}
+                    />
+                    <div className="flex-1 text-center sm:text-left">
+                        <h1 className="text-3xl font-bold mb-2">{player.name}</h1>
+                        <div className="flex flex-wrap gap-3 justify-center sm:justify-start">
+                            <span className="px-3 py-1 bg-emerald-600/30 text-emerald-400 rounded-full text-sm font-semibold">
+                                {POSITION_KEYS[player.position] ? t(POSITION_KEYS[player.position]) : player.position}
+                            </span>
+                            {player.jersey_number && (
+                                <span className="px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-full text-sm">
+                                    #{player.jersey_number}
+                                </span>
+                            )}
+                            {player.country && (
+                                <span className="px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-full text-sm">
+                                    {player.country}
+                                </span>
+                            )}
                         </div>
-                        <div className="grid grid-cols-3 gap-4 mb-6 items-center">
-                            <div className="flex flex-col items-center">
-                                <Image
-                                    src={player.statistics[0]?.team.logo}
-                                    alt={`${player.statistics[0]?.team.name || "Club"} logo`}
-                                    width={50}
-                                    height={50}
-                                    className="object-contain"
-                                    style={{ width: "50px", height: "50px" }}
-                                />
-                                <p className="text-lg font-bold text-gray-300 text-center">
-                                    {player.statistics[0]?.team.name || "Unknown"}
-                                </p>
-                            </div>
-                            <div className="flex flex-col items-center">
-                                <FlagImage
-                                    countryCode={player.nationality?.toLowerCase() || "default"}
-                                    alt={`${player.nationality || "Unknown"} flag`}
-                                />
-                                <p className="text-lg text-gray-400">
-                                    {player.nationality}
-                                </p>
-                            </div>
-                            <div className="flex flex-col items-center">
-                                <p className="text-sm text-gray-400">
-                                    Birthplace
-                                </p>
-                                <p className="text-lg text-center text-gray-300">
-                                    {`${player.birth.place || "Unknown"}, ${player.birth.country || "Unknown"}`}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 mb-4">
-                            <div>
-                                <p className="text-sm text-gray-400">
-                                    Age
-                                </p>
-                                <p className="text-xl font-bold text-green-400">
-                                    {calculateAge(player.birth.date)}
-                                </p>
-                                <p className="text-sm text-gray-400">
-                                    ({player.birth.date})
-                                </p>
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-400">
-                                    Height
-                                </p>
-                                <p className="text-xl font-bold text-blue-400">
-                                    {player.height || "N/A"}
-                                </p>
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-400">
-                                    Weight
-                                </p>
-                                <p className="text-xl font-bold text-purple-400">
-                                    {player.weight || "N/A"}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 mb-4">
-                            <div>
-                                <p className="text-sm text-gray-400">
-                                    Injured
-                                </p>
-                                <p className="text-xl font-bold text-red-400">
-                                    {player.injured ? "Yes" : "No"}
-                                </p>
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-400">
-                                    Number
-                                </p>
-                                <p className="text-xl font-bold text-yellow-400">
-                                    {player.number || "N/A"}
-                                </p>
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-400">
-                                    Position
-                                </p>
-                                <p className="text-xl font-bold text-teal-400">
-                                    {player.position || "N/A"}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg text-center max-h-fit">
-                        <h2 className="text-2xl font-bold mb-4 text-center text-gray-300">
-                            Club Statistics
-                        </h2>
-                        {
-                            uniqueClubStats.map((stat, index) => (
-                                <div 
-                                    key={index}
-                                    className="mb-6 text-center"
-                                >
-                                    <div className="flex items-center justify-center mb-6">
-                                        <Image
-                                            src={stat.league.logo}
-                                            alt={`${stat.league.name} logo`}
-                                            width={30}
-                                            height={30}
-                                            className="mr-2"
-                                        />
-                                        <h3 className="text-lg font-bold text-yellow-400">
-                                            {stat.league.name}
-                                        </h3>
-                                    </div>
-                                    <div className="grid grid-cols-4 gap-4">
-                                        {
-                                            [
-                                                { label: "Matches", value: stat.games.appearences },
-                                                { label: "Goals", value: stat.goals.total },
-                                                { label: "Assists", value: stat.goals.assists },
-                                                {
-                                                    label: "Rating",
-                                                    value: stat.games.rating && !isNaN(parseFloat(stat.games.rating)) ? parseFloat(stat.games.rating).toFixed(2) : "N/A",
-                                                    className: getRatingColor(parseFloat(stat.games.rating || "0")),
-                                                }
-                                            ].map((detail, idx) => (
-                                                <div
-                                                    key={idx}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {detail.label}
-                                                    </p>
-                                                    <p className={`text-xl font-bold ${detail.className || "text-red-400"}`}>
-                                                        {detail.value || "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {
-                                            [
-                                                { label: "Appearances", value: stat.games.appearences },
-                                                { label: "Lineups", value: stat.games.lineups },
-                                                { label: "Minutes", value: stat.games.minutes },
-                                                { label: "Substitutes In", value: stat.substitutes.in },
-                                                { label: "Substitutes Out", value: stat.substitutes.out },
-                                                { label: "Bench", value: stat.substitutes.bench }
-                                            ].map((detail, idx) => (
-                                                <div
-                                                    key={idx}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {detail.label}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-yellow-400">
-                                                        {detail.value || "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        {
-                                            [
-                                                { label: "Fouls Drawn", value: stat.fouls.drawn },
-                                                { label: "Fouls Committed", value: stat.fouls.committed }
-                                            ].map((detail, idx) => (
-                                                <div
-                                                    key={idx}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {detail.label}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-cyan-400">
-                                                        {detail.value || "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {
-                                            [
-                                                { label: "Yellow Cards", value: stat.cards.yellow },
-                                                { label: "Yellow-Red Cards", value: stat.cards.yellowred },
-                                                { label: "Red Cards", value: stat.cards.red }
-                                            ].map((detail, idx) => (
-                                                <div
-                                                    key={idx}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {detail.label}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-cyan-400">
-                                                        {detail.value || "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {
-                                            Object.entries(filterStatsByPosition(player.position, stat)).map(([key, value], index) => (
-                                                <div 
-                                                    key={index}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {key.replace(/([A-Z])/g, " $1")}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-green-400">
-                                                        {value !== "N/A" ? value : "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                </div>
-                            ))
-                        }
-                    </div>
-                    <div className="bg-gradient-to-b from-gray-900/100 to-black/50 p-10 rounded-lg text-center max-h-fit">
-                        <h2 className="text-2xl font-bold mb-4 text-center text-gray-300">
-                            National Team Statistics
-                        </h2>
-                        {
-                            uniqueNationalTeamStats.map((stat, index) => (
-                                <div 
-                                    key={index}
-                                    className="mb-6 text-center"
-                                >
-                                    <div className="flex items-center justify-center mb-6">
-                                        <Image
-                                            src={stat.league.logo}
-                                            alt={`${stat.league.name} logo`}
-                                            width={30}
-                                            height={30}
-                                            className="mr-2"
-                                        />
-                                        <h3 className="text-lg font-bold text-yellow-400">
-                                            {stat.league.name}
-                                        </h3>
-                                    </div>
-                                    <div className="grid grid-cols-4 gap-4">
-                                        {
-                                            [
-                                                { label: "Matches", value: stat.games.appearences },
-                                                { label: "Goals", value: stat.goals.total },
-                                                { label: "Assists", value: stat.goals.assists },
-                                                {
-                                                    label: "Rating",
-                                                    value: stat.games.rating && !isNaN(parseFloat(stat.games.rating)) ? parseFloat(stat.games.rating).toFixed(2) : "N/A",
-                                                    className: getRatingColor(parseFloat(stat.games.rating || "0")),
-                                                }
-                                            ].map((statDetail, idx) => {
-                                                return (
-                                                    <div
-                                                        key={idx}
-                                                        className="flex flex-col items-center"
-                                                    >
-                                                        <p className="text-sm text-gray-400">
-                                                            {statDetail.label}
-                                                        </p>
-                                                        <p className={`text-xl font-bold ${statDetail.className || "text-red-400"}`}>
-                                                            {statDetail.value || "0"}
-                                                        </p>
-                                                    </div>
-                                                );
-                                            })
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {
-                                            [
-                                                { label: "Appearances", value: stat.games.appearences },
-                                                { label: "Lineups", value: stat.games.lineups },
-                                                { label: "Minutes", value: stat.games.minutes },
-                                                { label: "Substitutes In", value: stat.substitutes.in },
-                                                { label: "Substitutes Out", value: stat.substitutes.out },
-                                                { label: "Bench", value: stat.substitutes.bench }
-                                            ].map((stat, index) => (
-                                                <div
-                                                    key={index}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {stat.label}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-yellow-400">
-                                                        {stat.value || "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        {
-                                            [
-                                                { label: "Fouls Drawn", value: stat.fouls.drawn },
-                                                { label: "Fouls Committed", value: stat.fouls.committed }
-                                            ].map((stat, index) => (
-                                                <div
-                                                    key={index}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {stat.label}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-cyan-400">
-                                                        {stat.value || "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {
-                                            [
-                                                { label: "Yellow Cards", value: stat.cards.yellow },
-                                                { label: "Yellow-Red Cards", value: stat.cards.yellowred },
-                                                { label: "Red Cards", value: stat.cards.red }
-                                            ].map((stat, index) => (
-                                                <div
-                                                    key={index}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {stat.label}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-cyan-400">
-                                                        {stat.value || "0"}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {
-                                            Object.entries(filterStatsByPosition(player.position, stat)).map(([key, value], index) => (
-                                                <div
-                                                    key={index}
-                                                    className="flex flex-col items-center"
-                                                >
-                                                    <p className="text-sm text-gray-400">
-                                                        {key.replace(/([A-Z])/g, " $1")}
-                                                    </p>
-                                                    <p className="text-xl font-bold text-green-400">
-                                                        {value}
-                                                    </p>
-                                                </div>
-                                            ))
-                                        }
-                                    </div>
-                                </div>
-                            ))
-                        }
                     </div>
                 </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-8">
+                    {teamId && (
+                        <Link href={`/team/${teamId}`} className="text-center hover:bg-gray-100 dark:hover:bg-gray-800/50 rounded-xl p-3 transition-colors">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t("team")}</div>
+                            <Image
+                                src={teamLogoUrl(teamId)}
+                                alt={player.team}
+                                width={32}
+                                height={32}
+                                className="object-contain mx-auto mb-1"
+                                style={{ width: "32px", height: "32px" }}
+                            />
+                            <div className="text-sm font-semibold">{player.team}</div>
+                        </Link>
+                    )}
+                    {age !== null && (
+                        <div className="text-center p-3">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t("age")}</div>
+                            <div className="text-2xl font-bold text-emerald-400">{age}</div>
+                            <div className="text-xs text-gray-400 dark:text-gray-500">{player.date_of_birth}</div>
+                        </div>
+                    )}
+                    {player.height > 0 && (
+                        <div className="text-center p-3">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t("height")}</div>
+                            <div className="text-2xl font-bold text-blue-400">{player.height} cm</div>
+                        </div>
+                    )}
+                    <div className="text-center p-3">
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t("position")}</div>
+                        <div className="text-2xl font-bold text-yellow-400">
+                            {POSITION_KEYS[player.position] ? t(POSITION_KEYS[player.position]) : player.position}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {uniqueRecent.length > 0 && (
+                <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
+                    <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">
+                        {t("recent_team_matches")}
+                    </h3>
+                    <div className="space-y-2">
+                        {uniqueRecent.map((m) => {
+                            const isHome = m.home_team_id === teamId;
+                            const teamScore = isHome ? m.home_score : m.away_score;
+                            const opponentScore = isHome ? m.away_score : m.home_score;
+                            const won = teamScore !== null && opponentScore !== null && teamScore > opponentScore;
+                            const drew = teamScore !== null && opponentScore !== null && teamScore === opponentScore;
+
+                            return (
+                                <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                                        won ? "bg-emerald-600" : drew ? "bg-gray-600" : "bg-red-600"
+                                    }`}>
+                                        {won ? "W" : drew ? "D" : "L"}
+                                    </span>
+                                    <div className="flex items-center gap-2 flex-1">
+                                        <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                        <span className="text-sm truncate">{m.home_team}</span>
+                                    </div>
+                                    <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
+                                    <div className="flex items-center gap-2 flex-1 justify-end">
+                                        <span className="text-sm truncate text-right">{m.away_team}</span>
+                                        <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                    </div>
+                                    <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
+                                </Link>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
         </div>
-    )
+    );
 }
