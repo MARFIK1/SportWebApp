@@ -3,135 +3,108 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import type { SearchTeam, SearchPlayer } from "@/app/util/data/dataService";
+import { useLanguage } from "./LanguageProvider";
 
-import { Team, Player } from "@/types";
+function teamLogoUrl(teamId: number): string {
+    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
+}
 
-export default function SearchBarForm({ teamsData, playersData } : { teamsData: Team[], playersData: Player[] }) {
+function playerImageUrl(playerId: number): string {
+    return `https://api.sofascore.app/api/v1/player/${playerId}/image`;
+}
+
+export default function SearchBarForm({ teamsData, playersData }: { teamsData: SearchTeam[]; playersData: SearchPlayer[] }) {
     const router = useRouter();
+    const { t } = useLanguage();
     const [searchTerm, setSearchTerm] = useState("");
     const [focusedIndex, setFocusedIndex] = useState(-1);
     const [showFilteredBox, setShowFilteredBox] = useState(false);
+    const listRef = useRef<HTMLDivElement>(null);
 
-    const filteredTeams = teamsData.filter(team => team.team.name.toLowerCase().includes(searchTerm.toLowerCase()));
-    const filteredPlayers = playersData.filter(player => player.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    const filteredTeams = searchTerm ? teamsData.filter((t) => t.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 5) : [];
+    const filteredPlayers = searchTerm ? playersData.filter((p) => p.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 5) : [];
+
+    const totalResults = filteredTeams.length + filteredPlayers.length;
 
     const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         setSearchTerm(event.target.value);
         setFocusedIndex(-1);
         setShowFilteredBox(true);
-    }
+    };
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-        const totalResults = Math.min(filteredTeams.length + filteredPlayers.length, 10);
         if (event.key === "ArrowDown") {
-            setFocusedIndex(prevIndex => prevIndex < totalResults - 1 ? prevIndex + 1 : prevIndex);
-        } 
-        else if (event.key === "ArrowUp") {
+            setFocusedIndex((prev) => (prev < totalResults - 1 ? prev + 1 : prev));
+        } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            setFocusedIndex(prevIndex => prevIndex > 0 ? prevIndex - 1 : prevIndex);
-        } 
-        else if (event.key === "Enter") {
-            if (focusedIndex !== -1) {
-                if (focusedIndex < filteredTeams.length) {
-                    const teamId = filteredTeams[focusedIndex].team.id;
-                    router.push(`/team/${teamId}`);
-                }
-                else {
-                    const playerId = filteredPlayers[focusedIndex - filteredTeams.length].id;
-                    router.push(`/player/${playerId}`);
-                }
-                setSearchTerm("");
+            setFocusedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+        } else if (event.key === "Enter" && focusedIndex !== -1) {
+            if (focusedIndex < filteredTeams.length) {
+                router.push(`/team/${filteredTeams[focusedIndex].id}`);
+            } else {
+                router.push(`/player/${filteredPlayers[focusedIndex - filteredTeams.length].id}`);
             }
-        }
-    }
-
-    const handleItemClick = () => {
-        setSearchTerm("");
-    }
-
-    const listRef = useRef<HTMLDivElement>(null);
-
-    const handleOutsideClick = (event: MouseEvent) => {
-        if (listRef.current && !listRef.current.contains(event.target as Node)) {
+            setSearchTerm("");
             setShowFilteredBox(false);
         }
-    }
+    };
 
     useEffect(() => {
-        document.addEventListener("click", handleOutsideClick);
-
-        return () => {
-            document.removeEventListener("click", handleOutsideClick);
+        const handleOutsideClick = (event: MouseEvent) => {
+            if (listRef.current && !listRef.current.contains(event.target as Node)) {
+                setShowFilteredBox(false);
+            }
         };
-    }, [])
-
-    const totalResults = Math.min(filteredTeams.length + filteredPlayers.length, 10);
-    const displayedTeams = filteredTeams.slice(0, totalResults);
-    const displayedPlayers = filteredPlayers.slice(0, totalResults - displayedTeams.length);
+        document.addEventListener("click", handleOutsideClick);
+        return () => document.removeEventListener("click", handleOutsideClick);
+    }, []);
 
     return (
-        <div className="flex justify-center items-center w-full max-w-lg relative">
+        <div className="flex justify-center items-center w-full max-w-lg relative" ref={listRef}>
             <input
                 type="text"
                 value={searchTerm}
                 onChange={handleSearchChange}
                 onKeyDown={handleKeyDown}
-                placeholder="Search"
-                className="w-full bg-gray-700 p-2 text-white rounded-lg outline-none placeholder-gray-400"
+                placeholder={t("search_placeholder")}
+                className="w-full bg-gray-200 dark:bg-gray-700 p-2 text-gray-900 dark:text-white rounded-lg outline-none placeholder-gray-400"
             />
-            {
-                searchTerm && (displayedTeams.length > 0 || displayedPlayers.length > 0) && showFilteredBox ? (
-                    <div
-                        ref={listRef}
-                        className="absolute top-full left-2 w-full max-w-md bg-black/80 z-[100] flex flex-col"
-                    >
-                        {
-                            displayedTeams.map((team, i) => (
-                                <Link
-                                    href={`/team/${team.team.id}`}
-                                    key={team.team.id}
-                                    className={`p-2 flex items-center text-neutral-100 ${i === focusedIndex ? "bg-neutral-100/40" : ""}`}
-                                    onClick={handleItemClick}
-                                >
-                                    <Image
-                                        src={team.team.logo}
-                                        alt={`${team.team.name} logo`}
-                                        width={25}
-                                        height={25}
-                                        style={{ width: "25px", height: "25px" }}
-                                        className="object-contain rounded-full"
-                                    />
-                                    <span className="ml-2">
-                                        {team.team.name}
-                                    </span>
-                                </Link>
-                            ))
-                        }
-                        {
-                            displayedPlayers.map((player, i) => (
-                                <Link
-                                    href={`/player/${player.id}`}
-                                    key={player.id}
-                                    className={`p-2 flex items-center text-neutral-100 ${i + displayedTeams.length === focusedIndex ? "bg-neutral-100/40" : ""}`}
-                                    onClick={handleItemClick}
-                                >
-                                    <Image
-                                        src={player.photo}
-                                        alt={`${player.name} photo`}
-                                        width={25}
-                                        height={25}
-                                        style={{ width: "25px", height: "25px" }}
-                                        className="object-contain rounded-full"
-                                    />
-                                    <span className="ml-2">
-                                        {player.name}
-                                    </span>
-                                </Link>
-                            ))
-                        }
-                    </div>
-                ) : null
-            }
+            {searchTerm && totalResults > 0 && showFilteredBox && (
+                <div className="absolute top-full left-0 w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg mt-1 z-[100] overflow-hidden shadow-lg">
+                    {filteredTeams.length > 0 && (
+                        <div className="text-xs text-gray-500 uppercase tracking-wider px-3 pt-2 pb-1">Teams</div>
+                    )}
+                    {filteredTeams.map((team, i) => (
+                        <Link
+                            href={`/team/${team.id}`}
+                            key={team.id}
+                            className={`p-2 px-3 flex items-center gap-2 text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800 ${i === focusedIndex ? "bg-gray-100 dark:bg-gray-800" : ""}`}
+                            onClick={() => { setSearchTerm(""); setShowFilteredBox(false); }}
+                        >
+                            <Image src={teamLogoUrl(team.id)} alt={team.name} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                            <span className="text-sm">{team.name}</span>
+                        </Link>
+                    ))}
+                    {filteredPlayers.length > 0 && (
+                        <div className="text-xs text-gray-500 uppercase tracking-wider px-3 pt-2 pb-1">Players</div>
+                    )}
+                    {filteredPlayers.map((player, i) => (
+                        <Link
+                            href={`/player/${player.id}`}
+                            key={player.id}
+                            className={`p-2 px-3 flex items-center gap-2 text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800 ${i + filteredTeams.length === focusedIndex ? "bg-gray-100 dark:bg-gray-800" : ""}`}
+                            onClick={() => { setSearchTerm(""); setShowFilteredBox(false); }}
+                        >
+                            <Image src={playerImageUrl(player.id)} alt={player.name} width={24} height={24} className="rounded-full object-contain" style={{ width: "24px", height: "24px" }} />
+                            <div className="flex flex-col">
+                                <span className="text-sm">{player.name}</span>
+                                <span className="text-xs text-gray-500">{player.team}</span>
+                            </div>
+                        </Link>
+                    ))}
+                </div>
+            )}
         </div>
-    )
+    );
 }
