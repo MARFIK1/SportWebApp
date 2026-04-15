@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 html, body {
-    @apply bg-gray-800;
+    @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white;
     min-height: 100%;
     margin: 0;
 }
@@ -21,103 +21,4 @@ html, body {
 
 .animated-div {
     animation: slide-in 0.5s ease-in-out;
-}
-
-.perspective {
-    perspective: 850px;
-}
-
-.logo-shadow { 
-    --tw-drop-shadow: drop-shadow(0px 25px 15px rgb(0 0 0 / 1));
-    filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
-}
-
-.logo-shadow-green {
-    --tw-drop-shadow: drop-shadow(0px 25px 15px rgb(0 255 0 / 0.5));
-    filter: var(--tw-drop-shadow);
-}
-
-.logo-shadow-red {
-    --tw-drop-shadow: drop-shadow(0px 25px 15px rgb(255 0 0 / 0.5));
-    filter: var(--tw-drop-shadow);
-}
-
-.logo-shadow-yellow {
-    --tw-drop-shadow: drop-shadow(0px 25px 15px rgb(255 255 0 / 0.5));
-    filter: var(--tw-drop-shadow);
-}
-
-@keyframes logo-pop-left {
-    from {
-        transform: translateY(-200px) rotateY(50deg);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0px) rotateY(50deg);
-        opacity: 1;
-    }
-}
-.animate-logo-pop-left {
-    animation: logo-pop-left 0.8s ease;
-    transform: translateY(0px) rotateY(50deg);
-}
-
-@keyframes logo-pop-right {
-    from {
-        transform: translateY(-200px) rotateY(-50deg);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0px) rotateY(-50deg);
-        opacity: 1;
-    }
-}
-.animate-logo-pop-right {
-    animation: logo-pop-right 0.8s ease;
-    transform: translateY(0px) rotateY(-50deg);
-}
-
-@keyframes slide-left {
-    0% {
-        transform: translateX(100%);
-        opacity: 0.3;
-    }
-    100% {
-        transform: translateX(0);
-        opacity: 1;
-    }
-}
-
-@keyframes slide-right {
-    0% {
-        transform: translateX(-100%);
-        opacity: 0.3;
-    }
-    100% {
-        transform: translateX(0);
-        opacity: 1;
-    }
-}
-
-.slide-in-left {
-    animation: slide-left 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
-}
-
-.slide-in-right {
-    animation: slide-right 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
-}
-
-.ql-container, .ql-editor {
-    border: none !important;
-    outline: none !important;
-    max-height: 480px;
-    min-height: 250px;
-    overflow-y: auto;
-    padding-bottom: 20px;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-}
-
-.ql-editor::-webkit-scrollbar {
-    display: none;
 }
