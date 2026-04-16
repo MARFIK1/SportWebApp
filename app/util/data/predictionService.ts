@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { cache } from "../serverCache";
 import { readJson } from "./fileUtils";
+import { filterReportDatesByWindow } from "./reportWindow";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction } from "@/types/predictions";
 
 function reportDirs(): string[] {
@@ -61,7 +62,7 @@ export const listReportDates = cache((): string[] => {
             }
         }
     }
-    return Array.from(dates).sort();
+    return filterReportDatesByWindow(Array.from(dates).sort());
 });
 
 export function getLatestReportDate(): string | null {

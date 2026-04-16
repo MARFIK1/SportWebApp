@@ -1,9 +1,6 @@
-/**
- * Prebuild script - trims SofascoreData to only the fields the webapp needs.
- * Creates a lightweight .data/ directory for deployment.
- *
- * Usage: node scripts/prebuild.mjs
- */
+// Trim SofascoreData to the fields the app uses; write to .data/
+// Run: node scripts/prebuild.mjs
+// Env: PREBUILD_REPORT_DAYS_PAST / PREBUILD_REPORT_DAYS_FUTURE (default 14), PREBUILD_COPY_ALL_REPORTS=1 for all report dates.
 
 import fs from "fs";
 import path from "path";
@@ -41,7 +38,7 @@ const PLAYER_FIELDS = new Set([
     "date_of_birth", "height", "country", "team",
 ]);
 
-// Competition dataPaths from leagueRegistry.ts
+// Same paths as leagueRegistry.ts
 const COMPETITIONS = [
     "league/england/premier_league", "league/spain/la_liga", "league/germany/bundesliga",
     "league/italy/serie_a", "league/france/ligue_1", "league/netherlands/eredivisie",
@@ -94,7 +91,59 @@ function copyDir(src, dest) {
     }
 }
 
-console.log("=== Prebuild: trimming data for deployment ===\n");
+function utcTodayYmd() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function addCalendarDaysYmd(ymd, deltaDays) {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const t = Date.UTC(y, m - 1, d);
+    return new Date(t + deltaDays * 864e5).toISOString().slice(0, 10);
+}
+
+function isYmdInWindow(dateStr, minYmd, maxYmd) {
+    return dateStr >= minYmd && dateStr <= maxYmd;
+}
+
+function copyReportsWindowed(srcReports, destReports) {
+    const copyAll = process.env.PREBUILD_COPY_ALL_REPORTS === "1" || process.env.PREBUILD_COPY_ALL_REPORTS === "true";
+    if (!fs.existsSync(srcReports)) return { copied: 0, skipped: 0, total: 0 };
+
+    if (copyAll) {
+        copyDir(srcReports, destReports);
+        const n = fs.readdirSync(srcReports).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).length;
+        return { copied: n, skipped: 0, total: n };
+    }
+
+    const past = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_PAST || "14", 10));
+    const future = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_FUTURE || "14", 10));
+    const today = utcTodayYmd();
+    const minYmd = addCalendarDaysYmd(today, -past);
+    const maxYmd = addCalendarDaysYmd(today, future);
+
+    ensureDir(destReports);
+    let copied = 0;
+    let skipped = 0;
+    const entries = fs.readdirSync(srcReports, { withFileTypes: true });
+    for (const e of entries) {
+        if (!e.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(e.name)) continue;
+        if (!isYmdInWindow(e.name, minYmd, maxYmd)) {
+            skipped++;
+            continue;
+        }
+        copyDir(path.join(srcReports, e.name), path.join(destReports, e.name));
+        copied++;
+    }
+    console.log("report date range: " + minYmd + " .. " + maxYmd + " (" + past + "d back, " + future + "d ahead)");
+    return { copied, skipped, total: copied + skipped };
+}
+
+console.log("prebuild: writing trimmed data to .data/\n");
+
+if (!fs.existsSync(SOURCE_DATA)) {
+    console.log("no SofascoreData/data - exit (existing .data left as-is)\n");
+    process.exit(0);
+}
 
 if (fs.existsSync(OUT_DIR)) {
     fs.rmSync(OUT_DIR, { recursive: true });
@@ -111,7 +160,7 @@ for (const dataPath of COMPETITIONS) {
     const allSeasonsPath = path.join(rawDir, "all_seasons.json");
 
     if (!fs.existsSync(allSeasonsPath)) {
-        console.log(`  SKIP ${dataPath} (no all_seasons.json)`);
+        console.log("skip " + dataPath + " (no all_seasons.json)");
         continue;
     }
 
@@ -148,35 +197,35 @@ for (const dataPath of COMPETITIONS) {
         }
     }
 
-    console.log(`  OK ${dataPath} (${trimmed.length} matches)`);
+    console.log("ok " + dataPath + " (" + trimmed.length + " matches)");
 }
 
-console.log("\nCopying prediction reports...");
+console.log("\nprediction reports:");
 if (fs.existsSync(SOURCE_REPORTS)) {
-    copyDir(SOURCE_REPORTS, path.join(OUT_DIR, "reports"));
-    const reportDates = fs.readdirSync(SOURCE_REPORTS).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
-    console.log(`  ${reportDates.length} report dates copied`);
+    const { copied, skipped, total } = copyReportsWindowed(SOURCE_REPORTS, path.join(OUT_DIR, "reports"));
+    console.log("copied " + copied + " date folders (" + skipped + " outside window, " + total + " in source tree)");
+} else {
+    console.log("no SofascoreData/reports");
 }
 
-console.log("\nCopying ML comparison summary...");
+console.log("\nmodel comparison csv:");
 const summaryCsv = path.join(SOURCE_MODELS, "comparison_summary.csv");
 if (fs.existsSync(summaryCsv)) {
     const outModelsDir = path.join(OUT_DIR, "models");
     ensureDir(outModelsDir);
     fs.copyFileSync(summaryCsv, path.join(outModelsDir, "comparison_summary.csv"));
-    console.log(`  comparison_summary.csv copied`);
+    console.log("comparison_summary.csv copied");
 } else {
-    console.log(`  SKIP (no comparison_summary.csv)`);
+    console.log("no comparison_summary.csv");
 }
 
 const totalBytes = matchBytes + playerBytes;
-console.log(`
-=== Summary ===
-Competitions: ${COMPETITIONS.length}
-Matches: ${totalMatches.toLocaleString()}
-Players: ${totalPlayers.toLocaleString()}
-Match data: ${(matchBytes / 1024 / 1024).toFixed(1)} MB
-Player data: ${(playerBytes / 1024 / 1024).toFixed(1)} MB
-Total .data/: ${(totalBytes / 1024 / 1024).toFixed(1)} MB (+ reports)
-Output: ${OUT_DIR}
-`);
+console.log("");
+console.log("summary");
+console.log("competitions: " + COMPETITIONS.length);
+console.log("matches: " + totalMatches.toLocaleString("en-US"));
+console.log("player rows: " + totalPlayers.toLocaleString("en-US"));
+console.log("match json: " + (matchBytes / 1024 / 1024).toFixed(1) + " MB");
+console.log("player json: " + (playerBytes / 1024 / 1024).toFixed(1) + " MB");
+console.log("json total (no reports): " + (totalBytes / 1024 / 1024).toFixed(1) + " MB");
+console.log("output: " + OUT_DIR);

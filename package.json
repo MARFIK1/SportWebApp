@@ -9,7 +9,8 @@
     "build:prod": "node scripts/prebuild.mjs && next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "jest"
+    "test": "jest",
+    "deploy:vercel": "node scripts/vercel-deploy.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
