@@ -6,8 +6,8 @@ import { buildSearchData } from "./util/data/dataService";
 import Navbar from "./components/common/Navbar";
 import ThemeProvider from "./components/common/ThemeProvider";
 import LanguageProvider from "./components/common/LanguageProvider";
-import { getServerLocale } from "./util/i18n/getLocale";
-import { getServerTheme } from "./util/i18n/getTheme";
+import { getServerLocale } from "@/app/util/i18n/getLocale";
+import { getServerTheme } from "@/app/util/i18n/getTheme";
 
 const inter = Inter({ subsets: ["latin"] });
 
