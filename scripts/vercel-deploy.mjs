@@ -1,15 +1,16 @@
 // Deploy to Vercel with local .data (the CLI respects .gitignore so .data would be skipped otherwise).
-// Copies the tree to .vercel-deploy-staging/, removes /.data/ from .gitignore in the copy, runs npx vercel deploy --prod --yes.
+// Copies the tree to a temp folder outside the repo (fs.cpSync cannot copy into a subfolder of the source),
+// patches /.data/ out of .gitignore in the copy, runs npx vercel deploy --prod --yes.
 // Run npm run build:prod first. One-time: npx vercel login, npx vercel link.
 
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
-const STAGING = path.join(ROOT, ".vercel-deploy-staging");
 
 function shouldSkipSrc(src) {
     const rel = path.relative(ROOT, src);
@@ -29,10 +30,6 @@ function shouldSkipSrc(src) {
     return false;
 }
 
-function rmrf(dir) {
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-}
-
 function patchGitignore(stagingRoot) {
     const p = path.join(stagingRoot, ".gitignore");
     if (!fs.existsSync(p)) return;
@@ -47,28 +44,40 @@ function patchGitignore(stagingRoot) {
 
 console.log("staging copy for Vercel (.data included, no node_modules / full SofascoreData)\n");
 
-rmrf(STAGING);
-fs.mkdirSync(STAGING, { recursive: true });
+const STAGING = fs.mkdtempSync(path.join(os.tmpdir(), "sportwebapp-vercel-"));
 
-fs.cpSync(ROOT, STAGING, {
-    recursive: true,
-    filter: (src) => !shouldSkipSrc(src),
-});
+try {
+    fs.cpSync(ROOT, STAGING, {
+        recursive: true,
+        filter: (src) => !shouldSkipSrc(src),
+    });
 
-patchGitignore(STAGING);
+    patchGitignore(STAGING);
 
-const dataPath = path.join(STAGING, ".data");
-if (!fs.existsSync(dataPath)) {
-    console.error("missing .data - run npm run build:prod first\n");
-    process.exit(1);
+    const dataPath = path.join(STAGING, ".data");
+    if (!fs.existsSync(dataPath)) {
+        console.error("missing .data - run npm run build:prod first\n");
+        try {
+            fs.rmSync(STAGING, { recursive: true, force: true });
+        } catch {
+            // ignore
+        }
+        process.exit(1);
+    }
+
+    console.log("npx vercel deploy --prod --yes\n");
+
+    execSync("npx vercel deploy --prod --yes", {
+        cwd: STAGING,
+        stdio: "inherit",
+        env: { ...process.env, FORCE_COLOR: "1" },
+    });
+
+    console.log("\ndone.\n");
+} finally {
+    try {
+        fs.rmSync(STAGING, { recursive: true, force: true });
+    } catch {
+        // ignore
+    }
 }
-
-console.log("npx vercel deploy --prod --yes\n");
-
-execSync("npx vercel deploy --prod --yes", {
-    cwd: STAGING,
-    stdio: "inherit",
-    env: { ...process.env, FORCE_COLOR: "1" },
-});
-
-console.log("\ndone. you can delete .vercel-deploy-staging (gitignored)\n");
