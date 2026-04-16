@@ -1,40 +1,68 @@
 import fs from "fs";
 import path from "path";
-import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy } from "@/types/predictions";
+import { cache } from "../serverCache";
+import { readJson } from "./fileUtils";
+import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction } from "@/types/predictions";
 
-function resolveReportsDir(): string {
+function reportDirs(): string[] {
+    const env = process.env.SOFASCORE_REPORTS_DIR;
+    if (env) return [env];
     const prebuilt = path.join(process.cwd(), ".data", "reports");
-    if (fs.existsSync(prebuilt)) return prebuilt;
-    return path.join(process.cwd(), "SofascoreData", "reports");
+    const source = path.join(process.cwd(), "SofascoreData", "reports");
+    const dirs: string[] = [];
+    if (fs.existsSync(prebuilt)) dirs.push(prebuilt);
+    if (fs.existsSync(source)) dirs.push(source);
+    return dirs;
 }
 
-const REPORTS_DIR = process.env.SOFASCORE_REPORTS_DIR || resolveReportsDir();
+function readPredictionReportInDateDir(dateDir: string): PredictionReport | null {
+    return (
+        readJson<PredictionReport>(path.join(dateDir, "predictions_finished.json")) ??
+        readJson<PredictionReport>(path.join(dateDir, "predictions_unfinished.json"))
+    );
+}
 
-function readJson<T>(filePath: string): T | null {
-    try {
-        const raw = fs.readFileSync(filePath, "utf-8");
-        return JSON.parse(raw) as T;
-    } catch {
-        return null;
+export const loadPredictionReport = cache((date: string): PredictionReport | null => {
+    const env = process.env.SOFASCORE_REPORTS_DIR;
+    if (env) {
+        return readPredictionReportInDateDir(path.join(env, date));
     }
-}
+    const prebuiltDir = path.join(process.cwd(), ".data", "reports", date);
+    const sourceDir = path.join(process.cwd(), "SofascoreData", "reports", date);
+    return readPredictionReportInDateDir(prebuiltDir) ?? readPredictionReportInDateDir(sourceDir);
+});
 
-export function loadPredictionReport(date: string): PredictionReport | null {
-    const filePath = path.join(REPORTS_DIR, date, "predictions_finished.json");
-    return readJson<PredictionReport>(filePath);
-}
+export const loadAnalysisReport = cache((date: string): AnalysisReport | null => {
+    const env = process.env.SOFASCORE_REPORTS_DIR;
+    if (env) {
+        return readJson<AnalysisReport>(path.join(env, date, "analysis.json"));
+    }
+    const prebuilt = path.join(process.cwd(), ".data", "reports", date, "analysis.json");
+    const source = path.join(process.cwd(), "SofascoreData", "reports", date, "analysis.json");
+    return readJson<AnalysisReport>(prebuilt) ?? readJson<AnalysisReport>(source);
+});
 
-export function loadAnalysisReport(date: string): AnalysisReport | null {
-    const filePath = path.join(REPORTS_DIR, date, "analysis.json");
-    return readJson<AnalysisReport>(filePath);
-}
-
-export function listReportDates(): string[] {
-    if (!fs.existsSync(REPORTS_DIR)) return [];
-    return fs.readdirSync(REPORTS_DIR)
-        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-        .sort();
-}
+export const listReportDates = cache((): string[] => {
+    const dates = new Set<string>();
+    for (const dir of reportDirs()) {
+        if (!fs.existsSync(dir)) continue;
+        let entries: string[];
+        try {
+            entries = fs.readdirSync(dir);
+        } catch {
+            continue;
+        }
+        for (const d of entries) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+            try {
+                if (fs.statSync(path.join(dir, d)).isDirectory()) dates.add(d);
+            } catch {
+                // skip
+            }
+        }
+    }
+    return Array.from(dates).sort();
+});
 
 export function getLatestReportDate(): string | null {
     const dates = listReportDates();
@@ -51,6 +79,134 @@ export function getMatchesByLeague(report: PredictionReport, league: string): Pr
 
 export function getModelAccuracySummary(report: PredictionReport): Record<string, ModelAccuracy> {
     return report.summary.model_accuracy;
+}
+
+export interface ModelComparisonRow {
+    model: string;
+    testAccuracy: number;
+    testF1: number;
+    liveAccuracy: number;
+    liveMatches: number;
+    brierScore: number;
+    trainTime: number;
+    predictTime: number;
+    memory: number;
+    modelSize: number;
+}
+
+export function loadComparisonSummary(): ModelComparisonRow[] {
+    const prebuilt = path.join(process.cwd(), ".data", "models", "comparison_summary.csv");
+    const dev = path.join(process.cwd(), "SofascoreData", "data", "models", "comparison_summary.csv");
+    const filePath = fs.existsSync(prebuilt) ? prebuilt : dev;
+    if (!fs.existsSync(filePath)) return [];
+
+    const raw = fs.readFileSync(filePath, "utf-8").trim();
+    const lines = raw.split(/\r?\n/);
+    if (lines.length < 2) return [];
+
+    const num = (s: string): number => {
+        const v = parseFloat(s);
+        return Number.isFinite(v) ? v : 0;
+    };
+    const int = (s: string): number => {
+        const v = parseInt(s, 10);
+        return Number.isFinite(v) ? v : 0;
+    };
+
+    const rows: ModelComparisonRow[] = [];
+    for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",");
+        if (cols.length < 10) continue;
+        rows.push({
+            model: cols[0],
+            testAccuracy: num(cols[1]),
+            testF1: num(cols[2]),
+            liveAccuracy: num(cols[3]),
+            liveMatches: int(cols[4]),
+            brierScore: num(cols[5]),
+            trainTime: num(cols[6]),
+            predictTime: num(cols[7]),
+            memory: num(cols[8]),
+            modelSize: num(cols[9]),
+        });
+    }
+    return rows;
+}
+
+export interface AccuracyOverTimePoint {
+    date: string;
+    [model: string]: number | string;
+}
+
+export function computeAccuracyOverTime(dates: string[]): AccuracyOverTimePoint[] {
+    const points: AccuracyOverTimePoint[] = [];
+    const running: Record<string, { correct: number; total: number }> = {};
+
+    for (const date of dates) {
+        const report = loadPredictionReport(date);
+        if (!report) continue;
+
+        for (const [model, acc] of Object.entries(report.summary.model_accuracy)) {
+            if (!running[model]) running[model] = { correct: 0, total: 0 };
+            running[model].correct += acc.correct;
+            running[model].total += acc.total;
+        }
+
+        const point: AccuracyOverTimePoint = { date };
+        for (const [model, stats] of Object.entries(running)) {
+            point[model] = stats.total > 0 ? Math.round((stats.correct / stats.total) * 1000) / 10 : 0;
+        }
+        points.push(point);
+    }
+    return points;
+}
+
+export interface ResultTypeBreakdown {
+    model: string;
+    HOME: number;
+    DRAW: number;
+    AWAY: number;
+}
+
+export function computeResultTypeAccuracy(dates: string[]): ResultTypeBreakdown[] {
+    const stats: Record<string, Record<"HOME" | "DRAW" | "AWAY", { correct: number; total: number }>> = {};
+
+    for (const date of dates) {
+        const report = loadPredictionReport(date);
+        if (!report) continue;
+
+        for (const match of report.matches) {
+            const actual = match.actual_result;
+            if (!actual || (actual !== "HOME" && actual !== "DRAW" && actual !== "AWAY")) continue;
+
+            for (const [model, pred] of Object.entries(match.predictions)) {
+                if (model === "consensus") continue;
+                const p = pred as ModelPrediction;
+                if (!p.prediction) continue;
+
+                if (!stats[model]) {
+                    stats[model] = {
+                        HOME: { correct: 0, total: 0 },
+                        DRAW: { correct: 0, total: 0 },
+                        AWAY: { correct: 0, total: 0 },
+                    };
+                }
+                stats[model][actual].total++;
+                if (p.prediction === actual) stats[model][actual].correct++;
+            }
+        }
+    }
+
+    const result: ResultTypeBreakdown[] = [];
+    for (const [model, perType] of Object.entries(stats)) {
+        result.push({
+            model,
+            HOME: perType.HOME.total > 0 ? Math.round((perType.HOME.correct / perType.HOME.total) * 1000) / 10 : 0,
+            DRAW: perType.DRAW.total > 0 ? Math.round((perType.DRAW.correct / perType.DRAW.total) * 1000) / 10 : 0,
+            AWAY: perType.AWAY.total > 0 ? Math.round((perType.AWAY.correct / perType.AWAY.total) * 1000) / 10 : 0,
+        });
+    }
+    return result.sort((a, b) => a.model.localeCompare(b.model));
 }
 
 export function aggregateAccuracy(dates: string[]): Record<string, ModelAccuracy> {

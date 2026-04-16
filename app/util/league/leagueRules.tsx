@@ -60,6 +60,10 @@ const leagueRules: Record<number, LeagueRules> = {
     },
 }
 
+function stageLegend(color: string, competition: string, phase: string) {
+    return { color, description: `${competition} - ${phase}` };
+}
+
 export function getRowClass(leagueId: number, position: number) : string {
     const rules = leagueRules[leagueId];
     if (!rules) return "";
@@ -96,13 +100,13 @@ export function getLegend(leagueId: number) : { color: string; description: stri
     const isUEFACompetition = [2, 3, 848].includes(leagueId);
 
     if (!isUEFACompetition) {
-        legend.push({ color: "bg-cyan-800/60", description: "Champions League – Group Stage" });
+        legend.push(stageLegend("bg-cyan-800/60", "Champions League", "Group Stage"));
     }
     if (rules.europaLeague) {
-        legend.push({ color: "bg-orange-800/60", description: "Europa League – Group Stage" });
+        legend.push(stageLegend("bg-orange-800/60", "Europa League", "Group Stage"));
     }
     if (rules.conferenceLeague) {
-        legend.push({ color: "bg-green-800/60", description: "Europa Conference League – Qualification" });
+        legend.push(stageLegend("bg-green-800/60", "Europa Conference League", "Qualification"));
     }
     if (rules.relegationPlayoff) {
         legend.push({ color: "bg-yellow-600/40", description: "Relegation Play-off" });

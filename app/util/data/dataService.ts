@@ -1,24 +1,23 @@
 import fs from "fs";
 import path from "path";
+import { cache } from "../serverCache";
+import { readJson } from "./fileUtils";
 import { Competition } from "../league/leagueRegistry";
 import { SofascoreMatch, SofascoreMatchFile, SofascoreUpcomingMatch, SofascoreUpcomingFile } from "@/types/sofascore";
 
-const DATA_DIR = process.env.SOFASCORE_DATA_DIR || path.join(process.cwd(), "SofascoreData", "data");
-
-function readJson<T>(filePath: string): T | null {
-    try {
-        const raw = fs.readFileSync(filePath, "utf-8");
-        return JSON.parse(raw) as T;
-    } catch {
-        return null;
-    }
+function resolveDataDir(): string {
+    const prebuilt = path.join(process.cwd(), ".data");
+    if (fs.existsSync(prebuilt)) return prebuilt;
+    return path.join(process.cwd(), "SofascoreData", "data");
 }
 
-export function loadAllSeasons(competition: Competition): SofascoreMatch[] {
+const DATA_DIR = process.env.SOFASCORE_DATA_DIR || resolveDataDir();
+
+export const loadAllSeasons = cache((competition: Competition): SofascoreMatch[] => {
     const filePath = path.join(DATA_DIR, competition.dataPath, "raw", "all_seasons.json");
     const data = readJson<SofascoreMatchFile>(filePath);
     return data?.matches ?? [];
-}
+});
 
 export function loadSeasonMatches(competition: Competition, seasonFile: string): SofascoreMatch[] {
     const filePath = path.join(DATA_DIR, competition.dataPath, "raw", seasonFile);
@@ -68,7 +67,9 @@ export interface StandingRow {
 }
 
 export function computeStandings(matches: SofascoreMatch[]): StandingRow[] {
-    const finished = matches.filter((m) => m.status === "finished" && m.home_score !== null && m.away_score !== null);
+    const finished = matches
+        .filter((m) => m.status === "finished" && m.home_score !== null && m.away_score !== null)
+        .sort((a, b) => a.date.localeCompare(b.date));
 
     const teams = new Map<number, StandingRow>();
 
@@ -175,6 +176,27 @@ export function loadLineups(competition: Competition, seasonFile: string): Match
     return data?.lineups ?? [];
 }
 
+export function findMatchInCompetitions(eventId: number, competitions: Competition[]): { match: SofascoreMatch; competition: Competition } | null {
+    for (const comp of competitions) {
+        const matches = loadAllSeasons(comp);
+        const match = matches.find((m) => m.event_id === eventId);
+        if (match) return { match, competition: comp };
+    }
+    return null;
+}
+
+export function buildTeamIdMap(competitions: Competition[]): Map<string, number> {
+    const map = new Map<string, number>();
+    for (const comp of competitions) {
+        const matches = loadAllSeasons(comp);
+        for (const m of matches) {
+            if (!map.has(m.home_team)) map.set(m.home_team, m.home_team_id);
+            if (!map.has(m.away_team)) map.set(m.away_team, m.away_team_id);
+        }
+    }
+    return map;
+}
+
 export interface MatchLineup {
     match_id: string;
     event_id: number;
@@ -192,4 +214,107 @@ export interface MatchLineup {
         starters: PlayerInfo[];
         substitutes: PlayerInfo[];
     };
+}
+
+export function loadLatestPlayers(competition: Competition): Record<string, PlayerInfo[]> {
+    // Prebuilt data has a single players.json per competition
+    const prebuiltPath = path.join(DATA_DIR, competition.dataPath, "players.json");
+    if (fs.existsSync(prebuiltPath)) {
+        const data = readJson<{ teams: Record<string, PlayerInfo[]> }>(prebuiltPath);
+        return data?.teams ?? {};
+    }
+
+    const seasons = listSeasonFiles(competition);
+    if (seasons.length === 0) return {};
+    const latest = seasons.sort().pop()!;
+    return loadPlayers(competition, latest);
+}
+
+export interface TeamCompetitionData {
+    competition: Competition;
+    matches: SofascoreMatch[];
+    standing: StandingRow | null;
+}
+
+export function findTeamData(teamId: number, competitions: Competition[]): { teamName: string; data: TeamCompetitionData[] } {
+    let teamName = "";
+    const data: TeamCompetitionData[] = [];
+
+    for (const comp of competitions) {
+        const matches = loadAllSeasons(comp);
+        const teamMatches = matches.filter((m) => m.home_team_id === teamId || m.away_team_id === teamId);
+        if (teamMatches.length === 0) continue;
+
+        if (!teamName) {
+            const first = teamMatches[0];
+            teamName = first.home_team_id === teamId ? first.home_team : first.away_team;
+        }
+
+        const standings = computeStandings(matches);
+        const standing = standings.find((r) => r.teamId === teamId) ?? null;
+
+        data.push({ competition: comp, matches: teamMatches, standing });
+    }
+
+    return { teamName, data };
+}
+
+export function findPlayerInCompetitions(playerId: number, competitions: Competition[]): { player: PlayerInfo; competition: Competition } | null {
+    for (const comp of competitions) {
+        const teamPlayers = loadLatestPlayers(comp);
+        for (const players of Object.values(teamPlayers)) {
+            const player = players.find((p) => p.id === playerId);
+            if (player) return { player, competition: comp };
+        }
+    }
+    return null;
+}
+
+export function getTeamSquad(teamName: string, competitions: Competition[]): PlayerInfo[] {
+    for (const comp of competitions) {
+        const teamPlayers = loadLatestPlayers(comp);
+        if (teamPlayers[teamName] && teamPlayers[teamName].length > 0) {
+            return teamPlayers[teamName];
+        }
+    }
+    return [];
+}
+
+export interface SearchTeam {
+    id: number;
+    name: string;
+}
+
+export interface SearchPlayer {
+    id: number;
+    name: string;
+    team: string;
+    position: string;
+}
+
+export function buildSearchData(competitions: Competition[]): { teams: SearchTeam[]; players: SearchPlayer[] } {
+    const teamMap = new Map<number, string>();
+    const playerMap = new Map<number, SearchPlayer>();
+
+    for (const comp of competitions) {
+        const matches = loadAllSeasons(comp);
+        for (const m of matches) {
+            if (!teamMap.has(m.home_team_id)) teamMap.set(m.home_team_id, m.home_team);
+            if (!teamMap.has(m.away_team_id)) teamMap.set(m.away_team_id, m.away_team);
+        }
+
+        const teamPlayers = loadLatestPlayers(comp);
+        for (const players of Object.values(teamPlayers)) {
+            for (const p of players) {
+                if (!playerMap.has(p.id)) {
+                    playerMap.set(p.id, { id: p.id, name: p.name, team: p.team, position: p.position });
+                }
+            }
+        }
+    }
+
+    const teams = Array.from(teamMap.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    const players = Array.from(playerMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+    return { teams, players };
 }

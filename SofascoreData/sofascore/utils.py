@@ -12,7 +12,14 @@ from datetime import datetime
 
 def extract_match_data(match):
     status_type = match.get('status', {}).get('type', '')
-    return {
+    home_score_obj = match.get('homeScore', {})
+    away_score_obj = match.get('awayScore', {})
+
+    # Use 'display' if available (excludes penalties), fallback to 'normaltime', then 'current'
+    home_score = home_score_obj.get('display') or home_score_obj.get('normaltime') or home_score_obj.get('current')
+    away_score = away_score_obj.get('display') or away_score_obj.get('normaltime') or away_score_obj.get('current')
+
+    data = {
         'event_id': match.get('id'),
         'status': status_type if status_type else None,
         'date': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%Y-%m-%d'),
@@ -22,11 +29,26 @@ def extract_match_data(match):
         'home_team': match.get('homeTeam', {}).get('name'),
         'away_team_id': match.get('awayTeam', {}).get('id'),
         'away_team': match.get('awayTeam', {}).get('name'),
-        'home_score': match.get('homeScore', {}).get('current'),
-        'away_score': match.get('awayScore', {}).get('current'),
-        'home_score_ht': match.get('homeScore', {}).get('period1'),
-        'away_score_ht': match.get('awayScore', {}).get('period1'),
+        'home_score': home_score,
+        'away_score': away_score,
+        'home_score_ht': home_score_obj.get('period1'),
+        'away_score_ht': away_score_obj.get('period1'),
     }
+
+    # Extra time and penalties (only present for knockout matches)
+    home_ot = home_score_obj.get('overtime')
+    away_ot = away_score_obj.get('overtime')
+    home_pen = home_score_obj.get('penalties')
+    away_pen = away_score_obj.get('penalties')
+
+    if home_ot is not None or away_ot is not None:
+        data['home_score_et'] = home_ot
+        data['away_score_et'] = away_ot
+    if home_pen is not None or away_pen is not None:
+        data['home_score_pen'] = home_pen
+        data['away_score_pen'] = away_pen
+
+    return data
 
 
 def extract_referee_data(event_details):

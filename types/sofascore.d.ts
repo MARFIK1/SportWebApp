@@ -10,6 +10,10 @@ export interface SofascoreMatch {
     away_score: number | null;
     home_score_ht: number | null;
     away_score_ht: number | null;
+    home_score_et?: number | null;
+    away_score_et?: number | null;
+    home_score_pen?: number | null;
+    away_score_pen?: number | null;
     status: string;
     season: string;
 
