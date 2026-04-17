@@ -4,15 +4,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import type { SearchTeam, SearchPlayer } from "@/app/util/data/dataService";
+import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
 import { useLanguage } from "./LanguageProvider";
-
-function teamLogoUrl(teamId: number): string {
-    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
-}
-
-function playerImageUrl(playerId: number): string {
-    return `https://api.sofascore.app/api/v1/player/${playerId}/image`;
-}
 
 export default function SearchBarForm({ teamsData, playersData }: { teamsData: SearchTeam[]; playersData: SearchPlayer[] }) {
     const router = useRouter();
