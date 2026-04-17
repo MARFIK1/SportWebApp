@@ -1,20 +1,14 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
-import { findPlayerInCompetitions, findTeamData, loadAllSeasons, type PlayerInfo } from "@/app/util/data/dataService";
+import { findPlayerInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
 import type { SofascoreMatch } from "@/types/sofascore";
-import { getServerT, getServerLocale } from "@/app/util/i18n/getLocale";
+import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
+import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface PageProps {
     params: { id: string };
-}
-
-function playerImageUrl(playerId: number): string {
-    return `https://api.sofascore.app/api/v1/player/${playerId}/image`;
-}
-
-function teamLogoUrl(teamId: number): string {
-    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
 }
 
 const POSITION_KEYS: Record<string, string> = {
@@ -35,10 +29,22 @@ function calculateAge(dateOfBirth: string): number {
     return age;
 }
 
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+    const playerId = parseInt(params.id, 10);
+    if (!Number.isFinite(playerId)) return { title: "Player" };
+    const result = findPlayerInCompetitions(playerId, getAllCompetitions());
+    if (!result) return { title: "Player" };
+    const { player } = result;
+    return {
+        title: player.name,
+        description: `${player.name} - ${player.team} - player profile, recent matches, stats`,
+    };
+}
+
 export default async function PlayerPage({ params }: PageProps) {
-    const playerId = parseInt(params.id);
+    const playerId = parseInt(params.id, 10);
     const competitions = getAllCompetitions();
-    const result = findPlayerInCompetitions(playerId, competitions);
+    const result = Number.isFinite(playerId) ? findPlayerInCompetitions(playerId, competitions) : null;
 
     const t = getServerT();
 
@@ -53,7 +59,6 @@ export default async function PlayerPage({ params }: PageProps) {
     const { player } = result;
     const age = player.date_of_birth ? calculateAge(player.date_of_birth) : null;
 
-    const { teamName, data: teamData } = findTeamData(0, []);
     let teamId: number | null = null;
 
     for (const comp of competitions) {

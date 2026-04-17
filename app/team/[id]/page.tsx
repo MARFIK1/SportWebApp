@@ -1,20 +1,14 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findTeamData, getTeamSquad, type TeamCompetitionData, type PlayerInfo } from "@/app/util/data/dataService";
 import type { SofascoreMatch } from "@/types/sofascore";
+import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface PageProps {
     params: { id: string };
-}
-
-function teamLogoUrl(teamId: number): string {
-    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
-}
-
-function playerImageUrl(playerId: number): string {
-    return `https://api.sofascore.app/api/v1/player/${playerId}/image`;
 }
 
 const POSITION_KEYS: Record<string, string> = {
@@ -26,10 +20,23 @@ const POSITION_KEYS: Record<string, string> = {
 
 const POSITION_ORDER = ["G", "D", "M", "F"];
 
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+    const teamId = parseInt(params.id, 10);
+    if (!Number.isFinite(teamId)) return { title: "Team" };
+    const { teamName } = findTeamData(teamId, getAllCompetitions());
+    if (!teamName) return { title: "Team" };
+    return {
+        title: teamName,
+        description: `${teamName} - squad, fixtures, recent results, and league standings`,
+    };
+}
+
 export default async function TeamPage({ params }: PageProps) {
-    const teamId = parseInt(params.id);
+    const teamId = parseInt(params.id, 10);
     const competitions = getAllCompetitions();
-    const { teamName, data } = findTeamData(teamId, competitions);
+    const { teamName, data } = Number.isFinite(teamId)
+        ? findTeamData(teamId, competitions)
+        : { teamName: "", data: [] };
 
     const t = getServerT();
 
