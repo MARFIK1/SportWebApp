@@ -30,6 +30,26 @@ export default function LeagueSection({ league, leagueName, slug, matches, teamI
     const t = getServerT();
     const accuracy = getLeagueAccuracy(matches);
 
+    const finished = matches.filter((m) => m.status === "finished");
+    const scheduled = matches.filter((m) => m.status !== "finished");
+
+    function renderMatchList(list: PredictionMatch[]) {
+        return (
+            <div className="flex flex-wrap gap-3 pb-2">
+                {list.map((match) => (
+                    <MatchCard
+                        key={match.id}
+                        match={match}
+                        homeTeamId={teamIds[match.home_team] ?? null}
+                        awayTeamId={teamIds[match.away_team] ?? null}
+                        eventId={eventIds[`${match.home_team}_vs_${match.away_team}_${selectedDate}`] ?? null}
+                        date={selectedDate}
+                    />
+                ))}
+            </div>
+        );
+    }
+
     return (
         <div className="mb-8">
             <div className="flex items-center justify-between mb-4 px-2">
@@ -57,49 +77,18 @@ export default function LeagueSection({ league, leagueName, slug, matches, teamI
                     {t("view_standings")} {"\u2197"}
                 </Link>
             </div>
-            {(() => {
-                const finished = matches.filter((m) => m.status === "finished");
-                const other = matches.filter((m) => m.status !== "finished");
-                return (
-                    <>
-                        {finished.length > 0 && (
-                            <div className="flex flex-wrap gap-3 pb-2">
-                                {finished.map((match) => (
-                                    <MatchCard
-                                        key={match.id}
-                                        match={match}
-                                        homeTeamId={teamIds[match.home_team] ?? null}
-                                        awayTeamId={teamIds[match.away_team] ?? null}
-                                        eventId={eventIds[`${match.home_team}_vs_${match.away_team}_${selectedDate}`] ?? null}
-                                        date={selectedDate}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                        {finished.length > 0 && other.length > 0 && (
-                            <div className="flex items-center gap-3 py-3 px-2">
-                                <div className="flex-1 border-t border-gray-300 dark:border-gray-600" />
-                                <span className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wider">{t("scheduled")}</span>
-                                <div className="flex-1 border-t border-gray-300 dark:border-gray-600" />
-                            </div>
-                        )}
-                        {other.length > 0 && (
-                            <div className="flex flex-wrap gap-3 pb-2">
-                                {other.map((match) => (
-                                    <MatchCard
-                                        key={match.id}
-                                        match={match}
-                                        homeTeamId={teamIds[match.home_team] ?? null}
-                                        awayTeamId={teamIds[match.away_team] ?? null}
-                                        eventId={eventIds[`${match.home_team}_vs_${match.away_team}_${selectedDate}`] ?? null}
-                                        date={selectedDate}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                    </>
-                );
-            })()}
+
+            {finished.length > 0 && renderMatchList(finished)}
+
+            {finished.length > 0 && scheduled.length > 0 && (
+                <div className="flex items-center gap-3 py-3 px-2">
+                    <div className="flex-1 border-t border-gray-300 dark:border-gray-600" />
+                    <span className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wider">{t("scheduled")}</span>
+                    <div className="flex-1 border-t border-gray-300 dark:border-gray-600" />
+                </div>
+            )}
+
+            {scheduled.length > 0 && renderMatchList(scheduled)}
         </div>
     );
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import { getServerT } from "@/app/util/i18n/getLocale";
+import { teamLogoUrl } from "@/app/util/urls";
 
 interface MatchCardProps {
     match: PredictionMatch;
@@ -9,10 +10,6 @@ interface MatchCardProps {
     awayTeamId: number | null;
     eventId: number | null;
     date: string;
-}
-
-function teamLogoUrl(teamId: number): string {
-    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
 }
 
 function getPredictionColor(prediction: string): string {
@@ -71,7 +68,7 @@ export default function MatchCard({ match, homeTeamId, awayTeamId, eventId, date
                             style={{ width: "40px", height: "40px" }}
                         />
                     ) : (
-                        <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xs font-bold">
+                        <div className="w-10 h-10 bg-gray-300 dark:bg-gray-700 rounded-full flex items-center justify-center text-xs font-bold text-gray-700 dark:text-gray-200" aria-hidden="true">
                             {match.home_team.slice(0, 2).toUpperCase()}
                         </div>
                     )}
@@ -116,7 +113,7 @@ export default function MatchCard({ match, homeTeamId, awayTeamId, eventId, date
                             style={{ width: "40px", height: "40px" }}
                         />
                     ) : (
-                        <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xs font-bold">
+                        <div className="w-10 h-10 bg-gray-300 dark:bg-gray-700 rounded-full flex items-center justify-center text-xs font-bold text-gray-700 dark:text-gray-200" aria-hidden="true">
                             {match.away_team.slice(0, 2).toUpperCase()}
                         </div>
                     )}
