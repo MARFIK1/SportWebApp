@@ -2,17 +2,14 @@
 import { useState } from "react";
 import Image from "next/image";
 import { PredictionMatch, ModelPrediction, ConsensusPrediction, ModelAccuracy } from "@/types/predictions";
+import { teamLogoUrl } from "@/app/util/urls";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 
 interface PredictionsClientProps {
     matches: PredictionMatch[];
-    leagues: { dataPath: string; name: string }[];
+    leagues: { dataPath: string; name: string; count: number }[];
     teamIds: Record<string, number>;
     dayAccuracy: Record<string, ModelAccuracy>;
-}
-
-function teamLogoUrl(teamId: number): string {
-    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
 }
 
 export default function PredictionsClient({ matches, leagues, teamIds, dayAccuracy }: PredictionsClientProps) {
@@ -35,20 +32,17 @@ export default function PredictionsClient({ matches, leagues, teamIds, dayAccura
                 >
                     {t("all_leagues")} ({matches.length})
                 </button>
-                {leagues.map((l) => {
-                    const count = matches.filter((m) => `${m.comp_type}/${m.league}` === l.dataPath).length;
-                    return (
-                        <button
-                            key={l.dataPath}
-                            onClick={() => setSelectedLeague(l.dataPath)}
-                            className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors ${
-                                selectedLeague === l.dataPath ? "bg-emerald-600 text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-                            }`}
-                        >
-                            {l.name} ({count})
-                        </button>
-                    );
-                })}
+                {leagues.map((l) => (
+                    <button
+                        key={l.dataPath}
+                        onClick={() => setSelectedLeague(l.dataPath)}
+                        className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors ${
+                            selectedLeague === l.dataPath ? "bg-emerald-600 text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                        }`}
+                    >
+                        {l.name} ({l.count})
+                    </button>
+                ))}
             </div>
 
             <div className="space-y-3">
@@ -119,12 +113,16 @@ export default function PredictionsClient({ matches, leagues, teamIds, dayAccura
                                 </div>
 
                                 {isFinished && (
-                                    <span className={`text-xs font-bold ${correct ? "text-emerald-400" : "text-red-400"}`}>
-                                        {correct ? "\u2713" : "\u2717"}
+                                    <span
+                                        className={`text-xs font-bold ${correct ? "text-emerald-400" : "text-red-400"}`}
+                                        aria-label={correct ? t("correct") : t("incorrect")}
+                                        role="img"
+                                    >
+                                        <span aria-hidden="true">{correct ? "\u2713" : "\u2717"}</span>
                                     </span>
                                 )}
 
-                                <span className="text-gray-400 dark:text-gray-500 text-sm">{isExpanded ? "\u25B2" : "\u25BC"}</span>
+                                <span className="text-gray-400 dark:text-gray-500 text-sm" aria-hidden="true">{isExpanded ? "\u25B2" : "\u25BC"}</span>
                             </button>
 
                             {isExpanded && (
@@ -164,8 +162,12 @@ export default function PredictionsClient({ matches, leagues, teamIds, dayAccura
                                                     </td>
                                                     {isFinished && (
                                                         <td className="text-center py-2 px-2">
-                                                            <span className={`text-xs font-bold ${pred.correct ? "text-emerald-400" : "text-red-400"}`}>
-                                                                {pred.correct ? "\u2713" : "\u2717"}
+                                                            <span
+                                                                className={`text-xs font-bold ${pred.correct ? "text-emerald-400" : "text-red-400"}`}
+                                                                aria-label={pred.correct ? t("correct") : t("incorrect")}
+                                                                role="img"
+                                                            >
+                                                                <span aria-hidden="true">{pred.correct ? "\u2713" : "\u2717"}</span>
                                                             </span>
                                                         </td>
                                                     )}

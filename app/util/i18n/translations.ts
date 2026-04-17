@@ -13,6 +13,7 @@ const translations: Record<Locale, Record<string, string>> = {
         team_not_found: "Team not found",
         player_not_found: "Player not found",
         no_data: "No prediction data available",
+        empty_placeholder: "-",
         today: "TODAY",
 
         // Home
@@ -30,6 +31,16 @@ const translations: Record<Locale, Record<string, string>> = {
         model_performance: "Model Performance",
         all_time: "all time",
         all_leagues: "All Leagues",
+        ml_comparison: "ML model comparison",
+        chart_test_vs_live: "Test vs live",
+        chart_accuracy_over_time: "Accuracy over time",
+        chart_result_type: "Result type (H/D/A)",
+        chart_efficiency: "Calibration (Brier)",
+        chart_test_acc: "Test acc.",
+        chart_live_acc: "Live acc.",
+        chart_brier: "Brier score",
+        chart_hint:
+            "Cumulative accuracy uses all report dates in the window. Lower Brier score means better-calibrated probabilities.",
 
         // Match
         full_time: "FULL TIME",
@@ -119,6 +130,7 @@ const translations: Record<Locale, Record<string, string>> = {
         team_not_found: "Nie znaleziono dru\u017cyny",
         player_not_found: "Nie znaleziono gracza",
         no_data: "Brak danych predykcji",
+        empty_placeholder: "-",
         today: "DZI\u015A",
 
         // Home
@@ -136,6 +148,16 @@ const translations: Record<Locale, Record<string, string>> = {
         model_performance: "Wyniki modeli",
         all_time: "ca\u0142kowite",
         all_leagues: "Wszystkie ligi",
+        ml_comparison: "Por\u00f3wnanie modeli ML",
+        chart_test_vs_live: "Test vs live",
+        chart_accuracy_over_time: "Skuteczno\u015b\u0107 w czasie",
+        chart_result_type: "Typ wyniku (H/R/G)",
+        chart_efficiency: "Kalibracja (Brier)",
+        chart_test_acc: "Test",
+        chart_live_acc: "Live",
+        chart_brier: "Brier",
+        chart_hint:
+            "Skuteczno\u015b\u0107 narastaj\u0105co z uwzgl\u0119dnieniem dat raport\u00f3w w oknie. Ni\u017cszy Brier = lepsza kalibracja prawdopodobie\u0144stw.",
 
         // Match
         full_time: "KONIEC MECZU",

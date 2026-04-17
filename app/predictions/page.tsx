@@ -1,32 +1,32 @@
+import type { Metadata } from "next";
 import {
     listReportDates,
     loadPredictionReport,
     aggregateAccuracy,
+    loadComparisonSummary,
+    computeAccuracyOverTime,
+    computeResultTypeAccuracy,
 } from "../util/data/predictionService";
-import { getCompetitionByDataPath } from "../util/league/leagueRegistry";
+import { resolveCompetitionByDataPath } from "../util/league/leagueRegistry";
 import { loadAllSeasons } from "../util/data/dataService";
 import DatePicker from "../components/home/DatePicker";
 import PredictionsClient from "./PredictionsClient";
+import ModelComparisonCharts from "./ModelComparisonCharts";
 import { getServerT } from "../util/i18n/getLocale";
+
+export const metadata: Metadata = {
+    title: "Predictions Dashboard",
+    description: "Machine learning prediction dashboard with per-model accuracy tracking and consensus voting across 9 classifiers",
+};
 
 interface PageProps {
     searchParams: { date?: string };
 }
 
-function resolveCompetition(dataPath: string) {
-    const comp = getCompetitionByDataPath(dataPath);
-    if (comp) return comp;
-    const parts = dataPath.split("/");
-    if (parts.length > 2) {
-        return getCompetitionByDataPath(parts.slice(0, 2).join("/"));
-    }
-    return undefined;
-}
-
 function buildTeamIdsForReport(leagueDataPaths: string[]): Record<string, number> {
     const teamIds: Record<string, number> = {};
     for (const dataPath of leagueDataPaths) {
-        const comp = resolveCompetition(dataPath);
+        const comp = resolveCompetitionByDataPath(dataPath);
         if (!comp) continue;
         const matches = loadAllSeasons(comp);
         for (const m of matches) {
@@ -53,13 +53,27 @@ export default async function Predictions({ searchParams }: PageProps) {
     }
 
     const allDatesAccuracy = aggregateAccuracy(dates);
+    const comparisonSummary = loadComparisonSummary();
+    const accuracyOverTime = computeAccuracyOverTime(dates);
+    const resultTypeBreakdown = computeResultTypeAccuracy(dates);
 
     const leagueDataPaths = Array.from(new Set(report.matches.map((m) => `${m.comp_type}/${m.league}`)));
     const teamIds = buildTeamIdsForReport(leagueDataPaths);
 
+    const matchCountByLeague: Record<string, number> = {};
+    for (const m of report.matches) {
+        const key = `${m.comp_type}/${m.league}`;
+        matchCountByLeague[key] = (matchCountByLeague[key] ?? 0) + 1;
+    }
+
     const leagues = leagueDataPaths.map((dp) => {
-        const comp = resolveCompetition(dp);
-        return { dataPath: dp, name: comp?.name ?? dp, priority: comp?.priority ?? 999 };
+        const comp = resolveCompetitionByDataPath(dp);
+        return {
+            dataPath: dp,
+            name: comp?.name ?? dp,
+            priority: comp?.priority ?? 999,
+            count: matchCountByLeague[dp] ?? 0,
+        };
     }).sort((a, b) => a.priority - b.priority);
 
     const consensusAcc = report.summary.model_accuracy["consensus"];
@@ -73,7 +87,7 @@ export default async function Predictions({ searchParams }: PageProps) {
 
     return (
         <div className="flex flex-col w-full max-w-[1600px] mx-auto px-6 py-6">
-            <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                 <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-5 text-center">
                     <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t("total_matches_today")}</div>
                     <div className="text-4xl font-bold text-gray-900 dark:text-white">{report.summary.total_matches}</div>
@@ -84,12 +98,18 @@ export default async function Predictions({ searchParams }: PageProps) {
                 </div>
                 <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-5 text-center">
                     <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t("best_model_day")}</div>
-                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{bestModel?.[0] ?? "—"}</div>
+                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{bestModel?.[0] ?? t("empty_placeholder")}</div>
                     <div className="text-sm text-emerald-400">{bestModel?.[1]?.accuracy_pct ?? 0}%</div>
                 </div>
             </div>
 
-            <DatePicker dates={dates} selectedDate={selectedDate} basePath="/predictions" />
+            <DatePicker dates={dates} selectedDate={selectedDate} todayIso={new Date().toISOString().slice(0, 10)} basePath="/predictions" />
+
+            <ModelComparisonCharts
+                comparison={comparisonSummary}
+                accuracyOverTime={accuracyOverTime}
+                resultTypeBreakdown={resultTypeBreakdown}
+            />
 
             <div className="flex flex-col lg:flex-row gap-6 mt-6">
                 <div className="flex-1">

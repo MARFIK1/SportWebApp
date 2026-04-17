@@ -51,7 +51,6 @@ export interface PredictionMatch {
     actual_corners: number | null;
     referee_name: string | null;
     predictions: Record<string, ModelPrediction> & { consensus: ConsensusPrediction };
-    consensus: Record<string, unknown>;
     market_predictions: {
         btts: MarketPrediction;
         over_1_5: MarketPrediction;
