@@ -84,6 +84,16 @@ export function getCompetitionByDataPath(path: string): Competition | undefined 
     return byDataPath.get(path);
 }
 
+export function resolveCompetitionByDataPath(dataPath: string): Competition | undefined {
+    const direct = byDataPath.get(dataPath);
+    if (direct) return direct;
+    const parts = dataPath.split("/");
+    if (parts.length > 2) {
+        return byDataPath.get(parts.slice(0, 2).join("/"));
+    }
+    return undefined;
+}
+
 export function getAllCompetitions(): Competition[] {
     return competitions;
 }
