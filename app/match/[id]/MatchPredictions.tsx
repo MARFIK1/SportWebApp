@@ -3,9 +3,10 @@ import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface MatchPredictionsProps {
     models: [string, ModelPrediction][];
+    matchFinished: boolean;
 }
 
-export default function MatchPredictions({ models }: MatchPredictionsProps) {
+export default function MatchPredictions({ models, matchFinished }: MatchPredictionsProps) {
     const t = getServerT();
 
     return (
@@ -21,7 +22,9 @@ export default function MatchPredictions({ models }: MatchPredictionsProps) {
                             <th className="text-center py-3 px-2">{t("draw_pct")}</th>
                             <th className="text-center py-3 px-2">{t("away_pct")}</th>
                             <th className="text-center py-3 px-2">{t("confidence")}</th>
-                            <th className="text-center py-3 px-2">{t("result")}</th>
+                            {matchFinished && (
+                                <th className="text-center py-3 px-2">{t("result")}</th>
+                            )}
                         </tr>
                     </thead>
                     <tbody>
@@ -45,13 +48,15 @@ export default function MatchPredictions({ models }: MatchPredictionsProps) {
                                         {pred.confidence.toFixed(1)}%
                                     </span>
                                 </td>
-                                <td className="text-center py-3 px-2">
-                                    {pred.correct !== undefined && (
-                                        <span className={`text-xs font-bold ${pred.correct ? "text-emerald-400" : "text-red-400"}`}>
-                                            {pred.correct ? "\u2713" : "\u2717"}
-                                        </span>
-                                    )}
-                                </td>
+                                {matchFinished && (
+                                    <td className="text-center py-3 px-2">
+                                        {pred.correct !== undefined && (
+                                            <span className={`text-xs font-bold ${pred.correct ? "text-emerald-400" : "text-red-400"}`}>
+                                                {pred.correct ? "\u2713" : "\u2717"}
+                                            </span>
+                                        )}
+                                    </td>
+                                )}
                             </tr>
                         ))}
                     </tbody>

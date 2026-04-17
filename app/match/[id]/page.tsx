@@ -1,10 +1,12 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
 import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import { PredictionMatch, ModelPrediction, ConsensusPrediction, AnalysisMatch } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
+import { teamLogoUrl } from "@/app/util/urls";
 import MatchPredictions from "./MatchPredictions";
 import MatchStatistics from "./MatchStatistics";
 import { getServerT } from "@/app/util/i18n/getLocale";
@@ -43,18 +45,34 @@ interface PageProps {
     searchParams: { date?: string };
 }
 
-function teamLogoUrl(teamId: number): string {
-    return `https://api.sofascore.app/api/v1/team/${teamId}/image`;
-}
-
 function findPredictionMatch(report: { matches: PredictionMatch[] }, homeTeam: string, awayTeam: string): PredictionMatch | undefined {
     return report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
 }
 
+function maxProbability(probs: Record<string, number> | undefined): number {
+    if (!probs) return 0;
+    const values = Object.values(probs);
+    if (values.length === 0) return 0;
+    return Math.max(...values);
+}
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+    const eventId = parseInt(params.id, 10);
+    if (!Number.isFinite(eventId)) return { title: "Match" };
+    const result = findMatchInCompetitions(eventId, getAllCompetitions());
+    if (!result) return { title: "Match" };
+    const { match } = result;
+    const score = match.home_score != null && match.away_score != null ? ` ${match.home_score}-${match.away_score}` : "";
+    return {
+        title: `${match.home_team} vs ${match.away_team}${score}`,
+        description: `${match.home_team} vs ${match.away_team} - match statistics, predictions, and head-to-head`,
+    };
+}
+
 export default async function Match({ params, searchParams }: PageProps) {
-    const eventId = parseInt(params.id);
+    const eventId = parseInt(params.id, 10);
     const competitions = getAllCompetitions();
-    const result = findMatchInCompetitions(eventId, competitions);
+    const result = Number.isFinite(eventId) ? findMatchInCompetitions(eventId, competitions) : null;
 
     const t = getServerT();
 
@@ -183,25 +201,26 @@ export default async function Match({ params, searchParams }: PageProps) {
                         </div>
                     </div>
 
-                    {analysis?.goals?.expected_goals_home != null && analysis?.goals?.expected_goals_away != null && (
-                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mb-6">
-                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("expected_goals")}</h3>
-                            <div className="flex items-center gap-4">
-                                <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{analysis.goals.expected_goals_home.toFixed(2)}</span>
-                                <div className="flex-1 flex h-6 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700">
-                                    <div
-                                        className="bg-emerald-500 h-full"
-                                        style={{ width: `${(analysis.goals.expected_goals_home / (analysis.goals.expected_goals_home + analysis.goals.expected_goals_away)) * 100}%` }}
-                                    />
-                                    <div
-                                        className="bg-blue-500 h-full"
-                                        style={{ width: `${(analysis.goals.expected_goals_away / (analysis.goals.expected_goals_home + analysis.goals.expected_goals_away)) * 100}%` }}
-                                    />
+                    {analysis?.goals?.expected_goals_home != null && analysis?.goals?.expected_goals_away != null && (() => {
+                        const xgHome = analysis.goals.expected_goals_home;
+                        const xgAway = analysis.goals.expected_goals_away;
+                        const xgTotal = xgHome + xgAway;
+                        const homePct = xgTotal > 0 ? (xgHome / xgTotal) * 100 : 50;
+                        const awayPct = xgTotal > 0 ? (xgAway / xgTotal) * 100 : 50;
+                        return (
+                            <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mb-6">
+                                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("expected_goals")}</h3>
+                                <div className="flex items-center gap-4">
+                                    <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{xgHome.toFixed(2)}</span>
+                                    <div className="flex-1 flex h-6 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700">
+                                        <div className="bg-emerald-500 h-full" style={{ width: `${homePct}%` }} />
+                                        <div className="bg-blue-500 h-full" style={{ width: `${awayPct}%` }} />
+                                    </div>
+                                    <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{xgAway.toFixed(2)}</span>
                                 </div>
-                                <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{analysis.goals.expected_goals_away.toFixed(2)}</span>
                             </div>
-                        </div>
-                    )}
+                        );
+                    })()}
 
                     {isFinished && matchStats.length > 0 && (
                         <MatchStatistics stats={matchStats} />
@@ -272,7 +291,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                                 <div className="flex justify-between">
                                     <span className="text-gray-500 dark:text-gray-400">{t("model_confidence")}</span>
                                     <span className="text-gray-900 dark:text-white font-semibold">
-                                        {Math.max(...Object.values(consensus.avg_probabilities ?? {})).toFixed(0)}%
+                                        {maxProbability(consensus.avg_probabilities).toFixed(0)}%
                                     </span>
                                 </div>
                                 <div className="flex justify-between">
@@ -304,7 +323,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                                 ].map(({ key, label }) => {
                                     const market = predMatch.market_predictions[key as keyof typeof predMatch.market_predictions];
                                     if (!market?.consensus) return null;
-                                    const prob = Math.max(...Object.values(market.consensus.avg_probabilities || {}));
+                                    const prob = maxProbability(market.consensus.avg_probabilities);
                                     return (
                                         <div key={key} className="bg-gray-100 dark:bg-gray-800 rounded-xl p-3">
                                             <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</div>
@@ -376,7 +395,7 @@ export default async function Match({ params, searchParams }: PageProps) {
             </div>
 
             {models.length > 0 && (
-                <MatchPredictions models={models} />
+                <MatchPredictions models={models} matchFinished={isFinished} />
             )}
         </div>
     );
