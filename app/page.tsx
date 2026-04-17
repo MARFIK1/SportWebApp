@@ -1,29 +1,25 @@
+import type { Metadata } from "next";
 import { listReportDates, loadPredictionReport } from "./util/data/predictionService";
-import { getCompetitionByDataPath } from "./util/league/leagueRegistry";
-import { buildTeamIdMap, loadAllSeasons } from "./util/data/dataService";
+import { resolveCompetitionByDataPath } from "./util/league/leagueRegistry";
+import { loadAllSeasons } from "./util/data/dataService";
 import DatePicker from "./components/home/DatePicker";
 import LeagueSection from "./components/home/LeagueSection";
 import { getServerT } from "./util/i18n/getLocale";
 
+export const metadata: Metadata = {
+    title: "Home",
+    description: "Daily football matches with ML predictions across 44 competitions: live scores, consensus picks, and model accuracy for each fixture.",
+};
+
 interface PageProps {
     searchParams: { date?: string };
-}
-
-function resolveCompetition(dataPath: string) {
-    const comp = getCompetitionByDataPath(dataPath);
-    if (comp) return comp;
-    const parts = dataPath.split("/");
-    if (parts.length > 2) {
-        return getCompetitionByDataPath(parts.slice(0, 2).join("/"));
-    }
-    return undefined;
 }
 
 function buildLookups(leagueDataPaths: string[]): { teamIds: Record<string, number>; eventIds: Record<string, number> } {
     const teamIds: Record<string, number> = {};
     const eventIds: Record<string, number> = {};
     for (const dataPath of leagueDataPaths) {
-        const comp = resolveCompetition(dataPath);
+        const comp = resolveCompetitionByDataPath(dataPath);
         if (!comp) continue;
         const matches = loadAllSeasons(comp);
         for (const m of matches) {
@@ -62,7 +58,7 @@ export default async function Home({ searchParams }: PageProps) {
     }
 
     const leagueSections = Object.entries(matchesByLeague).map(([dataPath, matches]) => {
-        const comp = resolveCompetition(dataPath);
+        const comp = resolveCompetitionByDataPath(dataPath);
         return {
             dataPath,
             leagueName: comp?.name ?? dataPath,
@@ -88,7 +84,7 @@ export default async function Home({ searchParams }: PageProps) {
                 </p>
             </div>
 
-            <DatePicker dates={dates} selectedDate={selectedDate} />
+            <DatePicker dates={dates} selectedDate={selectedDate} todayIso={new Date().toISOString().slice(0, 10)} />
 
             <div className="mt-6">
                 {leagueSections.map(({ dataPath, leagueName, slug, matches }) => (

@@ -5,10 +5,11 @@ import { useLanguage } from "@/app/components/common/LanguageProvider";
 interface DatePickerProps {
     dates: string[];
     selectedDate: string;
+    todayIso: string;
     basePath?: string;
 }
 
-export default function DatePicker({ dates, selectedDate, basePath = "/" }: DatePickerProps) {
+export default function DatePicker({ dates, selectedDate, todayIso, basePath = "/" }: DatePickerProps) {
     const router = useRouter();
     const { locale, t } = useLanguage();
 
@@ -19,15 +20,11 @@ export default function DatePicker({ dates, selectedDate, basePath = "/" }: Date
     const dateLocale = locale === "pl" ? "pl-PL" : "en-US";
 
     const formatDay = (dateStr: string) => {
-        const date = new Date(dateStr + "T12:00:00");
-        const today = new Date();
-        today.setHours(12, 0, 0, 0);
+        if (dateStr === todayIso) return { label: t("today"), weekday: "" };
 
-        const diffDays = Math.round((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        if (diffDays === 0) return { label: t("today"), weekday: "" };
-
-        const weekday = date.toLocaleDateString(dateLocale, { weekday: "short" }).toUpperCase();
-        const dayMonth = date.toLocaleDateString(dateLocale, { month: "short", day: "numeric" }).toUpperCase();
+        const date = new Date(dateStr + "T12:00:00Z");
+        const weekday = date.toLocaleDateString(dateLocale, { weekday: "short", timeZone: "UTC" }).toUpperCase();
+        const dayMonth = date.toLocaleDateString(dateLocale, { month: "short", day: "numeric", timeZone: "UTC" }).toUpperCase();
         return { label: dayMonth, weekday };
     };
 
@@ -41,9 +38,10 @@ export default function DatePicker({ dates, selectedDate, basePath = "/" }: Date
             {start > 0 && (
                 <button
                     onClick={() => handleDateClick(dates[start - 1])}
-                    className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white px-2 text-lg"
+                    className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white px-2 text-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded"
+                    aria-label="Previous dates"
                 >
-                    &lt;
+                    <span aria-hidden="true">&lt;</span>
                 </button>
             )}
             {visibleDates.map((date) => {
@@ -53,7 +51,8 @@ export default function DatePicker({ dates, selectedDate, basePath = "/" }: Date
                     <button
                         key={date}
                         onClick={() => handleDateClick(date)}
-                        className={`flex flex-col items-center px-4 py-2 rounded-lg min-w-[80px] transition-colors ${
+                        aria-pressed={isSelected}
+                        className={`flex flex-col items-center px-4 py-2 rounded-lg min-w-[80px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                             isSelected
                                 ? "bg-emerald-600 text-white"
                                 : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -67,9 +66,10 @@ export default function DatePicker({ dates, selectedDate, basePath = "/" }: Date
             {end < dates.length && (
                 <button
                     onClick={() => handleDateClick(dates[end])}
-                    className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white px-2 text-lg"
+                    className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white px-2 text-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded"
+                    aria-label="Next dates"
                 >
-                    &gt;
+                    <span aria-hidden="true">&gt;</span>
                 </button>
             )}
         </div>
