@@ -3,6 +3,7 @@
 // patches /.data/ out of .gitignore in the copy, runs npx vercel deploy --prod --yes.
 // Run npm run build:prod first. One-time: npx vercel login, npx vercel link.
 
+import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -44,7 +45,7 @@ function patchGitignore(stagingRoot) {
 
 console.log("staging copy for Vercel (.data included, no node_modules / full SofascoreData)\n");
 
-const STAGING = fs.mkdtempSync(path.join(os.tmpdir(), "sportwebapp-vercel-"));
+const STAGING = path.join(os.tmpdir(), "sportwebapp-vercel-" + crypto.randomBytes(16).toString("hex"));
 
 try {
     fs.cpSync(ROOT, STAGING, {
