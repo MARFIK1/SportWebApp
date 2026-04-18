@@ -3,6 +3,8 @@ LSTM model for football match prediction.
 Dual-branch architecture: one LSTM for home team history, one for away.
 """
 
+import os
+import random
 import numpy as np
 import pandas as pd
 from collections import defaultdict
@@ -14,6 +16,21 @@ try:
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
+
+SEED = 42
+
+
+def _seed_everything(seed: int = SEED) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    if HAS_TORCH:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 SEQUENCE_FEATURES_HOME = [
     'home_form_avg_points', 'home_form_goals_for', 'home_form_goals_against',
@@ -200,9 +217,9 @@ else:
             home_seqs = (home_seqs - self._home_mean) / self._home_std
             away_seqs = (away_seqs - self._away_mean) / self._away_std
 
+            _seed_everything(SEED)
             val_size = max(256, int(len(y_valid) * 0.15))
             indices = np.arange(len(y_valid))
-            np.random.seed(42)
             np.random.shuffle(indices)
             val_idx, train_idx = indices[:val_size], indices[val_size:]
 
