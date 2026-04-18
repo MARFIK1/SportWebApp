@@ -52,14 +52,24 @@ export default function LeagueSection({ league, leagueName, slug, matches, teamI
 
     return (
         <div className="mb-8">
-            <div className="flex items-center justify-between mb-4 px-2">
+            <div className="mb-4 flex items-center justify-between gap-4 px-2">
                 <div className="flex items-center gap-4">
-                    <div>
-                        <Link href={`/league/${slug}`} className="text-lg font-bold text-gray-900 dark:text-white hover:text-emerald-400 transition-colors">{leagueName}</Link>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">{matches.length} {t("matches_count")}</span>
+                    <div className="h-12 w-1 rounded-full bg-gradient-to-b from-emerald-400 via-emerald-500 to-cyan-400" />
+                    <div className="space-y-1">
+                        <div className="flex items-center gap-3">
+                            <Link href={`/league/${slug}`} className="text-xl font-bold text-gray-900 dark:text-white hover:text-emerald-400 transition-colors">{leagueName}</Link>
+                            <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                                {matches.length} {t("matches_count")}
+                            </span>
+                        </div>
+                        <p className="text-xs uppercase tracking-[0.24em] text-gray-400 dark:text-gray-500">
+                            {finished.length > 0
+                                ? `${finished.length} ${t("finished")}`
+                                : `${scheduled.length} ${t("scheduled")}`}
+                        </p>
                     </div>
                     {accuracy && (
-                        <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700/50 rounded-lg px-3 py-1">
+                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white/70 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40">
                             <span className="text-xs text-gray-500 dark:text-gray-400">{t("accuracy")}:</span>
                             <span className={`text-sm font-bold ${accuracy.correct / accuracy.total >= 0.5 ? "text-emerald-400" : "text-gray-700 dark:text-gray-300"}`}>
                                 {accuracy.correct}/{accuracy.total}
@@ -72,7 +82,7 @@ export default function LeagueSection({ league, leagueName, slug, matches, teamI
                 </div>
                 <Link
                     href={`/league/${slug}`}
-                    className="text-emerald-400 text-sm font-semibold hover:text-emerald-300 transition-colors"
+                    className="rounded-xl border border-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-500 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400"
                 >
                     {t("view_standings")} {"\u2197"}
                 </Link>

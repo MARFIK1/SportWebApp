@@ -34,11 +34,11 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
     const visibleDates = dates.slice(start, end);
 
     return (
-        <div className="flex items-center justify-center gap-1 py-4">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white/85 px-3 py-3 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-gray-700/70 dark:bg-gray-900/65 dark:shadow-black/10">
             {start > 0 && (
                 <button
                     onClick={() => handleDateClick(dates[start - 1])}
-                    className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white px-2 text-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 text-lg text-gray-500 transition-colors hover:border-emerald-400/50 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:text-gray-400 dark:hover:border-emerald-500/40 dark:hover:text-white"
                     aria-label="Previous dates"
                 >
                     <span aria-hidden="true">&lt;</span>
@@ -47,18 +47,21 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
             {visibleDates.map((date) => {
                 const { label, weekday } = formatDay(date);
                 const isSelected = date === selectedDate;
+                const isToday = date === todayIso;
                 return (
                     <button
                         key={date}
                         onClick={() => handleDateClick(date)}
                         aria-pressed={isSelected}
-                        className={`flex flex-col items-center px-4 py-2 rounded-lg min-w-[80px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                        className={`flex min-w-[88px] flex-col items-center rounded-xl border px-4 py-3 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                             isSelected
-                                ? "bg-emerald-600 text-white"
-                                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700"
+                                ? "border-emerald-500 bg-emerald-600 text-white shadow-lg shadow-emerald-950/20 dark:shadow-emerald-950/30"
+                                : isToday
+                                    ? "border-emerald-300 bg-emerald-50 text-gray-900 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-white dark:hover:bg-emerald-500/15"
+                                    : "border-transparent text-gray-500 hover:border-gray-200 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:border-gray-700 dark:hover:bg-gray-800 dark:hover:text-white"
                         }`}
                     >
-                        {weekday && <span className="text-xs">{weekday}</span>}
+                        {weekday && <span className={`text-[11px] tracking-[0.18em] ${isSelected ? "text-white/80" : "text-gray-400 dark:text-gray-500"}`}>{weekday}</span>}
                         <span className="text-sm font-bold">{label}</span>
                     </button>
                 );
@@ -66,7 +69,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
             {end < dates.length && (
                 <button
                     onClick={() => handleDateClick(dates[end])}
-                    className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white px-2 text-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 text-lg text-gray-500 transition-colors hover:border-emerald-400/50 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:text-gray-400 dark:hover:border-emerald-500/40 dark:hover:text-white"
                     aria-label="Next dates"
                 >
                     <span aria-hidden="true">&gt;</span>

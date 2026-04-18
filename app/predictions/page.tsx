@@ -89,16 +89,19 @@ export default async function Predictions({ searchParams }: PageProps) {
     return (
         <div className="flex flex-col w-full max-w-[1600px] mx-auto px-6 py-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-5 text-center">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t("total_matches_today")}</div>
+                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10">
+                    <div className="absolute inset-y-0 left-0 w-1 bg-emerald-400" />
+                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-[0.22em] mb-2">{t("total_matches_today")}</div>
                     <div className="text-4xl font-bold text-gray-900 dark:text-white">{report.summary.total_matches}</div>
                 </div>
-                <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-5 text-center">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t("consensus_accuracy")}</div>
+                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10">
+                    <div className="absolute inset-y-0 left-0 w-1 bg-cyan-400" />
+                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-[0.22em] mb-2">{t("consensus_accuracy")}</div>
                     <div className="text-4xl font-bold text-emerald-400">{consensusAcc?.accuracy_pct ?? 0}%</div>
                 </div>
-                <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-5 text-center">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t("best_model_day")}</div>
+                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10">
+                    <div className="absolute inset-y-0 left-0 w-1 bg-emerald-400" />
+                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-[0.22em] mb-2">{t("best_model_day")}</div>
                     <div className="text-2xl font-bold text-gray-900 dark:text-white">{bestModel?.[0] ?? t("empty_placeholder")}</div>
                     <div className="text-sm text-emerald-400">{bestModel?.[1]?.accuracy_pct ?? 0}%</div>
                 </div>
