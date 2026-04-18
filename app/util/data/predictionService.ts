@@ -3,7 +3,43 @@ import path from "path";
 import { cache } from "../serverCache";
 import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
-import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction } from "@/types/predictions";
+import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
+
+type RawPredictionMatch = Omit<PredictionMatch, "predictions"> & {
+    predictions: Record<string, ModelPrediction>;
+    consensus?: ConsensusPrediction;
+};
+
+type RawPredictionReport = Omit<PredictionReport, "matches"> & {
+    matches: RawPredictionMatch[];
+};
+
+function normalizePredictionMatch(match: RawPredictionMatch): PredictionMatch {
+    const predictions = match.predictions as PredictionMatch["predictions"];
+    if ("consensus" in predictions) {
+        return match as unknown as PredictionMatch;
+    }
+
+    if (!match.consensus) {
+        return { ...match, predictions } as PredictionMatch;
+    }
+
+    return {
+        ...match,
+        predictions: {
+            ...match.predictions,
+            consensus: match.consensus,
+        } as PredictionMatch["predictions"],
+    };
+}
+
+function normalizePredictionReport(report: RawPredictionReport | null): PredictionReport | null {
+    if (!report) return null;
+    return {
+        ...report,
+        matches: report.matches.map(normalizePredictionMatch),
+    };
+}
 
 function reportDirs(): string[] {
     const env = process.env.SOFASCORE_REPORTS_DIR;
@@ -18,8 +54,8 @@ function reportDirs(): string[] {
 
 function readPredictionReportInDateDir(dateDir: string): PredictionReport | null {
     return (
-        readJson<PredictionReport>(path.join(dateDir, "predictions_finished.json")) ??
-        readJson<PredictionReport>(path.join(dateDir, "predictions_unfinished.json"))
+        normalizePredictionReport(readJson<RawPredictionReport>(path.join(dateDir, "predictions_finished.json"))) ??
+        normalizePredictionReport(readJson<RawPredictionReport>(path.join(dateDir, "predictions_unfinished.json")))
     );
 }
 
@@ -80,6 +116,24 @@ export function getMatchesByLeague(report: PredictionReport, league: string): Pr
 
 export function getModelAccuracySummary(report: PredictionReport): Record<string, ModelAccuracy> {
     return report.summary.model_accuracy;
+}
+
+export function computeConsensusAccuracy(matches: PredictionMatch[]): ModelAccuracy {
+    const finished = matches.filter((m) => m.status === "finished" && m.actual_result);
+    let correct = 0;
+
+    for (const match of finished) {
+        const consensus = match.predictions.consensus as ConsensusPrediction | undefined;
+        if (consensus?.correct) correct++;
+    }
+
+    const total = finished.length;
+    return {
+        correct,
+        incorrect: Math.max(0, total - correct),
+        total,
+        accuracy_pct: total > 0 ? Math.round((correct / total) * 1000) / 10 : 0,
+    };
 }
 
 export interface ModelComparisonRow {

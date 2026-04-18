@@ -11,28 +11,42 @@ import MatchPredictions from "./MatchPredictions";
 import MatchStatistics from "./MatchStatistics";
 import { getServerT } from "@/app/util/i18n/getLocale";
 
-const STAT_MAP: [string, string, string][] = [
-    ["Ball Possession", "home_ballpossession", "away_ballpossession"],
-    ["Expected Goals (xG)", "home_xg", "away_xg"],
-    ["Total Shots", "home_totalshotsongoal", "away_totalshotsongoal"],
-    ["Shots on Goal", "home_shotsongoal", "away_shotsongoal"],
-    ["Shots off Goal", "home_shotsoffgoal", "away_shotsoffgoal"],
-    ["Blocked Shots", "home_blockedscoringattempt", "away_blockedscoringattempt"],
-    ["Corner Kicks", "home_cornerkicks", "away_cornerkicks"],
-    ["Fouls", "home_fouls", "away_fouls"],
-    ["Yellow Cards", "home_yellowcards", "away_yellowcards"],
-    ["Goalkeeper Saves", "home_goalkeepersaves", "away_goalkeepersaves"],
-    ["Total Passes", "home_passes", "away_passes"],
-    ["Accurate Passes", "home_accuratepasses", "away_accuratepasses"],
-    ["Tackles", "home_totaltackle", "away_totaltackle"],
+interface StatDefinition {
+    label: string;
+    homeKeys: string[];
+    awayKeys: string[];
+}
+
+const STAT_MAP: StatDefinition[] = [
+    { label: "Ball Possession", homeKeys: ["home_ballpossession"], awayKeys: ["away_ballpossession"] },
+    { label: "Expected Goals (xG)", homeKeys: ["home_expectedgoals", "home_xg"], awayKeys: ["away_expectedgoals", "away_xg"] },
+    { label: "Total Shots", homeKeys: ["home_totalshotsongoal"], awayKeys: ["away_totalshotsongoal"] },
+    { label: "Shots on Goal", homeKeys: ["home_shotsongoal"], awayKeys: ["away_shotsongoal"] },
+    { label: "Shots off Goal", homeKeys: ["home_shotsoffgoal"], awayKeys: ["away_shotsoffgoal"] },
+    { label: "Blocked Shots", homeKeys: ["home_blockedscoringattempt"], awayKeys: ["away_blockedscoringattempt"] },
+    { label: "Corner Kicks", homeKeys: ["home_cornerkicks"], awayKeys: ["away_cornerkicks"] },
+    { label: "Fouls", homeKeys: ["home_fouls"], awayKeys: ["away_fouls"] },
+    { label: "Yellow Cards", homeKeys: ["home_yellowcards"], awayKeys: ["away_yellowcards"] },
+    { label: "Goalkeeper Saves", homeKeys: ["home_goalkeepersaves"], awayKeys: ["away_goalkeepersaves"] },
+    { label: "Total Passes", homeKeys: ["home_passes"], awayKeys: ["away_passes"] },
+    { label: "Accurate Passes", homeKeys: ["home_accuratepasses"], awayKeys: ["away_accuratepasses"] },
+    { label: "Tackles", homeKeys: ["home_totaltackle"], awayKeys: ["away_totaltackle"] },
 ];
+
+function readStatValue(raw: Record<string, unknown>, keys: string[]): number | null {
+    for (const key of keys) {
+        const value = raw[key];
+        if (typeof value === "number") return value;
+    }
+    return null;
+}
 
 function buildMatchStats(m: SofascoreMatch): { type: string; homeValue: number; awayValue: number }[] {
     const raw = m as unknown as Record<string, unknown>;
     const stats: { type: string; homeValue: number; awayValue: number }[] = [];
-    for (const [label, hKey, aKey] of STAT_MAP) {
-        const hVal = raw[hKey] as number | null;
-        const aVal = raw[aKey] as number | null;
+    for (const { label, homeKeys, awayKeys } of STAT_MAP) {
+        const hVal = readStatValue(raw, homeKeys);
+        const aVal = readStatValue(raw, awayKeys);
         if (hVal !== null || aVal !== null) {
             stats.push({ type: label, homeValue: hVal ?? 0, awayValue: aVal ?? 0 });
         }
@@ -171,7 +185,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                                                 PEN: {match.home_score_pen} - {match.away_score_pen}
                                             </span>
                                         )}
-                                        {match.home_score_ht !== null && match.away_score_ht !== null && (
+                                        {match.home_score_ht != null && match.away_score_ht != null && (
                                             <span className="text-xs text-gray-400 dark:text-gray-500">
                                                 HT: {match.home_score_ht} - {match.away_score_ht}
                                             </span>

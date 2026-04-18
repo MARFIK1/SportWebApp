@@ -6,6 +6,7 @@ import {
     loadComparisonSummary,
     computeAccuracyOverTime,
     computeResultTypeAccuracy,
+    computeConsensusAccuracy,
 } from "../util/data/predictionService";
 import { resolveCompetitionByDataPath } from "../util/league/leagueRegistry";
 import { loadAllSeasons } from "../util/data/dataService";
@@ -76,7 +77,7 @@ export default async function Predictions({ searchParams }: PageProps) {
         };
     }).sort((a, b) => a.priority - b.priority);
 
-    const consensusAcc = report.summary.model_accuracy["consensus"];
+    const consensusAcc = computeConsensusAccuracy(report.matches);
     const bestModel = Object.entries(report.summary.model_accuracy)
         .filter(([key]) => key !== "consensus")
         .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct)[0];

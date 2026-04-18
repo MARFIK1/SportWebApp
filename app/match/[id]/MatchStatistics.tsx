@@ -30,8 +30,8 @@ export default function MatchStatistics({ stats }: { stats: StatItem[] }) {
             <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("match_statistics")}</h3>
             <div className="space-y-5">
                 {visible.map((stat) => {
-                    const total = stat.homeValue + stat.awayValue || 1;
-                    const homePct = (stat.homeValue / total) * 100;
+                    const total = stat.homeValue + stat.awayValue;
+                    const homePct = total > 0 ? (stat.homeValue / total) * 100 : 50;
                     const isPossession = stat.type === "Ball Possession";
 
                     return (

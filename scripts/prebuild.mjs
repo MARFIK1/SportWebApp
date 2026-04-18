@@ -19,6 +19,7 @@ const MATCH_FIELDS = new Set([
     "home_score_pen", "away_score_pen", "home_score_et", "away_score_et",
     "status", "date", "round", "season",
     "home_ballpossession", "away_ballpossession",
+    "home_expectedgoals", "away_expectedgoals",
     "home_xg", "away_xg",
     "home_totalshotsongoal", "away_totalshotsongoal",
     "home_shotsongoal", "away_shotsongoal",
