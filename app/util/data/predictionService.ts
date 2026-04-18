@@ -124,7 +124,7 @@ export function computeConsensusAccuracy(matches: PredictionMatch[]): ModelAccur
 
     for (const match of finished) {
         const consensus = match.predictions.consensus as ConsensusPrediction | undefined;
-        if (consensus?.correct) correct++;
+        if (consensus?.prediction === match.actual_result) correct++;
     }
 
     const total = finished.length;
