@@ -195,6 +195,7 @@ def find_matches_for_date(target_date: str) -> list:
                             total_corners = int(hc) + int(ac)
 
                         match_data = {
+                            'event_id': event_id,
                             'comp_type': comp_type,
                             'country': country,
                             'league': comp_name,
@@ -233,6 +234,8 @@ def find_matches_for_date(target_date: str) -> list:
                         match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{home}_{away}"
                         
                         if match_key in seen_matches:
+                            if event_id and not seen_matches[match_key].get('event_id'):
+                                seen_matches[match_key]['event_id'] = event_id
                             seen_matches[match_key]['features'] = match
                         else:
                             home_goals = match.get('label_home_goals')
@@ -240,6 +243,7 @@ def find_matches_for_date(target_date: str) -> list:
                             score = f"{home_goals}-{away_goals}" if home_goals is not None and away_goals is not None else None
                             
                             seen_matches[match_key] = {
+                                'event_id': event_id,
                                 'comp_type': comp_type,
                                 'country': country,
                                 'league': comp_name,
@@ -276,6 +280,7 @@ def find_matches_for_date(target_date: str) -> list:
 
                             if match_key not in seen_matches:
                                 match_entry = {
+                                    'event_id': event_id,
                                     'comp_type': comp_type,
                                     'country': country,
                                     'league': comp_name,
@@ -1273,6 +1278,51 @@ def map_result_to_label(result: str) -> str:
     return mapping.get(result, result)
 
 
+def _legacy_match_id(m: Dict) -> str:
+    comp_type = m.get('comp_type', 'league')
+    return f"{comp_type}_{m['country']}_{m['league']}_{m['home']}_vs_{m['away']}".replace(' ', '_')
+
+
+def _report_match_id(m: Dict) -> str:
+    event_id = m.get('event_id')
+    return str(event_id) if event_id is not None else _legacy_match_id(m)
+
+
+def _name_match_key(home: str, away: str) -> str:
+    return f"{home}_vs_{away}".replace(' ', '_').lower()
+
+
+def _event_match_key(event_id) -> Optional[str]:
+    if event_id is None or event_id == '':
+        return None
+    return f"event:{event_id}"
+
+
+def _source_match_keys(m: Dict) -> List[str]:
+    keys = []
+    event_key = _event_match_key(m.get('event_id'))
+    if event_key:
+        keys.append(event_key)
+    keys.append(_name_match_key(m['home'], m['away']))
+    return keys
+
+
+def _report_match_keys(m: Dict) -> List[str]:
+    keys = []
+    event_key = _event_match_key(m.get('event_id'))
+    if event_key:
+        keys.append(event_key)
+    keys.append(_name_match_key(m['home_team'], m['away_team']))
+    return keys
+
+
+def _find_by_keys(index: Dict[str, Dict], keys: List[str]) -> Optional[Dict]:
+    for key in keys:
+        if key in index:
+            return index[key]
+    return None
+
+
 def calculate_model_accuracy(matches: List[Dict]) -> Dict:
     accuracy = {}
     
@@ -1294,10 +1344,11 @@ def calculate_model_accuracy(matches: List[Dict]) -> Dict:
                 continue
             
             preds = m.get('predictions', {})
-            if model not in preds:
+            pred_data = (m.get('consensus') or preds.get('consensus', {})) if model == 'consensus' else preds.get(model)
+            if not pred_data:
                 continue
             
-            pred = preds[model].get('prediction')
+            pred = pred_data.get('prediction')
             actual = m['actual_result']
             
             if pred and actual:
@@ -1326,7 +1377,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         preds = r['predictions']
         
         comp_type = m.get('comp_type', 'league')
-        match_id = f"{comp_type}_{m['country']}_{m['league']}_{m['home']}_vs_{m['away']}".replace(' ', '_')
+        match_id = _report_match_id(m)
         
         is_finished = m.get('result') is not None
         actual_result = map_result_to_label(m['result']) if m.get('result') else None
@@ -1394,6 +1445,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
 
         match_entry = {
             'id': match_id,
+            'event_id': m.get('event_id'),
             'league': f"{m['country']}/{m['league']}",
             'comp_type': comp_type,
             'home_team': m['home'],
@@ -1451,26 +1503,27 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
 
 
 def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
-    def _match_key(home, away):
-        """Normal key for deduplication - team names only."""
-        return f"{home}_vs_{away}".replace(' ', '_').lower()
-    
     new_by_key = {}
     for r in new_results:
         m = r['match']
-        key = _match_key(m['home'], m['away'])
-        new_by_key[key] = r
+        for key in _source_match_keys(m):
+            new_by_key.setdefault(key, r)
     
     existing_by_key = {}
     for match in report['matches']:
-        key = _match_key(match['home_team'], match['away_team'])
-        existing_by_key[key] = match
+        for key in _report_match_keys(match):
+            existing_by_key.setdefault(key, match)
     
-    for key, match in existing_by_key.items():
-        if key not in new_by_key:
+    updated_new_keys = set()
+    for match in report['matches']:
+        r = _find_by_keys(new_by_key, _report_match_keys(match))
+        if not r:
             continue
-        r = new_by_key[key]
         m = r['match']
+        updated_new_keys.update(_source_match_keys(m))
+
+        if m.get('event_id') and not match.get('event_id'):
+            match['event_id'] = m.get('event_id')
         
         if m.get('score') and not match.get('actual_score'):
             match['actual_score'] = m.get('score')
@@ -1515,17 +1568,20 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
                     existing_cons['agreement'] = t_cons.get('agreement', existing_cons.get('agreement'))
                     existing_cons['agreement_pct'] = t_cons.get('agreement_pct', existing_cons.get('agreement_pct'))
 
-    for key, r in new_by_key.items():
-        if key in existing_by_key:
+    for r in new_results:
+        m = r['match']
+        keys = _source_match_keys(m)
+        if any(key in updated_new_keys for key in keys):
+            continue
+        if _find_by_keys(existing_by_key, keys):
             continue
         
-        m = r['match']
         preds = r['predictions']
         
         is_finished = m.get('result') is not None
         actual_result = map_result_to_label(m['result']) if m.get('result') else None
         comp_type = m.get('comp_type', 'league')
-        match_id = f"{comp_type}_{m['country']}_{m['league']}_{m['home']}_vs_{m['away']}".replace(' ', '_')
+        match_id = _report_match_id(m)
         
         predictions_data = {}
         for model_name, pred_data in preds.items():
@@ -1550,6 +1606,7 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
         
         new_entry = {
             'id': match_id,
+            'event_id': m.get('event_id'),
             'league': f"{m['country']}/{m['league']}",
             'comp_type': comp_type,
             'home_team': m['home'],
@@ -1836,24 +1893,28 @@ def main():
         print(f"\nRe-predicting {len(matches)} matches...")
         results = predict_matches(matches, predictor)
 
+        results_by_key = {}
+        for r in results:
+            for key in _source_match_keys(r['match']):
+                results_by_key.setdefault(key, r)
+
         for match_entry in existing_report.get('matches', []):
-            _mk = lambda h, a: f"{h}_vs_{a}".replace(' ', '_').lower()
-            key = _mk(match_entry['home_team'], match_entry['away_team'])
-            for r in results:
-                m = r['match']
-                r_key = _mk(m['home'], m['away'])
-                if r_key == key:
-                    match_entry['predictions'] = r.get('predictions', {})
-                    match_entry['consensus'] = r.get('consensus', {})
-                    if match_entry.get('actual_result'):
-                        actual = match_entry['actual_result']
-                        for pred_data in match_entry['predictions'].values():
-                            if pred_data.get('prediction'):
-                                pred_data['correct'] = (pred_data['prediction'] == actual)
-                        cons = match_entry.get('consensus', {})
-                        if cons.get('prediction'):
-                            cons['correct'] = (cons['prediction'] == actual)
-                    break
+            r = _find_by_keys(results_by_key, _report_match_keys(match_entry))
+            if not r:
+                continue
+            m = r['match']
+            if m.get('event_id') and not match_entry.get('event_id'):
+                match_entry['event_id'] = m.get('event_id')
+            match_entry['predictions'] = r.get('predictions', {})
+            match_entry['consensus'] = r.get('consensus', {})
+            if match_entry.get('actual_result'):
+                actual = match_entry['actual_result']
+                for pred_data in match_entry['predictions'].values():
+                    if pred_data.get('prediction'):
+                        pred_data['correct'] = (pred_data['prediction'] == actual)
+                cons = match_entry.get('consensus', {})
+                if cons.get('prediction'):
+                    cons['correct'] = (cons['prediction'] == actual)
 
         existing_report['summary']['model_accuracy'] = calculate_model_accuracy(existing_report['matches'])
         report_path = save_report(existing_report, target_date)
@@ -1866,25 +1927,28 @@ def main():
         existing_report = load_existing_report(target_date)
         if existing_report:
             matches = find_matches_for_date(target_date)
-            _mk = lambda h, a: f"{h}_vs_{a}".replace(' ', '_').lower()
+            matches_by_key = {}
+            for m_data in matches:
+                for key in _source_match_keys(m_data):
+                    matches_by_key.setdefault(key, m_data)
             for match_entry in existing_report.get('matches', []):
                 if match_entry.get('status') == 'finished':
                     continue
-                key = _mk(match_entry['home_team'], match_entry['away_team'])
-                for m_data in matches:
-                    m_key = _mk(m_data['home'], m_data['away'])
-                    if m_key == key and m_data.get('result'):
-                        actual_result = map_result_to_label(m_data['result'])
-                        match_entry['status'] = 'finished'
-                        match_entry['actual_result'] = actual_result
-                        match_entry['actual_score'] = m_data.get('score')
-                        for model_name, pred_data in match_entry.get('predictions', {}).items():
-                            if pred_data.get('prediction'):
-                                pred_data['correct'] = (pred_data['prediction'] == actual_result)
-                        cons = match_entry.get('consensus', {})
-                        if cons.get('prediction'):
-                            cons['correct'] = (cons['prediction'] == actual_result)
-                        break
+                m_data = _find_by_keys(matches_by_key, _report_match_keys(match_entry))
+                if not m_data or not m_data.get('result'):
+                    continue
+                if m_data.get('event_id') and not match_entry.get('event_id'):
+                    match_entry['event_id'] = m_data.get('event_id')
+                actual_result = map_result_to_label(m_data['result'])
+                match_entry['status'] = 'finished'
+                match_entry['actual_result'] = actual_result
+                match_entry['actual_score'] = m_data.get('score')
+                for model_name, pred_data in match_entry.get('predictions', {}).items():
+                    if pred_data.get('prediction'):
+                        pred_data['correct'] = (pred_data['prediction'] == actual_result)
+                cons = match_entry.get('consensus', {})
+                if cons.get('prediction'):
+                    cons['correct'] = (cons['prediction'] == actual_result)
 
             from datetime import datetime as _dt
             if _dt.strptime(target_date, '%Y-%m-%d').date() < _dt.now().date():

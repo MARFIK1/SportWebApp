@@ -5,10 +5,11 @@ import {
     computeAccuracyOverTime,
     computeConsensusAccuracy,
     computeResultTypeAccuracy,
+    getMatchPrediction,
     loadPredictionReport,
     loadComparisonSummary,
 } from "@/app/util/data/predictionService";
-import type { MatchResult, ModelAccuracy, PredictionMatch } from "@/types/predictions";
+import type { MatchResult, ModelAccuracy, PredictionMatch, PredictionReport } from "@/types/predictions";
 
 const mockedFs = fs as jest.Mocked<typeof fs>;
 
@@ -38,6 +39,7 @@ interface TestPredictionReport {
         actual_score: null;
         actual_cards: null;
         actual_corners: null;
+        event_id?: number | null;
         referee_name: null;
         predictions: Record<string, unknown>;
         consensus: unknown;
@@ -190,6 +192,23 @@ describe("prediction report normalization", () => {
             prediction: "HOME",
             agreement: "1/1",
         });
+    });
+
+    it("finds a match by event_id before falling back to the report id", () => {
+        const r1 = report("2025-01-01", {}, [
+            { actual: "HOME", predictions: { LightGBM: "HOME" } },
+            { actual: "AWAY", predictions: { LightGBM: "AWAY" } },
+        ]);
+        r1.matches[0].id = "legacy-id";
+        r1.matches[0].event_id = 12345;
+        r1.matches[1].id = "12345";
+        r1.matches[1].event_id = 67890;
+
+        const byEventId = getMatchPrediction(r1 as unknown as PredictionReport, 12345);
+        const byLegacyId = getMatchPrediction(r1 as unknown as PredictionReport, "legacy-id");
+
+        expect(byEventId?.event_id).toBe(12345);
+        expect(byLegacyId?.id).toBe("legacy-id");
     });
 });
 

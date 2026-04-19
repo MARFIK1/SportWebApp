@@ -39,6 +39,7 @@ export interface MarketPrediction {
 
 export interface PredictionMatch {
     id: string;
+    event_id?: number | null;
     league: string;
     comp_type: string;
     home_team: string;

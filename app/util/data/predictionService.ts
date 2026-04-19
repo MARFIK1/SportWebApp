@@ -106,8 +106,14 @@ export function getLatestReportDate(): string | null {
     return dates.length > 0 ? dates[dates.length - 1] : null;
 }
 
-export function getMatchPrediction(report: PredictionReport, matchId: string): PredictionMatch | undefined {
-    return report.matches.find((m) => m.id === matchId);
+export function getMatchPrediction(report: PredictionReport, matchId: string | number): PredictionMatch | undefined {
+    const numericId = typeof matchId === "number" ? matchId : Number.parseInt(matchId, 10);
+    if (Number.isFinite(numericId)) {
+        const byEventId = report.matches.find((m) => m.event_id === numericId);
+        if (byEventId) return byEventId;
+    }
+
+    return report.matches.find((m) => m.id === String(matchId));
 }
 
 export function getMatchesByLeague(report: PredictionReport, league: string): PredictionMatch[] {
