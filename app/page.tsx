@@ -8,7 +8,7 @@ import { getServerT } from "./util/i18n/getLocale";
 
 export const metadata: Metadata = {
     title: "Home",
-    description: "Daily football matches with ML predictions across 44 competitions: live scores, consensus picks, and model accuracy for each fixture.",
+    description: "Daily football matches with ML predictions across 44 competitions: results, consensus picks, and model accuracy for each fixture.",
 };
 
 interface PageProps {

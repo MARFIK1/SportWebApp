@@ -3,8 +3,8 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
-import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
-import { PredictionMatch, ModelPrediction, ConsensusPrediction, AnalysisMatch } from "@/types/predictions";
+import { loadPredictionReport, loadAnalysisReport, getMatchPrediction } from "@/app/util/data/predictionService";
+import { PredictionMatch, PredictionReport, ModelPrediction, ConsensusPrediction, AnalysisMatch } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { teamLogoUrl } from "@/app/util/urls";
 import MatchPredictions from "./MatchPredictions";
@@ -59,8 +59,8 @@ interface PageProps {
     searchParams: { date?: string };
 }
 
-function findPredictionMatch(report: { matches: PredictionMatch[] }, homeTeam: string, awayTeam: string): PredictionMatch | undefined {
-    return report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
+function findPredictionMatch(report: PredictionReport, eventId: number, homeTeam: string, awayTeam: string): PredictionMatch | undefined {
+    return getMatchPrediction(report, eventId) ?? report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
 }
 
 function maxProbability(probs: Record<string, number> | undefined): number {
@@ -103,7 +103,7 @@ export default async function Match({ params, searchParams }: PageProps) {
 
     const predReport = loadPredictionReport(date);
     const analysisReport = loadAnalysisReport(date);
-    const predMatch = predReport ? findPredictionMatch(predReport, match.home_team, match.away_team) : null;
+    const predMatch = predReport ? findPredictionMatch(predReport, eventId, match.home_team, match.away_team) : null;
 
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const analysis = analysisReport?.matches?.[analysisKey] ?? null;

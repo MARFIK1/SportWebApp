@@ -20,7 +20,7 @@ function getLeagueAccuracy(matches: PredictionMatch[]): { correct: number; total
     let correct = 0;
     for (const m of finished) {
         const consensus = m.predictions.consensus as ConsensusPrediction;
-        if (consensus?.correct) correct++;
+        if (consensus?.prediction === m.actual_result) correct++;
     }
 
     return { correct, total: finished.length };
@@ -42,7 +42,7 @@ export default function LeagueSection({ league, leagueName, slug, matches, teamI
                         match={match}
                         homeTeamId={teamIds[match.home_team] ?? null}
                         awayTeamId={teamIds[match.away_team] ?? null}
-                        eventId={eventIds[`${match.home_team}_vs_${match.away_team}_${selectedDate}`] ?? null}
+                        eventId={match.event_id ?? eventIds[`${match.home_team}_vs_${match.away_team}_${selectedDate}`] ?? null}
                         date={selectedDate}
                     />
                 ))}

@@ -42,7 +42,7 @@ function getPredictionLabel(match: PredictionMatch, t: (key: string) => string):
 function isPredictionCorrect(match: PredictionMatch): boolean | null {
     const consensus = match.predictions.consensus as ConsensusPrediction;
     if (!consensus?.prediction || match.status !== "finished" || !match.actual_result) return null;
-    return consensus.correct;
+    return consensus.prediction === match.actual_result;
 }
 
 export default function MatchCard({ match, homeTeamId, awayTeamId, eventId, date }: MatchCardProps) {
