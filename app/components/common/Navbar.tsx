@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { SunIcon, MoonIcon } from "@heroicons/react/24/outline";
 import type { SearchTeam, SearchPlayer } from "@/app/util/data/dataService";
@@ -14,9 +15,11 @@ export default function Navbar({ teamsData, playersData }: { teamsData: SearchTe
         <div className="flex justify-between items-center w-full">
             <div className="flex items-center">
                 <Link href="/" className="flex items-center">
-                    <img
+                    <Image
                         src="/logo.png"
                         alt="logo"
+                        width={96}
+                        height={96}
                         className="w-24 object-cover rounded-full"
                     />
                 </Link>

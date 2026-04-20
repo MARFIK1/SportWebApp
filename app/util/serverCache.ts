@@ -4,8 +4,9 @@ import * as React from "react";
 // In non-server environments (jest/jsdom) React.cache is undefined, so fall
 // back to a passthrough - per-request memoization is a server-side concern
 // and tests don't need it.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type CacheFn = <T extends (...args: any[]) => any>(fn: T) => T;
+type CacheFn = <Args extends unknown[], Return>(
+    fn: (...args: Args) => Return
+) => (...args: Args) => Return;
 
 const reactCache = (React as unknown as { cache?: CacheFn }).cache;
 

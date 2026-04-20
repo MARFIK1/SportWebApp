@@ -27,9 +27,7 @@ export default function LanguageProvider({ children, initial }: { children: Reac
     useEffect(() => {
         const stored = localStorage.getItem("locale") as Locale | null;
         if (stored === "en" || stored === "pl") {
-            if (stored !== locale) {
-                setLocaleState(stored);
-            }
+            setLocaleState((current) => stored === current ? current : stored);
         }
     }, []);
 
