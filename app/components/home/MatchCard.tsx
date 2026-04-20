@@ -45,8 +45,8 @@ function isPredictionCorrect(match: PredictionMatch): boolean | null {
     return consensus.prediction === match.actual_result;
 }
 
-export default function MatchCard({ match, homeTeamId, awayTeamId, eventId, date }: MatchCardProps) {
-    const t = getServerT();
+export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId, date }: MatchCardProps) {
+    const t = await getServerT();
     const isFinished = match.status === "finished";
     const prediction = getPredictionLabel(match, t);
     const score = match.actual_score?.split("-").map((s) => s.trim());

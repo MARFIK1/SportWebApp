@@ -46,7 +46,7 @@ export default async function PlayerPage({ params }: PageProps) {
     const competitions = getAllCompetitions();
     const result = Number.isFinite(playerId) ? findPlayerInCompetitions(playerId, competitions) : null;
 
-    const t = getServerT();
+    const t = await getServerT();
 
     if (!result) {
         return (

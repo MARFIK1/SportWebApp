@@ -14,10 +14,8 @@ const nextConfig = {
             },
         ];
     },
-    experimental: {
-        outputFileTracingIncludes: {
-            "/": [".data/**/*"],
-        },
+    outputFileTracingIncludes: {
+        "/": [".data/**/*"],
     },
     images: {
         unoptimized: true,

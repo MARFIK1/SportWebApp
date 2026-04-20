@@ -43,7 +43,7 @@ export default async function Predictions({ searchParams }: PageProps) {
     const selectedDate = searchParams.date || dates[dates.length - 1] || "";
     const report = selectedDate ? loadPredictionReport(selectedDate) : null;
 
-    const t = getServerT();
+    const t = await getServerT();
 
     if (!report || dates.length === 0) {
         return (
@@ -121,7 +121,6 @@ export default async function Predictions({ searchParams }: PageProps) {
                         matches={report.matches}
                         leagues={leagues}
                         teamIds={teamIds}
-                        dayAccuracy={report.summary.model_accuracy}
                     />
                 </div>
 

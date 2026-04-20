@@ -32,8 +32,8 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
     const leagues = getLeagues();
     const { teams, players } = buildSearchData(leagues);
-    const locale = getServerLocale();
-    const theme = getServerTheme();
+    const locale = await getServerLocale();
+    const theme = await getServerTheme();
 
     return (
         <html lang={locale} className={theme === "dark" ? "dark" : ""}>

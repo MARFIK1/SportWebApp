@@ -122,7 +122,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function LeaguePage({ params, searchParams }: PageProps) {
-    const t = getServerT();
+    const t = await getServerT();
     const competition = getCompetitionBySlug(params.slug);
 
     if (!competition) {

@@ -173,7 +173,9 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
                                 shape={(props: BarShapeProps) => {
                                     const payload = props.payload as { model?: string } | undefined;
                                     const model = typeof payload?.model === "string" ? payload.model : "";
-                                    const { isActive: _a, option: _o, ...rectProps } = props;
+                                    const { isActive, option, ...rectProps } = props;
+                                    void isActive;
+                                    void option;
                                     return <Rectangle {...rectProps} fill={colorFor(model)} />;
                                 }}
                             />

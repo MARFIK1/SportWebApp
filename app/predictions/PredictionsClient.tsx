@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import Image from "next/image";
-import { PredictionMatch, ModelPrediction, ConsensusPrediction, ModelAccuracy } from "@/types/predictions";
+import { PredictionMatch, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
 import { teamLogoUrl } from "@/app/util/urls";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 
@@ -9,10 +9,9 @@ interface PredictionsClientProps {
     matches: PredictionMatch[];
     leagues: { dataPath: string; name: string; count: number }[];
     teamIds: Record<string, number>;
-    dayAccuracy: Record<string, ModelAccuracy>;
 }
 
-export default function PredictionsClient({ matches, leagues, teamIds, dayAccuracy }: PredictionsClientProps) {
+export default function PredictionsClient({ matches, leagues, teamIds }: PredictionsClientProps) {
     const { t } = useLanguage();
     const [selectedLeague, setSelectedLeague] = useState<string>("all");
     const [expandedMatch, setExpandedMatch] = useState<string | null>(null);

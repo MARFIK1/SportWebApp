@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
-import { findTeamData, getTeamSquad, type TeamCompetitionData, type PlayerInfo } from "@/app/util/data/dataService";
+import { findTeamData, getTeamSquad, type PlayerInfo } from "@/app/util/data/dataService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
@@ -38,7 +38,7 @@ export default async function TeamPage({ params }: PageProps) {
         ? findTeamData(teamId, competitions)
         : { teamName: "", data: [] };
 
-    const t = getServerT();
+    const t = await getServerT();
 
     if (!teamName || data.length === 0) {
         return (

@@ -37,7 +37,7 @@ export default async function Home({ searchParams }: PageProps) {
     const selectedDate = searchParams.date || dates[dates.length - 1] || "";
     const report = selectedDate ? loadPredictionReport(selectedDate) : null;
 
-    const t = getServerT();
+    const t = await getServerT();
 
     if (!report || dates.length === 0) {
         return (
@@ -90,7 +90,6 @@ export default async function Home({ searchParams }: PageProps) {
                 {leagueSections.map(({ dataPath, leagueName, slug, matches }) => (
                     <LeagueSection
                         key={dataPath}
-                        league={dataPath}
                         leagueName={leagueName}
                         slug={slug}
                         matches={matches}

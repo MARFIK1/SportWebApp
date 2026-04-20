@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
 import { loadPredictionReport, loadAnalysisReport, getMatchPrediction } from "@/app/util/data/predictionService";
-import { PredictionMatch, PredictionReport, ModelPrediction, ConsensusPrediction, AnalysisMatch } from "@/types/predictions";
+import { PredictionMatch, PredictionReport, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { teamLogoUrl } from "@/app/util/urls";
 import MatchPredictions from "./MatchPredictions";
@@ -88,7 +88,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     const competitions = getAllCompetitions();
     const result = Number.isFinite(eventId) ? findMatchInCompetitions(eventId, competitions) : null;
 
-    const t = getServerT();
+    const t = await getServerT();
 
     if (!result) {
         return (
@@ -133,9 +133,11 @@ export default async function Match({ params, searchParams }: PageProps) {
     for (const m of h2h) {
         const homeIsHome = m.home_team_id === match.home_team_id;
         if (m.home_score! > m.away_score!) {
-            homeIsHome ? h2hStats.homeWins++ : h2hStats.awayWins++;
+            if (homeIsHome) h2hStats.homeWins++;
+            else h2hStats.awayWins++;
         } else if (m.home_score! < m.away_score!) {
-            homeIsHome ? h2hStats.awayWins++ : h2hStats.homeWins++;
+            if (homeIsHome) h2hStats.awayWins++;
+            else h2hStats.homeWins++;
         } else {
             h2hStats.draws++;
         }

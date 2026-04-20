@@ -6,8 +6,8 @@ interface MatchPredictionsProps {
     matchFinished: boolean;
 }
 
-export default function MatchPredictions({ models, matchFinished }: MatchPredictionsProps) {
-    const t = getServerT();
+export default async function MatchPredictions({ models, matchFinished }: MatchPredictionsProps) {
+    const t = await getServerT();
 
     return (
         <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mt-8">

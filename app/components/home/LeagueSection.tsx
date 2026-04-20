@@ -4,7 +4,6 @@ import MatchCard from "./MatchCard";
 import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface LeagueSectionProps {
-    league: string;
     leagueName: string;
     slug: string;
     matches: PredictionMatch[];
@@ -26,8 +25,8 @@ function getLeagueAccuracy(matches: PredictionMatch[]): { correct: number; total
     return { correct, total: finished.length };
 }
 
-export default function LeagueSection({ league, leagueName, slug, matches, teamIds, eventIds, selectedDate }: LeagueSectionProps) {
-    const t = getServerT();
+export default async function LeagueSection({ leagueName, slug, matches, teamIds, eventIds, selectedDate }: LeagueSectionProps) {
+    const t = await getServerT();
     const accuracy = getLeagueAccuracy(matches);
 
     const finished = matches.filter((m) => m.status === "finished");
