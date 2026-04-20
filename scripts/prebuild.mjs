@@ -78,6 +78,39 @@ function ensureDir(dir) {
     fs.mkdirSync(dir, { recursive: true });
 }
 
+function removePathWithRetry(targetPath) {
+    try {
+        fs.rmSync(targetPath, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 200,
+        });
+        return;
+    } catch (err) {
+        const stalePath = targetPath + ".stale-" + Date.now();
+        try {
+            fs.renameSync(targetPath, stalePath);
+            fs.rmSync(stalePath, {
+                recursive: true,
+                force: true,
+                maxRetries: 5,
+                retryDelay: 200,
+            });
+            return;
+        } catch {
+            throw err;
+        }
+    }
+}
+
+function resetDir(dir) {
+    ensureDir(dir);
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        removePathWithRetry(path.join(dir, entry.name));
+    }
+}
+
 function copyDir(src, dest) {
     if (!fs.existsSync(src)) return;
     ensureDir(dest);
@@ -146,10 +179,11 @@ if (!fs.existsSync(SOURCE_DATA)) {
     process.exit(0);
 }
 
-if (fs.existsSync(OUT_DIR)) {
-    fs.rmSync(OUT_DIR, { recursive: true });
+if (process.env.PREBUILD_CLEAN === "1" || process.env.PREBUILD_CLEAN === "true") {
+    resetDir(OUT_DIR);
+} else {
+    ensureDir(OUT_DIR);
 }
-ensureDir(OUT_DIR);
 
 let totalMatches = 0;
 let totalPlayers = 0;
