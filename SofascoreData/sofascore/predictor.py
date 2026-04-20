@@ -39,6 +39,11 @@ from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
 import optuna
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
+try:
+    from sklearn.frozen import FrozenEstimator
+except ImportError:
+    FrozenEstimator = None
+
 
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
 
@@ -674,12 +679,50 @@ class UniversalPredictor:
             sample_weights = sample_weights * temporal_weights
             print(f"Temporal weighting: decay=365d, range=[{temporal_weights.min():.3f}, {temporal_weights.max():.3f}]")
 
+        X_model_train = X_train
+        y_model_train = y_train
+        sample_weights_model = sample_weights
+        X_cal_raw = None
+        X_cal_scaled = None
+        y_cal = None
+
+        min_model_rows = max(200, config.get('num_classes', 2) * 50)
+        desired_cal_size = max(200, int(len(X_train) * 0.15))
+        max_cal_size = max(0, len(X_train) - min_model_rows)
+        cal_size = min(desired_cal_size, max_cal_size)
+
+        if cal_size >= max(50, config.get('num_classes', 2) * 10):
+            if train_dates is not None:
+                sorted_dates = pd.to_datetime(train_dates.loc[X_train.index], errors='coerce')
+                sorted_idx = sorted_dates.sort_values().index
+                cal_idx = list(sorted_idx[-cal_size:])
+            else:
+                rng = np.random.RandomState(42)
+                cal_pos = rng.permutation(len(X_train))[:cal_size]
+                cal_idx = list(X_train.iloc[cal_pos].index)
+
+            cal_idx_set = set(cal_idx)
+            fit_idx = [idx for idx in X_train.index if idx not in cal_idx_set]
+            candidate_y = y_train.loc[fit_idx]
+
+            if candidate_y.nunique() == y_train.nunique():
+                weights_by_index = pd.Series(sample_weights, index=X_train.index)
+                X_model_train = X_train.loc[fit_idx]
+                y_model_train = candidate_y
+                sample_weights_model = weights_by_index.loc[fit_idx].values
+                X_cal_raw = X_train.loc[cal_idx]
+                X_cal_scaled = scaler.transform(X_cal_raw)
+                y_cal = y_train.loc[cal_idx]
+                print(f"Calibration holdout: train={len(X_model_train)}, cal={len(X_cal_raw)}")
+            else:
+                print("Calibration holdout skipped: not all classes remain in training split")
+
         xgb_tuned, lgb_tuned = self._optuna_tune(
-            X_train, y_train, sample_weights, target, n_trials=50
+            X_model_train, y_model_train, sample_weights_model, target, n_trials=50
         )
 
         model_configs = self._build_model_configs(
-            target, y_train=y_train,
+            target, y_train=y_model_train,
             xgb_params=xgb_tuned, lgb_params=lgb_tuned,
         )
 
@@ -692,7 +735,7 @@ class UniversalPredictor:
 
         print(f"\n  Training models...")
         for name, mc in model_configs.items():
-            X_tr = X_train_scaled if mc['scaled'] else X_train
+            X_tr = scaler.transform(X_model_train) if mc['scaled'] else X_model_train
             X_te = X_test_scaled if mc['scaled'] else X_test
 
             base_model = mc['model']
@@ -704,9 +747,9 @@ class UniversalPredictor:
 
             try:
                 if mc.get('sample_weight'):
-                    base_model.fit(X_tr, y_train, sample_weight=sample_weights)
+                    base_model.fit(X_tr, y_model_train, sample_weight=sample_weights_model)
                 else:
-                    base_model.fit(X_tr, y_train)
+                    base_model.fit(X_tr, y_model_train)
                 model = base_model
             except Exception as e:
                 print(f"    {name}: training failed ({e})")
@@ -759,22 +802,23 @@ class UniversalPredictor:
             }
             print(f"    {name}: acc={acc:.1%} f1={f1:.1%} [{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
 
-        cal_size = max(200, int(len(X_train) * 0.15))
-        cal_indices = np.random.RandomState(42).permutation(len(X_train))[:cal_size]
-        X_cal_raw = X_train.iloc[cal_indices]
-        X_cal_scaled = scaler.transform(X_cal_raw)
-        y_cal = y_train.iloc[cal_indices]
-
-        print(f"\n  Calibrating models (cal set={cal_size})...")
-        for name, mdata in list(self.models[target].items()):
-            try:
-                cal_model = CalibratedClassifierCV(mdata['model'], cv='prefit', method='sigmoid')
-                X_cal = X_cal_scaled if mdata['scaled'] else X_cal_raw
-                cal_model.fit(X_cal, y_cal)
-                self.models[target][name]['calibrated_model'] = cal_model
-                print(f"{name}: calibrated (sigmoid/Platt)")
-            except Exception as e:
-                print(f"{name}: calibration skipped ({e})")
+        if X_cal_raw is not None and y_cal is not None:
+            print(f"\n  Calibrating models (holdout={len(X_cal_raw)})...")
+            for name, mdata in list(self.models[target].items()):
+                try:
+                    if FrozenEstimator is not None:
+                        estimator = FrozenEstimator(mdata['model'])
+                        cal_model = CalibratedClassifierCV(estimator, method='sigmoid')
+                    else:
+                        cal_model = CalibratedClassifierCV(mdata['model'], cv='prefit', method='sigmoid')
+                    X_cal = X_cal_scaled if mdata['scaled'] else X_cal_raw
+                    cal_model.fit(X_cal, y_cal)
+                    self.models[target][name]['calibrated_model'] = cal_model
+                    print(f"{name}: calibrated (sigmoid/Platt)")
+                except Exception as e:
+                    print(f"{name}: calibration skipped ({e})")
+        else:
+            print("\n  Calibration skipped: not enough training rows for a separate holdout")
         feature_importances = {}
         for name in ['Random Forest', 'XGBoost', 'LightGBM']:
             if name in self.models[target]:
@@ -842,7 +886,7 @@ class UniversalPredictor:
                 estimators=ensemble_estimators, voting='soft',
                 weights=ensemble_weights, n_jobs=-1,
             )
-            ensemble.fit(X_train, y_train, sample_weight=sample_weights)
+            ensemble.fit(X_model_train, y_model_train, sample_weight=sample_weights_model)
             ens_time = time.time() - t0
             cpu_after_ens = proc.cpu_times()
             cpu_ens_s = (cpu_after_ens.user - cpu_before_ens.user) + (cpu_after_ens.system - cpu_before_ens.system)
@@ -888,7 +932,7 @@ class UniversalPredictor:
                 final_estimator=LogisticRegression(max_iter=1000, C=1.0),
                 cv=3, stack_method='predict_proba', n_jobs=-1
             )
-            stacking.fit(X_train, y_train, sample_weight=sample_weights)
+            stacking.fit(X_model_train, y_model_train, sample_weight=sample_weights_model)
             stack_time = time.time() - t0
             cpu_after_st = proc.cpu_times()
             cpu_stack_s = (cpu_after_st.user - cpu_before_st.user) + (cpu_after_st.system - cpu_before_st.system)
@@ -924,13 +968,13 @@ class UniversalPredictor:
                 lstm_meta = dict(meta)
                 for col in ['home_team', 'away_team']:
                     if col in df.columns:
-                        lstm_meta[col] = df[col].loc[X_train.index]
+                        lstm_meta[col] = df[col].loc[X_model_train.index]
 
                 proc = psutil.Process()
                 mem_before_lstm = proc.memory_info().rss / 1024 / 1024
                 cpu_before_lstm = proc.cpu_times()
                 t0 = time.time()
-                lstm.fit(X_train, y_train, meta=lstm_meta)
+                lstm.fit(X_model_train, y_model_train, meta=lstm_meta)
                 lstm_time = time.time() - t0
                 cpu_after_lstm = proc.cpu_times()
                 cpu_lstm_s = (cpu_after_lstm.user - cpu_before_lstm.user) + (cpu_after_lstm.system - cpu_before_lstm.system)
@@ -944,15 +988,15 @@ class UniversalPredictor:
                     lstm_size_kb = os.path.getsize(tmp_path) / 1024
                     os.unlink(tmp_path)
 
-                    X_full = pd.concat([X_train, X_test])
+                    X_full = pd.concat([X_model_train, X_test])
                     lstm_full_meta = dict(meta)
                     for col in ['home_team', 'away_team']:
                         if col in df.columns:
                             lstm_full_meta[col] = df[col].loc[X_full.index]
                     home_seqs_all, away_seqs_all, valid_all = lstm.build_sequences(
-                        X_full, meta=lstm_full_meta
+                        X_full, meta=lstm_full_meta, update_history=False
                     )
-                    n_tr = len(X_train)
+                    n_tr = len(X_model_train)
                     home_seqs_te = home_seqs_all[n_tr:]
                     away_seqs_te = away_seqs_all[n_tr:]
                     valid_te = valid_all[n_tr:]

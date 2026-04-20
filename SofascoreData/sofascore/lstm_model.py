@@ -148,7 +148,7 @@ else:
             self.team_history = {}
             self._fitted = False
 
-        def build_sequences(self, df, y=None, meta=None):
+        def build_sequences(self, df, y=None, meta=None, update_history=True):
             """Build (home_seqs, away_seqs, valid_mask) from a DataFrame of features."""
             team_matches = defaultdict(list)
 
@@ -172,7 +172,8 @@ else:
             for team in team_matches:
                 team_matches[team].sort(key=lambda x: x[0])
 
-            self.team_history = dict(team_matches)
+            if update_history:
+                self.team_history = dict(team_matches)
 
             n = len(df)
             home_seqs = np.zeros((n, SEQ_LEN, INPUT_SIZE), dtype=np.float32)
@@ -323,7 +324,9 @@ else:
             if isinstance(df_or_seqs, tuple) and len(df_or_seqs) == 2:
                 home_seqs, away_seqs = df_or_seqs
             else:
-                home_seqs, away_seqs, valid = self.build_sequences(df_or_seqs, meta=meta)
+                home_seqs, away_seqs, valid = self.build_sequences(
+                    df_or_seqs, meta=meta, update_history=False
+                )
                 result = np.ones((len(valid), self.num_classes)) / self.num_classes
                 if valid.sum() > 0:
                     h_valid = home_seqs[valid]

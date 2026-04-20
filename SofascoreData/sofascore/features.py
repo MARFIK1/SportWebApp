@@ -14,6 +14,24 @@ class MLFeatureGenerator:
     def _safe_get(self, data, key, default=0):
         val = data.get(key)
         return val if val is not None else default
+
+    def _get_xg(self, match, side, default=0):
+        """Read xG from all known Sofascore field variants."""
+        for key in (
+            f'{side}_xg',
+            f'{side}_expectedgoals',
+            f'{side}_expected_goals',
+            f'{side}_expectedGoals',
+        ):
+            val = match.get(key)
+            if val not in (None, ''):
+                try:
+                    val = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if val != 0:
+                    return val
+        return default
     
     def _get_team_matches(self, team, matches, before_date):
         return [
@@ -77,8 +95,8 @@ class MLFeatureGenerator:
             if is_home:
                 stats['goals_for'] += hs
                 stats['goals_against'] += as_
-                stats['xg_for'] += self._safe_get(m, 'home_xg')
-                stats['xg_against'] += self._safe_get(m, 'away_xg')
+                stats['xg_for'] += self._get_xg(m, 'home')
+                stats['xg_against'] += self._get_xg(m, 'away')
                 stats['shots'] += self._safe_get(m, 'home_totalshotsongoal')
                 stats['shots_on_target'] += self._safe_get(m, 'home_shotsongoal')
                 if as_ == 0: stats['clean_sheets'] += 1
@@ -88,8 +106,8 @@ class MLFeatureGenerator:
             else:
                 stats['goals_for'] += as_
                 stats['goals_against'] += hs
-                stats['xg_for'] += self._safe_get(m, 'away_xg')
-                stats['xg_against'] += self._safe_get(m, 'home_xg')
+                stats['xg_for'] += self._get_xg(m, 'away')
+                stats['xg_against'] += self._get_xg(m, 'home')
                 stats['shots'] += self._safe_get(m, 'away_totalshotsongoal')
                 stats['shots_on_target'] += self._safe_get(m, 'away_shotsongoal')
                 if hs == 0: stats['clean_sheets'] += 1
@@ -218,12 +236,12 @@ class MLFeatureGenerator:
                 
                 if is_home:
                     goals += hs
-                    xg += self._safe_get(m, 'home_xg')
+                    xg += self._get_xg(m, 'home')
                     if hs > as_: points += 3
                     elif hs == as_: points += 1
                 else:
                     goals += as_
-                    xg += self._safe_get(m, 'away_xg')
+                    xg += self._get_xg(m, 'away')
                     if as_ > hs: points += 3
                     elif hs == as_: points += 1
             return points, goals, xg
@@ -541,16 +559,16 @@ class MLFeatureGenerator:
             if is_home:
                 w_gf += hs * w
                 w_ga += as_ * w
-                w_xg_f += self._safe_get(m, 'home_xg') * w
-                w_xg_a += self._safe_get(m, 'away_xg') * w
+                w_xg_f += self._get_xg(m, 'home') * w
+                w_xg_a += self._get_xg(m, 'away') * w
                 if as_ == 0: w_cs += w
                 if hs > as_: w_points += 3 * w
                 elif hs == as_: w_points += w
             else:
                 w_gf += as_ * w
                 w_ga += hs * w
-                w_xg_f += self._safe_get(m, 'away_xg') * w
-                w_xg_a += self._safe_get(m, 'home_xg') * w
+                w_xg_f += self._get_xg(m, 'away') * w
+                w_xg_a += self._get_xg(m, 'home') * w
                 if hs == 0: w_cs += w
                 if as_ > hs: w_points += 3 * w
                 elif hs == as_: w_points += w
