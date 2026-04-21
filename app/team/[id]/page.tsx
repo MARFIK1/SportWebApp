@@ -8,7 +8,7 @@ import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface PageProps {
-    params: { id: string };
+    params: Promise<{ id: string }>;
 }
 
 const POSITION_KEYS: Record<string, string> = {
@@ -21,7 +21,8 @@ const POSITION_KEYS: Record<string, string> = {
 const POSITION_ORDER = ["G", "D", "M", "F"];
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-    const teamId = parseInt(params.id, 10);
+    const resolvedParams = await params;
+    const teamId = parseInt(resolvedParams.id, 10);
     if (!Number.isFinite(teamId)) return { title: "Team" };
     const { teamName } = findTeamData(teamId, getAllCompetitions());
     if (!teamName) return { title: "Team" };
@@ -32,7 +33,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function TeamPage({ params }: PageProps) {
-    const teamId = parseInt(params.id, 10);
+    const resolvedParams = await params;
+    const teamId = parseInt(resolvedParams.id, 10);
     const competitions = getAllCompetitions();
     const { teamName, data } = Number.isFinite(teamId)
         ? findTeamData(teamId, competitions)

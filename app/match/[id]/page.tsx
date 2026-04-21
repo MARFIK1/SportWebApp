@@ -55,8 +55,8 @@ function buildMatchStats(m: SofascoreMatch): { type: string; homeValue: number; 
 }
 
 interface PageProps {
-    params: { id: string };
-    searchParams: { date?: string };
+    params: Promise<{ id: string }>;
+    searchParams: Promise<{ date?: string }>;
 }
 
 function findPredictionMatch(report: PredictionReport, eventId: number, homeTeam: string, awayTeam: string): PredictionMatch | undefined {
@@ -71,7 +71,8 @@ function maxProbability(probs: Record<string, number> | undefined): number {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-    const eventId = parseInt(params.id, 10);
+    const resolvedParams = await params;
+    const eventId = parseInt(resolvedParams.id, 10);
     if (!Number.isFinite(eventId)) return { title: "Match" };
     const result = findMatchInCompetitions(eventId, getAllCompetitions());
     if (!result) return { title: "Match" };
@@ -84,7 +85,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function Match({ params, searchParams }: PageProps) {
-    const eventId = parseInt(params.id, 10);
+    const resolvedParams = await params;
+    const resolvedSearchParams = await searchParams;
+    const eventId = parseInt(resolvedParams.id, 10);
     const competitions = getAllCompetitions();
     const result = Number.isFinite(eventId) ? findMatchInCompetitions(eventId, competitions) : null;
 
@@ -99,7 +102,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     }
 
     const { match, competition } = result;
-    const date = searchParams.date || match.date.slice(0, 10);
+    const date = resolvedSearchParams.date || match.date.slice(0, 10);
 
     const predReport = loadPredictionReport(date);
     const analysisReport = loadAnalysisReport(date);

@@ -8,7 +8,7 @@ import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface PageProps {
-    params: { id: string };
+    params: Promise<{ id: string }>;
 }
 
 const POSITION_KEYS: Record<string, string> = {
@@ -30,7 +30,8 @@ function calculateAge(dateOfBirth: string): number {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-    const playerId = parseInt(params.id, 10);
+    const resolvedParams = await params;
+    const playerId = parseInt(resolvedParams.id, 10);
     if (!Number.isFinite(playerId)) return { title: "Player" };
     const result = findPlayerInCompetitions(playerId, getAllCompetitions());
     if (!result) return { title: "Player" };
@@ -42,7 +43,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function PlayerPage({ params }: PageProps) {
-    const playerId = parseInt(params.id, 10);
+    const resolvedParams = await params;
+    const playerId = parseInt(resolvedParams.id, 10);
     const competitions = getAllCompetitions();
     const result = Number.isFinite(playerId) ? findPlayerInCompetitions(playerId, competitions) : null;
 

@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-    searchParams: { date?: string };
+    searchParams: Promise<{ date?: string }>;
 }
 
 function buildTeamIdsForReport(leagueDataPaths: string[]): Record<string, number> {
@@ -39,8 +39,9 @@ function buildTeamIdsForReport(leagueDataPaths: string[]): Record<string, number
 }
 
 export default async function Predictions({ searchParams }: PageProps) {
+    const resolvedSearchParams = await searchParams;
     const dates = listReportDates();
-    const selectedDate = searchParams.date || dates[dates.length - 1] || "";
+    const selectedDate = resolvedSearchParams.date || dates[dates.length - 1] || "";
     const report = selectedDate ? loadPredictionReport(selectedDate) : null;
 
     const t = await getServerT();

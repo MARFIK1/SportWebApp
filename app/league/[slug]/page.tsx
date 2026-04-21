@@ -8,8 +8,8 @@ import { teamLogoUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface PageProps {
-    params: { slug: string };
-    searchParams: { season?: string };
+    params: Promise<{ slug: string }>;
+    searchParams: Promise<{ season?: string }>;
 }
 
 // Detect groups via connected components - teams that played each other belong to the same group
@@ -113,7 +113,8 @@ function StandingsTable({ standings, t }: { standings: StandingRow[]; t: (key: s
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-    const competition = getCompetitionBySlug(params.slug);
+    const resolvedParams = await params;
+    const competition = getCompetitionBySlug(resolvedParams.slug);
     if (!competition) return { title: "League" };
     return {
         title: competition.name,
@@ -122,8 +123,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function LeaguePage({ params, searchParams }: PageProps) {
+    const resolvedParams = await params;
+    const resolvedSearchParams = await searchParams;
     const t = await getServerT();
-    const competition = getCompetitionBySlug(params.slug);
+    const competition = getCompetitionBySlug(resolvedParams.slug);
 
     if (!competition) {
         return (
@@ -140,7 +143,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
         if (m.season) seasonSet.add(m.season);
     }
     const seasons = Array.from(seasonSet).sort();
-    const selectedSeason = searchParams.season || (seasons.length > 0 ? seasons[seasons.length - 1] : "");
+    const selectedSeason = resolvedSearchParams.season || (seasons.length > 0 ? seasons[seasons.length - 1] : "");
     const seasonMatches = selectedSeason ? allMatches.filter((m) => m.season === selectedSeason) : allMatches;
 
     const groups = detectGroups(seasonMatches);
@@ -176,7 +179,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                     {seasons.map((s) => (
                         <Link
                             key={s}
-                            href={`/league/${params.slug}?season=${encodeURIComponent(s)}`}
+                            href={`/league/${resolvedParams.slug}?season=${encodeURIComponent(s)}`}
                             className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors ${
                                 s === selectedSeason
                                     ? "bg-emerald-600 text-white"

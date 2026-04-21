@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 interface PageProps {
-    searchParams: { date?: string };
+    searchParams: Promise<{ date?: string }>;
 }
 
 function buildLookups(leagueDataPaths: string[]): { teamIds: Record<string, number>; eventIds: Record<string, number> } {
@@ -33,8 +33,9 @@ function buildLookups(leagueDataPaths: string[]): { teamIds: Record<string, numb
 }
 
 export default async function Home({ searchParams }: PageProps) {
+    const resolvedSearchParams = await searchParams;
     const dates = listReportDates();
-    const selectedDate = searchParams.date || dates[dates.length - 1] || "";
+    const selectedDate = resolvedSearchParams.date || dates[dates.length - 1] || "";
     const report = selectedDate ? loadPredictionReport(selectedDate) : null;
 
     const t = await getServerT();
