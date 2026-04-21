@@ -9,6 +9,12 @@ interface MatchPredictionsProps {
 export default async function MatchPredictions({ models, matchFinished }: MatchPredictionsProps) {
     const t = await getServerT();
 
+    const outcomeLabel = (outcome: ModelPrediction["prediction"]) => {
+        if (outcome === "HOME") return t("home_short");
+        if (outcome === "AWAY") return t("away_short");
+        return t("draw_short");
+    };
+
     return (
         <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mt-8">
             <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("all_model_predictions")}</h3>
@@ -37,7 +43,7 @@ export default async function MatchPredictions({ models, matchFinished }: MatchP
                                         pred.prediction === "AWAY" ? "bg-blue-600/30 text-blue-400" :
                                         "bg-yellow-600/30 text-yellow-400"
                                     }`}>
-                                        {pred.prediction}
+                                        {outcomeLabel(pred.prediction)}
                                     </span>
                                 </td>
                                 <td className="text-center py-3 px-2 text-gray-700 dark:text-gray-300">{pred.probabilities.HOME?.toFixed(1)}%</td>

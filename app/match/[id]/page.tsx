@@ -70,6 +70,29 @@ function maxProbability(probs: Record<string, number> | undefined): number {
     return Math.max(...values);
 }
 
+function getOutcomeLabel(outcome: "HOME" | "DRAW" | "AWAY", t: (key: string) => string): string {
+    if (outcome === "HOME") return t("home_short");
+    if (outcome === "AWAY") return t("away_short");
+    return t("draw_short");
+}
+
+function getMarketLabel(key: string, t: (key: string) => string): string {
+    if (key === "btts") return t("btts_yes");
+    if (key === "over_2_5") return t("over_25");
+    if (key === "over_1_5") return t("over_15");
+    if (key === "corners_over_8_5") return t("corners_over_85");
+    if (key === "cards_over_3_5") return t("cards_over_35");
+    return key;
+}
+
+function getMarketPredictionLabel(value: string | number, t: (key: string) => string): string {
+    if (value === "YES") return t("yes");
+    if (value === "NO") return t("no");
+    if (value === "OVER") return t("over");
+    if (value === "UNDER") return t("under");
+    return String(value);
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const eventId = parseInt(resolvedParams.id, 10);
@@ -153,7 +176,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                 <span>/</span>
                 <Link href={`/?date=${date}`} className="hover:text-gray-900 dark:hover:text-white transition-colors">{competition.name}</Link>
                 <span>/</span>
-                <span className="text-gray-700 dark:text-gray-300">Round {match.round}</span>
+                <span className="text-gray-700 dark:text-gray-300">{t("round_label")} {match.round}</span>
             </div>
 
             <div className="flex flex-col lg:flex-row gap-8">
@@ -163,8 +186,8 @@ export default async function Match({ params, searchParams }: PageProps) {
                             {competition.country.toUpperCase()} {"\u2022"} {competition.name} {"\u2022"} {match.date.slice(0, 10)}
                         </div>
 
-                        <div className="flex items-center justify-center gap-8">
-                            <div className="flex flex-col items-center gap-3 w-[200px]">
+                        <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8">
+                            <div className="flex w-[140px] flex-col items-center gap-3 sm:w-[200px]">
                                 <Image
                                     src={teamLogoUrl(match.home_team_id)}
                                     alt={match.home_team}
@@ -187,12 +210,12 @@ export default async function Match({ params, searchParams }: PageProps) {
                                         </span>
                                         {match.home_score_pen != null && match.away_score_pen != null && (
                                             <span className="text-xs text-gray-500 dark:text-gray-400">
-                                                PEN: {match.home_score_pen} - {match.away_score_pen}
+                                                {t("penalties")}: {match.home_score_pen} - {match.away_score_pen}
                                             </span>
                                         )}
                                         {match.home_score_ht != null && match.away_score_ht != null && (
                                             <span className="text-xs text-gray-400 dark:text-gray-500">
-                                                HT: {match.home_score_ht} - {match.away_score_ht}
+                                                {t("half_time")}: {match.home_score_ht} - {match.away_score_ht}
                                             </span>
                                         )}
                                     </>
@@ -206,7 +229,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                                 )}
                             </div>
 
-                            <div className="flex flex-col items-center gap-3 w-[200px]">
+                            <div className="flex w-[140px] flex-col items-center gap-3 sm:w-[200px]">
                                 <Image
                                     src={teamLogoUrl(match.away_team_id)}
                                     alt={match.away_team}
@@ -298,7 +321,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                                         }`}
                                     >
                                         <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                                            {outcome === "HOME" ? "HOME" : outcome === "AWAY" ? "AWAY" : "DRAW"}
+                                            {getOutcomeLabel(outcome, t)}
                                         </div>
                                         <div className="text-xl font-bold">
                                             {(consensus.avg_probabilities?.[outcome] ?? 0).toFixed(0)}%
@@ -339,15 +362,15 @@ export default async function Match({ params, searchParams }: PageProps) {
                                     { key: "over_1_5", label: "Over 1.5" },
                                     { key: "corners_over_8_5", label: "Corners 8.5+" },
                                     { key: "cards_over_3_5", label: "Cards 3.5+" },
-                                ].map(({ key, label }) => {
+                                ].map(({ key }) => {
                                     const market = predMatch.market_predictions[key as keyof typeof predMatch.market_predictions];
                                     if (!market?.consensus) return null;
                                     const prob = maxProbability(market.consensus.avg_probabilities);
                                     return (
                                         <div key={key} className="bg-gray-100 dark:bg-gray-800 rounded-xl p-3">
-                                            <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</div>
+                                            <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{getMarketLabel(key, t)}</div>
                                             <div className="text-xl font-bold text-emerald-400">{prob.toFixed(0)}%</div>
-                                            <div className="text-xs text-gray-500 dark:text-gray-400">{market.consensus.prediction}</div>
+                                            <div className="text-xs text-gray-500 dark:text-gray-400">{getMarketPredictionLabel(market.consensus.prediction, t)}</div>
                                         </div>
                                     );
                                 })}

@@ -17,6 +17,22 @@ const PRIMARY_STATS = [
     "Expected Goals (xG)",
 ];
 
+const STAT_LABEL_KEYS: Record<string, string> = {
+    "Ball Possession": "ball_possession",
+    "Expected Goals (xG)": "expected_goals",
+    "Total Shots": "total_shots",
+    "Shots on Goal": "shots_on_goal",
+    "Shots off Goal": "shots_off_goal",
+    "Blocked Shots": "blocked_shots",
+    "Corner Kicks": "corner_kicks",
+    Fouls: "fouls",
+    "Yellow Cards": "yellow_cards",
+    "Goalkeeper Saves": "goalkeeper_saves",
+    "Total Passes": "total_passes",
+    "Accurate Passes": "accurate_passes",
+    Tackles: "tackles",
+};
+
 export default function MatchStatistics({ stats }: { stats: StatItem[] }) {
     const { t } = useLanguage();
     const [showAll, setShowAll] = useState(false);
@@ -33,6 +49,7 @@ export default function MatchStatistics({ stats }: { stats: StatItem[] }) {
                     const total = stat.homeValue + stat.awayValue;
                     const homePct = total > 0 ? (stat.homeValue / total) * 100 : 50;
                     const isPossession = stat.type === "Ball Possession";
+                    const statLabel = t(STAT_LABEL_KEYS[stat.type] ?? stat.type);
 
                     return (
                         <div key={stat.type}>
@@ -40,7 +57,7 @@ export default function MatchStatistics({ stats }: { stats: StatItem[] }) {
                                 <span className={`font-semibold ${stat.homeValue > stat.awayValue ? "text-gray-900 dark:text-white" : "text-gray-500 dark:text-gray-400"}`}>
                                     {isPossession ? `${stat.homeValue}%` : stat.homeValue}
                                 </span>
-                                <span className="text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider">{stat.type}</span>
+                                <span className="text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider">{statLabel}</span>
                                 <span className={`font-semibold ${stat.awayValue > stat.homeValue ? "text-gray-900 dark:text-white" : "text-gray-500 dark:text-gray-400"}`}>
                                     {isPossession ? `${stat.awayValue}%` : stat.awayValue}
                                 </span>

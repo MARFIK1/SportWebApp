@@ -34,12 +34,13 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
     const visibleDates = dates.slice(start, end);
 
     return (
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white/85 px-3 py-3 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-gray-700/70 dark:bg-gray-900/65 dark:shadow-black/10">
+        <div className="mx-auto w-full max-w-3xl overflow-x-auto pb-1">
+            <div className="flex min-w-max items-center justify-start gap-2 rounded-2xl border border-gray-200 bg-white/85 px-3 py-3 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-gray-700/70 dark:bg-gray-900/65 dark:shadow-black/10 sm:justify-center">
             {start > 0 && (
                 <button
                     onClick={() => handleDateClick(dates[start - 1])}
                     className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 text-lg text-gray-500 transition-colors hover:border-emerald-400/50 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:text-gray-400 dark:hover:border-emerald-500/40 dark:hover:text-white"
-                    aria-label="Previous dates"
+                    aria-label={t("previous_dates")}
                 >
                     <span aria-hidden="true">&lt;</span>
                 </button>
@@ -53,7 +54,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
                         key={date}
                         onClick={() => handleDateClick(date)}
                         aria-pressed={isSelected}
-                        className={`flex min-w-[88px] flex-col items-center rounded-xl border px-4 py-3 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                        className={`flex min-w-[72px] flex-col items-center rounded-xl border px-3 py-3 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:min-w-[88px] sm:px-4 ${
                             isSelected
                                 ? "border-emerald-500 bg-emerald-600 text-white shadow-lg shadow-emerald-950/20 dark:shadow-emerald-950/30"
                                 : isToday
@@ -70,11 +71,12 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
                 <button
                     onClick={() => handleDateClick(dates[end])}
                     className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 text-lg text-gray-500 transition-colors hover:border-emerald-400/50 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:text-gray-400 dark:hover:border-emerald-500/40 dark:hover:text-white"
-                    aria-label="Next dates"
+                    aria-label={t("next_dates")}
                 >
                     <span aria-hidden="true">&gt;</span>
                 </button>
             )}
+            </div>
         </div>
     );
 }
