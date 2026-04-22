@@ -4,12 +4,14 @@ import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
 import { loadPredictionReport, loadAnalysisReport, getMatchPrediction } from "@/app/util/data/predictionService";
-import { PredictionMatch, PredictionReport, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
+import { PredictionMatch, PredictionReport } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { teamLogoUrl } from "@/app/util/urls";
 import MatchPredictions from "./MatchPredictions";
 import MatchStatistics from "./MatchStatistics";
 import { getServerT } from "@/app/util/i18n/getLocale";
+import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
+import MatchPredictionSidebar from "./MatchPredictionSidebar";
 
 interface StatDefinition {
     label: string;
@@ -63,36 +65,6 @@ function findPredictionMatch(report: PredictionReport, eventId: number, homeTeam
     return getMatchPrediction(report, eventId) ?? report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
 }
 
-function maxProbability(probs: Record<string, number> | undefined): number {
-    if (!probs) return 0;
-    const values = Object.values(probs);
-    if (values.length === 0) return 0;
-    return Math.max(...values);
-}
-
-function getOutcomeLabel(outcome: "HOME" | "DRAW" | "AWAY", t: (key: string) => string): string {
-    if (outcome === "HOME") return t("home_short");
-    if (outcome === "AWAY") return t("away_short");
-    return t("draw_short");
-}
-
-function getMarketLabel(key: string, t: (key: string) => string): string {
-    if (key === "btts") return t("btts_yes");
-    if (key === "over_2_5") return t("over_25");
-    if (key === "over_1_5") return t("over_15");
-    if (key === "corners_over_8_5") return t("corners_over_85");
-    if (key === "cards_over_3_5") return t("cards_over_35");
-    return key;
-}
-
-function getMarketPredictionLabel(value: string | number, t: (key: string) => string): string {
-    if (value === "YES") return t("yes");
-    if (value === "NO") return t("no");
-    if (value === "OVER") return t("over");
-    if (value === "UNDER") return t("under");
-    return String(value);
-}
-
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const eventId = parseInt(resolvedParams.id, 10);
@@ -137,9 +109,6 @@ export default async function Match({ params, searchParams }: PageProps) {
     const isFinished = match.status === "finished";
     const matchStats = isFinished ? buildMatchStats(match) : [];
 
-    const consensus = predMatch?.predictions?.consensus as ConsensusPrediction | undefined;
-    const models = predMatch ? Object.entries(predMatch.predictions).filter(([key]) => key !== "consensus") as [string, ModelPrediction][] : [];
-
     const h2hMatches: SofascoreMatch[] = [];
     for (const comp of competitions) {
         const allMatches = loadAllSeasons(comp);
@@ -169,8 +138,8 @@ export default async function Match({ params, searchParams }: PageProps) {
         }
     }
 
-    return (
-        <div className="flex flex-col w-full max-w-[1400px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
+    const content = (
+        <>
             <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
                 <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
                 <span>/</span>
@@ -306,78 +275,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                 </div>
 
                 <div className="w-full lg:w-[400px] space-y-6">
-                    {consensus && (
-                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t("match_insight")}</h3>
-                                <span className="text-xs text-emerald-400 font-semibold">{t("consensus")}</span>
-                            </div>
-                            <div className="flex justify-between gap-3 mb-4">
-                                {(["HOME", "DRAW", "AWAY"] as const).map((outcome) => (
-                                    <div
-                                        key={outcome}
-                                        className={`flex-1 text-center p-3 rounded-xl ${
-                                            consensus.prediction === outcome ? "bg-emerald-600/30 border border-emerald-500" : "bg-gray-100 dark:bg-gray-800"
-                                        }`}
-                                    >
-                                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                                            {getOutcomeLabel(outcome, t)}
-                                        </div>
-                                        <div className="text-xl font-bold">
-                                            {(consensus.avg_probabilities?.[outcome] ?? 0).toFixed(0)}%
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500 dark:text-gray-400">{t("model_confidence")}</span>
-                                    <span className="text-gray-900 dark:text-white font-semibold">
-                                        {maxProbability(consensus.avg_probabilities).toFixed(0)}%
-                                    </span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500 dark:text-gray-400">{t("agreement")}</span>
-                                    <span className="text-gray-900 dark:text-white font-semibold">{consensus.agreement}</span>
-                                </div>
-                                {isFinished && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500 dark:text-gray-400">{t("result")}</span>
-                                        <span className={`font-semibold ${consensus.correct ? "text-emerald-400" : "text-red-400"}`}>
-                                            {consensus.correct ? t("correct") : t("incorrect")}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {predMatch?.market_predictions && (
-                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
-                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("advanced_markets")}</h3>
-                            <div className="grid grid-cols-2 gap-3">
-                                {[
-                                    { key: "btts", label: "BTTS (Yes)" },
-                                    { key: "over_2_5", label: "Over 2.5" },
-                                    { key: "over_1_5", label: "Over 1.5" },
-                                    { key: "corners_over_8_5", label: "Corners 8.5+" },
-                                    { key: "cards_over_3_5", label: "Cards 3.5+" },
-                                ].map(({ key }) => {
-                                    const market = predMatch.market_predictions[key as keyof typeof predMatch.market_predictions];
-                                    if (!market?.consensus) return null;
-                                    const prob = maxProbability(market.consensus.avg_probabilities);
-                                    return (
-                                        <div key={key} className="bg-gray-100 dark:bg-gray-800 rounded-xl p-3">
-                                            <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{getMarketLabel(key, t)}</div>
-                                            <div className="text-xl font-bold text-emerald-400">{prob.toFixed(0)}%</div>
-                                            <div className="text-xs text-gray-500 dark:text-gray-400">{getMarketPredictionLabel(market.consensus.prediction, t)}</div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-
+                    {predMatch && <MatchPredictionSidebar />}
                     {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
                         <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
                             <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("pre_match_analysis")}</h3>
@@ -436,8 +334,18 @@ export default async function Match({ params, searchParams }: PageProps) {
                 </div>
             </div>
 
-            {models.length > 0 && (
-                <MatchPredictions models={models} matchFinished={isFinished} />
+            {predMatch && <MatchPredictions />}
+        </>
+    );
+
+    return (
+        <div className="flex flex-col w-full max-w-[1400px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
+            {predMatch ? (
+                <MatchPredictionVariantProvider key={predMatch.id} match={predMatch} matchFinished={isFinished}>
+                    {content}
+                </MatchPredictionVariantProvider>
+            ) : (
+                content
             )}
         </div>
     );

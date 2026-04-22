@@ -29,6 +29,22 @@ sys.path.insert(0, str(Path(__file__).parent))
 from sofascore.features import MLFeatureGenerator
 
 REPORTS_DIR = Path(__file__).parent / 'reports'
+MODEL_VARIANT_CONFIG = {
+    'without_odds': {
+        'filename': 'universal_predictor.pkl',
+        'odds_used': False,
+    },
+    'with_odds': {
+        'filename': 'universal_predictor_with_odds.pkl',
+        'odds_used': True,
+    },
+}
+DEFAULT_PREDICTION_VARIANT = 'without_odds'
+ODDS_KEYS = [
+    'odds_home_win', 'odds_draw', 'odds_away_win',
+    'odds_over_2_5', 'odds_under_2_5',
+    'odds_btts_yes', 'odds_btts_no',
+]
 
 
 def safe_print(text):
@@ -41,34 +57,57 @@ def safe_print(text):
         print(ascii_text)
 
 
-def load_models():
+def _load_predictor_module():
     import importlib.util
-    
+
     spec = importlib.util.spec_from_file_location(
-        "predictor", 
+        "predictor",
         str(Path(__file__).parent / "sofascore" / "predictor.py")
     )
     predictor_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(predictor_module)
-    
+    return predictor_module
+
+
+def _create_predictor(predictor_class, data_dir: Path):
+    return predictor_class(str(data_dir))
+
+
+def _load_predictor_artifact(predictor_class, data_dir: Path, models_path: Path):
+    predictor = _create_predictor(predictor_class, data_dir)
+    predictor.load_models(str(models_path))
+    return predictor
+
+
+def load_models():
+    predictor_module = _load_predictor_module()
     UniversalPredictor = predictor_module.UniversalPredictor
-    
-    data_dir = str(Path(__file__).parent / "data")
-    predictor = UniversalPredictor(data_dir)
-    
-    models_path = Path(data_dir) / 'models' / 'universal_predictor.pkl'
-    if models_path.exists():
-        print(f"Loading models from {models_path}...")
-        predictor.load_models(str(models_path))
-    else:
-        print("No saved models found. Training from scratch...")
+
+    data_dir = Path(__file__).parent / "data"
+    predictors = {}
+
+    for variant_name, variant_config in MODEL_VARIANT_CONFIG.items():
+        models_path = data_dir / 'models' / variant_config['filename']
+
+        if models_path.exists():
+            print(f"Loading {variant_name} models from {models_path}...")
+            predictors[variant_name] = _load_predictor_artifact(UniversalPredictor, data_dir, models_path)
+            continue
+
+        if variant_name != DEFAULT_PREDICTION_VARIANT:
+            print(f"[WARN] No saved models found for variant '{variant_name}' at {models_path}")
+            continue
+
+        print("No saved default models found. Training from scratch...")
+        predictor = _create_predictor(UniversalPredictor, data_dir)
         df = predictor.load_all_leagues()
         predictor.train_all_models(df)
 
         models_path.parent.mkdir(exist_ok=True)
         predictor.save_models(str(models_path))
-    
-    return predictor
+        predictors[variant_name] = predictor
+
+    return predictors
 
 
 COMP_TYPES = ['league', 'cups', 'european', 'international']
@@ -297,14 +336,25 @@ def find_matches_for_date(target_date: str) -> list:
                                     'total_corners': None,
                                     'referee_name': match.get('referee_name'),
                                 }
-                                for ok in ['odds_home_win', 'odds_draw', 'odds_away_win',
-                                           'odds_over_2_5', 'odds_under_2_5',
-                                           'odds_btts_yes', 'odds_btts_no']:
+                                for ok in ODDS_KEYS:
                                     if match.get(ok):
                                         match_entry[ok] = match[ok]
                                 seen_matches[match_key] = match_entry
-                            elif match.get('referee_name') and not seen_matches[match_key].get('referee_name'):
-                                seen_matches[match_key]['referee_name'] = match['referee_name']
+                            else:
+                                existing_match = seen_matches[match_key]
+                                if match.get('event_id') and not existing_match.get('event_id'):
+                                    existing_match['event_id'] = match.get('event_id')
+                                if match.get('time') and not existing_match.get('start_time'):
+                                    existing_match['start_time'] = match.get('time', '')
+                                if match.get('home_team_id') and not existing_match.get('home_team_id'):
+                                    existing_match['home_team_id'] = match.get('home_team_id')
+                                if match.get('away_team_id') and not existing_match.get('away_team_id'):
+                                    existing_match['away_team_id'] = match.get('away_team_id')
+                                if match.get('referee_name') and not existing_match.get('referee_name'):
+                                    existing_match['referee_name'] = match['referee_name']
+                                for ok in ODDS_KEYS:
+                                    if match.get(ok) and not existing_match.get(ok):
+                                        existing_match[ok] = match[ok]
                 except Exception:
                     pass
     
@@ -909,7 +959,178 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
     return analysis
 
 
-def predict_matches(matches: list, predictor) -> list:
+def _get_missing_odds_features(features: Dict, predictor, target_name: str) -> List[str]:
+    feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
+    odds_cols = [col for col in feat_cols if col.startswith('odds_')]
+    return [col for col in odds_cols if (features.get(col) or 0) <= 0]
+
+
+def _split_target_predictions(all_target_preds: Dict) -> Dict:
+    preds = all_target_preds.get('result', {})
+
+    market_predictions = {}
+    for t_name, t_preds in all_target_preds.items():
+        if t_name != 'result':
+            market_predictions[t_name] = t_preds
+
+    consistency_pairs = [
+        ('over_1_5', 'over_2_5'),
+        ('corners_over_8_5', 'corners_over_10_5'),
+        ('cards_over_3_5', 'cards_over_4_5'),
+    ]
+    for lower_target, higher_target in consistency_pairs:
+        low_cons = market_predictions.get(lower_target, {}).get('consensus', {})
+        high_cons = market_predictions.get(higher_target, {}).get('consensus', {})
+        if not low_cons or not high_cons:
+            continue
+
+        low_pred = low_cons.get('prediction', '')
+        high_pred = high_cons.get('prediction', '')
+
+        if low_pred == 'UNDER' and high_pred == 'OVER':
+            low_agree = low_cons.get('agreement', 0)
+            high_agree = high_cons.get('agreement', 0)
+            if low_agree >= high_agree:
+                high_cons['prediction'] = 'UNDER'
+            else:
+                low_cons['prediction'] = 'OVER'
+
+        if high_cons.get('prediction') == 'OVER' and low_cons.get('prediction') == 'UNDER':
+            low_cons['prediction'] = 'OVER'
+
+        low_avg = low_cons.get('avg_probabilities', {})
+        high_avg = high_cons.get('avg_probabilities', {})
+        if low_avg and high_avg:
+            low_over = low_avg.get('OVER', 50)
+            high_over = high_avg.get('OVER', 50)
+            if high_over > low_over:
+                corrected = round((low_over + high_over) / 2, 1)
+                low_avg['OVER'] = round(max(corrected + 2, low_over), 1)
+                low_avg['UNDER'] = round(100 - low_avg['OVER'], 1)
+                high_avg['OVER'] = round(min(corrected - 2, high_over), 1)
+                high_avg['UNDER'] = round(100 - high_avg['OVER'], 1)
+
+    return {
+        'predictions': preds,
+        'market_predictions': market_predictions,
+    }
+
+
+def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_result: Optional[str]) -> Dict:
+    predictions_data = {}
+    for model_name, pred_data in preds.items():
+        if model_name == 'consensus':
+            continue
+
+        model_pred = pred_data.get('prediction')
+        is_correct = None
+        if actual_result and model_pred:
+            is_correct = (model_pred == actual_result)
+
+        predictions_data[model_name] = {
+            'prediction': model_pred,
+            'confidence': pred_data.get('confidence'),
+            'probabilities': pred_data.get('probabilities', {}),
+            'correct': is_correct
+        }
+
+    cons = preds.get('consensus', {})
+    cons_pred = cons.get('prediction')
+    cons_correct = None
+    if actual_result and cons_pred:
+        cons_correct = (cons_pred == actual_result)
+
+    consensus_data = {
+        'prediction': cons_pred,
+        'agreement': cons.get('agreement'),
+        'agreement_pct': cons.get('agreement_pct'),
+        'votes': cons.get('votes', {}),
+        'avg_probabilities': cons.get('avg_probabilities', {}),
+        'correct': cons_correct
+    }
+
+    market_data = {}
+    for target_name, target_preds in market_predictions.items():
+        target_models = {}
+        for model_name, pred_data in target_preds.items():
+            if model_name == 'consensus':
+                continue
+            target_models[model_name] = {
+                'prediction': pred_data.get('prediction'),
+                'confidence': pred_data.get('confidence'),
+                'probabilities': pred_data.get('probabilities', {}),
+            }
+        target_cons = target_preds.get('consensus', {})
+        market_data[target_name] = {
+            'models': target_models,
+            'consensus': {
+                'prediction': target_cons.get('prediction'),
+                'agreement': target_cons.get('agreement'),
+                'agreement_pct': target_cons.get('agreement_pct'),
+                'avg_probabilities': target_cons.get('avg_probabilities', {}),
+            },
+        }
+
+    payload = {
+        'predictions': predictions_data,
+        'consensus': consensus_data,
+    }
+    if market_data:
+        payload['market_predictions'] = market_data
+    return payload
+
+
+def _serialize_result_prediction_data(result: Dict, actual_result: Optional[str]) -> Dict:
+    default_variant = result.get('default_prediction_variant', DEFAULT_PREDICTION_VARIANT)
+    payload = _serialize_prediction_bundle(
+        result.get('predictions', {}),
+        result.get('market_predictions', {}),
+        actual_result,
+    )
+    payload['default_prediction_variant'] = default_variant
+
+    variants = {}
+    for variant_name, variant_data in result.get('prediction_variants', {}).items():
+        serialized_variant = _serialize_prediction_bundle(
+            variant_data.get('predictions', {}),
+            variant_data.get('market_predictions', {}),
+            actual_result,
+        )
+        serialized_variant['odds_used'] = bool(variant_data.get('odds_used'))
+        if variant_data.get('missing_odds_by_target'):
+            serialized_variant['missing_odds_by_target'] = {
+                target_name: list(missing_cols)
+                for target_name, missing_cols in variant_data['missing_odds_by_target'].items()
+            }
+        if variant_data.get('skipped_targets'):
+            serialized_variant['skipped_targets'] = list(variant_data['skipped_targets'])
+        variants[variant_name] = serialized_variant
+
+    if variants:
+        payload['prediction_variants'] = variants
+
+    return payload
+
+
+def _mark_match_prediction_correctness(match_entry: Dict, actual_result: str):
+    for pred_data in match_entry.get('predictions', {}).values():
+        if isinstance(pred_data, dict) and pred_data.get('prediction'):
+            pred_data['correct'] = (pred_data['prediction'] == actual_result)
+
+    consensus = match_entry.get('consensus', {})
+    if consensus.get('prediction'):
+        consensus['correct'] = (consensus['prediction'] == actual_result)
+
+    for variant_data in match_entry.get('prediction_variants', {}).values():
+        for pred_data in variant_data.get('predictions', {}).values():
+            if isinstance(pred_data, dict) and pred_data.get('prediction'):
+                pred_data['correct'] = (pred_data['prediction'] == actual_result)
+        variant_consensus = variant_data.get('consensus', {})
+        if variant_consensus.get('prediction'):
+            variant_consensus['correct'] = (variant_consensus['prediction'] == actual_result)
+
+
+def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
     results = []
     total = len(matches)
 
@@ -954,66 +1175,55 @@ def predict_matches(matches: list, predictor) -> list:
             print(f"    [SKIP] No features")
             continue
         
-        all_target_preds = {}
-        for target_name in predictor.models.keys():
-            feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
-            target_features = {col: features.get(col, 0) for col in feat_cols}
-            target_features['home_team'] = features.get('home_team', match.get('home', ''))
-            target_features['away_team'] = features.get('away_team', match.get('away', ''))
-            target_features['date'] = features.get('date', match.get('date', ''))
-            all_target_preds[target_name] = predictor.predict_match_all_models(target_features, target_name)
+        prediction_variants = {}
+        for variant_name, predictor in predictors.items():
+            all_target_preds = {}
+            missing_odds_by_target = {}
+            skipped_targets = []
 
-        preds = all_target_preds.get('result', {})
+            for target_name in predictor.models.keys():
+                missing_odds = _get_missing_odds_features(features, predictor, target_name)
+                if missing_odds:
+                    missing_odds_by_target[target_name] = missing_odds
 
-        market_predictions = {}
-        for t_name, t_preds in all_target_preds.items():
-            if t_name != 'result':
-                market_predictions[t_name] = t_preds
+                feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
+                target_features = {col: features.get(col, 0) for col in feat_cols}
+                target_features['home_team'] = features.get('home_team', match.get('home', ''))
+                target_features['away_team'] = features.get('away_team', match.get('away', ''))
+                target_features['date'] = features.get('date', match.get('date', ''))
+                try:
+                    all_target_preds[target_name] = predictor.predict_match_all_models(target_features, target_name)
+                except Exception as exc:
+                    skipped_targets.append(target_name)
+                    safe_print(f"    [WARN] {variant_name}/{target_name} prediction failed: {exc}")
 
-        _consistency_pairs = [
-            ('over_1_5', 'over_2_5'),
-            ('corners_over_8_5', 'corners_over_10_5'),
-            ('cards_over_3_5', 'cards_over_4_5'),
-        ]
-        for lower_target, higher_target in _consistency_pairs:
-            low_cons = market_predictions.get(lower_target, {}).get('consensus', {})
-            high_cons = market_predictions.get(higher_target, {}).get('consensus', {})
-            if not low_cons or not high_cons:
+            if 'result' not in all_target_preds:
                 continue
 
-            low_pred = low_cons.get('prediction', '')
-            high_pred = high_cons.get('prediction', '')
+            variant_payload = _split_target_predictions(all_target_preds)
+            variant_payload['odds_used'] = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
+            if missing_odds_by_target:
+                variant_payload['missing_odds_by_target'] = missing_odds_by_target
+            if skipped_targets:
+                variant_payload['skipped_targets'] = skipped_targets
+            prediction_variants[variant_name] = variant_payload
 
-            if low_pred == 'UNDER' and high_pred == 'OVER':
-                low_agree = low_cons.get('agreement', 0)
-                high_agree = high_cons.get('agreement', 0)
-                if low_agree >= high_agree:
-                    high_cons['prediction'] = 'UNDER'
-                else:
-                    low_cons['prediction'] = 'OVER'
+        if not prediction_variants:
+            print("    [SKIP] No prediction variants available")
+            continue
 
-            if high_cons.get('prediction') == 'OVER' and low_cons.get('prediction') == 'UNDER':
-                low_cons['prediction'] = 'OVER'
-
-            low_avg = low_cons.get('avg_probabilities', {})
-            high_avg = high_cons.get('avg_probabilities', {})
-            if low_avg and high_avg:
-                low_over = low_avg.get('OVER', 50)
-                high_over = high_avg.get('OVER', 50)
-                if high_over > low_over:
-                    corrected = round((low_over + high_over) / 2, 1)
-                    low_avg['OVER'] = round(max(corrected + 2, low_over), 1)
-                    low_avg['UNDER'] = round(100 - low_avg['OVER'], 1)
-                    high_avg['OVER'] = round(min(corrected - 2, high_over), 1)
-                    high_avg['UNDER'] = round(100 - high_avg['OVER'], 1)
+        default_variant = DEFAULT_PREDICTION_VARIANT if DEFAULT_PREDICTION_VARIANT in prediction_variants else next(iter(prediction_variants))
+        default_payload = prediction_variants[default_variant]
 
         hist = historical_cache.get(cache_key, [])
         match_analysis = compute_match_analysis(match, hist)
 
         results.append({
             'match': match,
-            'predictions': preds,
-            'market_predictions': market_predictions,
+            'default_prediction_variant': default_variant,
+            'prediction_variants': prediction_variants,
+            'predictions': default_payload['predictions'],
+            'market_predictions': default_payload['market_predictions'],
             'analysis': match_analysis,
         })
     
@@ -1374,7 +1584,6 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
     
     for r in results:
         m = r['match']
-        preds = r['predictions']
         
         comp_type = m.get('comp_type', 'league')
         match_id = _report_match_id(m)
@@ -1382,66 +1591,12 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         is_finished = m.get('result') is not None
         actual_result = map_result_to_label(m['result']) if m.get('result') else None
         
-        predictions_data = {}
-        for model_name, pred_data in preds.items():
-            if model_name == 'consensus':
-                continue
-            
-            model_pred = pred_data.get('prediction')
-            is_correct = None
-            if is_finished and model_pred and actual_result:
-                is_correct = (model_pred == actual_result)
-            
-            predictions_data[model_name] = {
-                'prediction': model_pred,
-                'confidence': pred_data.get('confidence'),
-                'probabilities': pred_data.get('probabilities', {}),
-                'correct': is_correct
-            }
-        
-        cons = preds.get('consensus', {})
-        cons_pred = cons.get('prediction')
-        cons_correct = None
-        if is_finished and cons_pred and actual_result:
-            cons_correct = (cons_pred == actual_result)
-        
-        consensus_data = {
-            'prediction': cons_pred,
-            'agreement': cons.get('agreement'),
-            'agreement_pct': cons.get('agreement_pct'),
-            'votes': cons.get('votes', {}),
-            'avg_probabilities': cons.get('avg_probabilities', {}),
-            'correct': cons_correct
-        }
-        
         if is_finished:
             match_status = 'finished'
         elif m.get('status') in ['postponed', 'inprogress']:
             match_status = m.get('status')
         else:
             match_status = 'upcoming'
-        
-        market_data = {}
-        for target_name, target_preds in r.get('market_predictions', {}).items():
-            target_models = {}
-            for model_name, pred_data in target_preds.items():
-                if model_name == 'consensus':
-                    continue
-                target_models[model_name] = {
-                    'prediction': pred_data.get('prediction'),
-                    'confidence': pred_data.get('confidence'),
-                    'probabilities': pred_data.get('probabilities', {}),
-                }
-            target_cons = target_preds.get('consensus', {})
-            market_data[target_name] = {
-                'models': target_models,
-                'consensus': {
-                    'prediction': target_cons.get('prediction'),
-                    'agreement': target_cons.get('agreement'),
-                    'agreement_pct': target_cons.get('agreement_pct'),
-                    'avg_probabilities': target_cons.get('avg_probabilities', {}),
-                },
-            }
 
         match_entry = {
             'id': match_id,
@@ -1457,11 +1612,8 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
-            'predictions': predictions_data,
-            'consensus': consensus_data,
         }
-        if market_data:
-            match_entry['market_predictions'] = market_data
+        match_entry.update(_serialize_result_prediction_data(r, actual_result))
 
         matches.append(match_entry)
 
@@ -1545,28 +1697,22 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
                 match['actual_cards'] = m['total_cards']
             if m.get('total_corners') is not None:
                 match['actual_corners'] = m['total_corners']
-            
-            for model_name, pred_data in match['predictions'].items():
-                if pred_data.get('prediction'):
-                    pred_data['correct'] = (pred_data['prediction'] == actual_result)
-            
-            if match['consensus'].get('prediction'):
-                match['consensus']['correct'] = (match['consensus']['prediction'] == actual_result)
+            _mark_match_prediction_correctness(match, actual_result)
         elif new_status in ['postponed', 'inprogress'] and match['status'] == 'upcoming':
             match['status'] = new_status
 
-        market_preds = r.get('market_predictions', {})
-        if market_preds and match.get('market_predictions'):
-            for t_name, t_data in market_preds.items():
-                if not isinstance(t_data, dict):
-                    continue
-                t_cons = t_data.get('consensus', {})
-                if t_name in match['market_predictions'] and t_cons:
-                    existing_cons = match['market_predictions'][t_name].get('consensus', {})
-                    existing_cons['prediction'] = t_cons.get('prediction', existing_cons.get('prediction'))
-                    existing_cons['avg_probabilities'] = t_cons.get('avg_probabilities', existing_cons.get('avg_probabilities', {}))
-                    existing_cons['agreement'] = t_cons.get('agreement', existing_cons.get('agreement'))
-                    existing_cons['agreement_pct'] = t_cons.get('agreement_pct', existing_cons.get('agreement_pct'))
+        serialized_predictions = _serialize_result_prediction_data(r, match.get('actual_result'))
+        match['predictions'] = serialized_predictions['predictions']
+        match['consensus'] = serialized_predictions['consensus']
+        match['default_prediction_variant'] = serialized_predictions.get('default_prediction_variant', DEFAULT_PREDICTION_VARIANT)
+        if 'market_predictions' in serialized_predictions:
+            match['market_predictions'] = serialized_predictions['market_predictions']
+        elif 'market_predictions' in match:
+            del match['market_predictions']
+        if 'prediction_variants' in serialized_predictions:
+            match['prediction_variants'] = serialized_predictions['prediction_variants']
+        elif 'prediction_variants' in match:
+            del match['prediction_variants']
 
     for r in new_results:
         m = r['match']
@@ -1576,33 +1722,10 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
         if _find_by_keys(existing_by_key, keys):
             continue
         
-        preds = r['predictions']
-        
         is_finished = m.get('result') is not None
         actual_result = map_result_to_label(m['result']) if m.get('result') else None
         comp_type = m.get('comp_type', 'league')
         match_id = _report_match_id(m)
-        
-        predictions_data = {}
-        for model_name, pred_data in preds.items():
-            if model_name == 'consensus':
-                continue
-            model_pred = pred_data.get('prediction')
-            is_correct = None
-            if is_finished and model_pred and actual_result:
-                is_correct = (model_pred == actual_result)
-            predictions_data[model_name] = {
-                'prediction': model_pred,
-                'confidence': pred_data.get('confidence'),
-                'probabilities': pred_data.get('probabilities', {}),
-                'correct': is_correct
-            }
-        
-        cons = preds.get('consensus', {})
-        cons_pred = cons.get('prediction')
-        cons_correct = None
-        if is_finished and cons_pred and actual_result:
-            cons_correct = (cons_pred == actual_result)
         
         new_entry = {
             'id': match_id,
@@ -1617,39 +1740,8 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
-            'predictions': predictions_data,
-            'consensus': {
-                'prediction': cons_pred,
-                'agreement': cons.get('agreement'),
-                'agreement_pct': cons.get('agreement_pct'),
-                'votes': cons.get('votes', {}),
-                'avg_probabilities': cons.get('avg_probabilities', {}),
-                'correct': cons_correct
-            },
         }
-        market_preds = r.get('market_predictions', {})
-        if market_preds:
-            new_entry['market_predictions'] = {}
-            for t_name, t_data in market_preds.items():
-                if isinstance(t_data, dict):
-                    t_cons = t_data.get('consensus', {})
-                    t_models = {}
-                    for mn, md in t_data.items():
-                        if mn != 'consensus' and isinstance(md, dict):
-                            t_models[mn] = {
-                                'prediction': md.get('prediction'),
-                                'confidence': md.get('confidence'),
-                                'probabilities': md.get('probabilities', {}),
-                            }
-                    new_entry['market_predictions'][t_name] = {
-                        'models': t_models,
-                        'consensus': {
-                            'prediction': t_cons.get('prediction'),
-                            'agreement': t_cons.get('agreement'),
-                            'agreement_pct': t_cons.get('agreement_pct'),
-                            'avg_probabilities': t_cons.get('avg_probabilities', {}),
-                        }
-                    }
+        new_entry.update(_serialize_result_prediction_data(r, actual_result))
         report['matches'].append(new_entry)
     report_date = report.get('date', '')
     today = datetime.now().strftime('%Y-%m-%d')
@@ -1889,9 +1981,9 @@ def main():
             print(f"No match data found for {target_date}.")
             return
 
-        predictor = load_models()
+        predictors = load_models()
         print(f"\nRe-predicting {len(matches)} matches...")
-        results = predict_matches(matches, predictor)
+        results = predict_matches(matches, predictors)
 
         results_by_key = {}
         for r in results:
@@ -1905,16 +1997,20 @@ def main():
             m = r['match']
             if m.get('event_id') and not match_entry.get('event_id'):
                 match_entry['event_id'] = m.get('event_id')
-            match_entry['predictions'] = r.get('predictions', {})
-            match_entry['consensus'] = r.get('consensus', {})
+            serialized_predictions = _serialize_result_prediction_data(r, match_entry.get('actual_result'))
+            match_entry['predictions'] = serialized_predictions['predictions']
+            match_entry['consensus'] = serialized_predictions['consensus']
+            match_entry['default_prediction_variant'] = serialized_predictions.get('default_prediction_variant', DEFAULT_PREDICTION_VARIANT)
+            if 'market_predictions' in serialized_predictions:
+                match_entry['market_predictions'] = serialized_predictions['market_predictions']
+            elif 'market_predictions' in match_entry:
+                del match_entry['market_predictions']
+            if 'prediction_variants' in serialized_predictions:
+                match_entry['prediction_variants'] = serialized_predictions['prediction_variants']
+            elif 'prediction_variants' in match_entry:
+                del match_entry['prediction_variants']
             if match_entry.get('actual_result'):
-                actual = match_entry['actual_result']
-                for pred_data in match_entry['predictions'].values():
-                    if pred_data.get('prediction'):
-                        pred_data['correct'] = (pred_data['prediction'] == actual)
-                cons = match_entry.get('consensus', {})
-                if cons.get('prediction'):
-                    cons['correct'] = (cons['prediction'] == actual)
+                _mark_match_prediction_correctness(match_entry, match_entry['actual_result'])
 
         existing_report['summary']['model_accuracy'] = calculate_model_accuracy(existing_report['matches'])
         report_path = save_report(existing_report, target_date)
@@ -1943,12 +2039,7 @@ def main():
                 match_entry['status'] = 'finished'
                 match_entry['actual_result'] = actual_result
                 match_entry['actual_score'] = m_data.get('score')
-                for model_name, pred_data in match_entry.get('predictions', {}).items():
-                    if pred_data.get('prediction'):
-                        pred_data['correct'] = (pred_data['prediction'] == actual_result)
-                cons = match_entry.get('consensus', {})
-                if cons.get('prediction'):
-                    cons['correct'] = (cons['prediction'] == actual_result)
+                _mark_match_prediction_correctness(match_entry, actual_result)
 
             from datetime import datetime as _dt
             if _dt.strptime(target_date, '%Y-%m-%d').date() < _dt.now().date():
@@ -1990,10 +2081,10 @@ def main():
         print("Use --scrape to fetch from API.")
         return
     
-    predictor = load_models()
+    predictors = load_models()
     
     print("\nMaking predictions...")
-    results = predict_matches(matches, predictor)
+    results = predict_matches(matches, predictors)
     
     if not args.no_report:
         print("\n" + "="*70)

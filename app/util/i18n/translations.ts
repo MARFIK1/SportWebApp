@@ -87,6 +87,10 @@ const translations: Record<Locale, Record<string, string>> = {
         over_15: "Over 1.5",
         corners_over_85: "Corners 8.5+",
         cards_over_35: "Cards 3.5+",
+        prediction_variant: "Prediction variant",
+        without_odds: "Without odds",
+        with_odds: "With odds",
+        variant_partial_markets: "Some markets are unavailable for this variant.",
 
         // Team
         rank: "Rank",
@@ -234,6 +238,10 @@ const translations: Record<Locale, Record<string, string>> = {
         over_15: "Powyżej 1.5",
         corners_over_85: "Rzuty rożne 8.5+",
         cards_over_35: "Kartki 3.5+",
+        prediction_variant: "Wariant predykcji",
+        without_odds: "Bez kursow",
+        with_odds: "Z kursami",
+        variant_partial_markets: "Część rynków jest niedostępna dla tego wariantu.",
 
         // Team
         rank: "Pozycja",

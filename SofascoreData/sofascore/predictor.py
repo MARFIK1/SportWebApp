@@ -48,6 +48,66 @@ except ImportError:
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
 
 
+def _configure_estimator_for_single_thread_inference(estimator, seen=None):
+    """Avoid spawning joblib worker pools for single-match predictions."""
+    if estimator is None:
+        return
+
+    if seen is None:
+        seen = set()
+
+    obj_id = id(estimator)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+
+    for attr_name, attr_value in (
+        ('n_jobs', 1),
+        ('thread_count', 1),
+        ('nthread', 1),
+    ):
+        if hasattr(estimator, attr_name):
+            try:
+                setattr(estimator, attr_name, attr_value)
+            except Exception:
+                pass
+
+    nested_attrs = (
+        'estimator',
+        'base_estimator',
+        'final_estimator',
+        'best_estimator_',
+    )
+    for attr_name in nested_attrs:
+        _configure_estimator_for_single_thread_inference(
+            getattr(estimator, attr_name, None),
+            seen,
+        )
+
+    collection_attrs = (
+        'estimators',
+        'estimators_',
+        'named_estimators_',
+        'calibrated_classifiers_',
+        'steps',
+        'named_steps',
+    )
+    for attr_name in collection_attrs:
+        children = getattr(estimator, attr_name, None)
+        if children is None:
+            continue
+
+        if isinstance(children, dict):
+            iterable = children.values()
+        else:
+            iterable = children
+
+        for child in iterable:
+            if isinstance(child, tuple) and len(child) == 2:
+                child = child[1]
+            _configure_estimator_for_single_thread_inference(child, seen)
+
+
 META_COLUMNS = {
     'event_id', 'date', 'round', 'home_team', 'away_team',
     'comp_type', 'country', 'competition', 'league',
@@ -1573,6 +1633,11 @@ class UniversalPredictor:
             self.scaler = self.scalers['result']
 
         self.trained = True
+
+        for target_models in self.models.values():
+            for model_data in target_models.values():
+                _configure_estimator_for_single_thread_inference(model_data.get('model'))
+                _configure_estimator_for_single_thread_inference(model_data.get('calibrated_model'))
 
         targets = list(self.models.keys())
         for t in targets:

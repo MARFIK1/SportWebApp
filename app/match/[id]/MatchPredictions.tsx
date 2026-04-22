@@ -1,13 +1,13 @@
+"use client";
+
+import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { ModelPrediction } from "@/types/predictions";
-import { getServerT } from "@/app/util/i18n/getLocale";
+import { useMatchPredictionVariant } from "./MatchPredictionVariantProvider";
 
-interface MatchPredictionsProps {
-    models: [string, ModelPrediction][];
-    matchFinished: boolean;
-}
-
-export default async function MatchPredictions({ models, matchFinished }: MatchPredictionsProps) {
-    const t = await getServerT();
+export default function MatchPredictions() {
+    const { t } = useLanguage();
+    const { bundle, matchFinished, activeVariant, canSwitchVariants } = useMatchPredictionVariant();
+    const models = bundle.models;
 
     const outcomeLabel = (outcome: ModelPrediction["prediction"]) => {
         if (outcome === "HOME") return t("home_short");
@@ -15,9 +15,18 @@ export default async function MatchPredictions({ models, matchFinished }: MatchP
         return t("draw_short");
     };
 
+    if (models.length === 0) return null;
+
     return (
         <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mt-8">
-            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("all_model_predictions")}</h3>
+            <div className="flex items-center justify-between gap-3 mb-4">
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t("all_model_predictions")}</h3>
+                {canSwitchVariants && (
+                    <span className="text-xs font-semibold text-emerald-400">
+                        {activeVariant === "with_odds" ? t("with_odds") : t("without_odds")}
+                    </span>
+                )}
+            </div>
             <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead>

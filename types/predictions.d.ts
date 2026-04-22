@@ -37,6 +37,29 @@ export interface MarketPrediction {
     consensus: MarketConsensus;
 }
 
+export type PredictionVariantKey = "without_odds" | "with_odds";
+
+export interface PredictionVariant {
+    predictions: Record<string, ModelPrediction>;
+    consensus: ConsensusPrediction;
+    market_predictions?: {
+        btts?: MarketPrediction;
+        over_1_5?: MarketPrediction;
+        over_2_5?: MarketPrediction;
+        corners_over_8_5?: MarketPrediction;
+        corners_over_10_5?: MarketPrediction;
+        cards_over_3_5?: MarketPrediction;
+        cards_over_4_5?: MarketPrediction;
+        total_goals?: MarketPrediction;
+        total_corners?: MarketPrediction;
+        total_cards?: MarketPrediction;
+        [key: string]: MarketPrediction | undefined;
+    };
+    odds_used: boolean;
+    missing_odds_by_target?: Record<string, string[]>;
+    skipped_targets?: string[];
+}
+
 export interface PredictionMatch {
     id: string;
     event_id?: number | null;
@@ -64,6 +87,8 @@ export interface PredictionMatch {
         total_corners: MarketPrediction;
         total_cards: MarketPrediction;
     };
+    default_prediction_variant?: PredictionVariantKey;
+    prediction_variants?: Partial<Record<PredictionVariantKey, PredictionVariant>>;
 }
 
 export interface ModelAccuracy {
