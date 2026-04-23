@@ -219,10 +219,24 @@ else:
             away_seqs = (away_seqs - self._away_mean) / self._away_std
 
             _seed_everything(SEED)
-            val_size = max(256, int(len(y_valid) * 0.15))
-            indices = np.arange(len(y_valid))
-            np.random.shuffle(indices)
-            val_idx, train_idx = indices[:val_size], indices[val_size:]
+            min_train_size = max(128, self.num_classes * 20)
+            desired_val_size = max(64, int(len(y_valid) * 0.15))
+            max_val_size = max(0, len(y_valid) - min_train_size)
+            val_size = min(desired_val_size, max_val_size)
+
+            if val_size < max(32, self.num_classes * 10):
+                print("LSTM: chronological validation holdout too small, skipping")
+                return self
+
+            split_at = len(y_valid) - val_size
+            train_idx = np.arange(split_at)
+            val_idx = np.arange(split_at, len(y_valid))
+
+            if np.unique(y_valid[train_idx]).size < self.num_classes:
+                print("LSTM: training split lost at least one class, skipping")
+                return self
+
+            print(f"LSTM: chronological validation split train={len(train_idx)} val={len(val_idx)}")
 
             train_dataset = MatchSequenceDataset(
                 home_seqs[train_idx], away_seqs[train_idx], y_valid[train_idx]

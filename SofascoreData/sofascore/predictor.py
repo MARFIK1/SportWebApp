@@ -25,7 +25,7 @@ from sklearn.metrics import (
     mean_absolute_error, mean_squared_error, r2_score,
 )
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.base import clone
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
 import joblib
@@ -106,6 +106,149 @@ def _configure_estimator_for_single_thread_inference(estimator, seen=None):
             if isinstance(child, tuple) and len(child) == 2:
                 child = child[1]
             _configure_estimator_for_single_thread_inference(child, seen)
+
+
+def _sort_training_rows_by_date(X, y, dates=None, sample_weights=None):
+    """Sort training rows chronologically before any temporal CV/tuning."""
+    if dates is None:
+        return X, y, sample_weights, None
+
+    parsed_dates = pd.to_datetime(dates.loc[X.index], errors='coerce')
+    sort_keys = parsed_dates.where(parsed_dates.notna(), pd.Timestamp.max)
+    sort_idx = sort_keys.sort_values(kind='mergesort').index
+
+    X_sorted = X.loc[sort_idx]
+    y_sorted = y.loc[sort_idx]
+    sorted_dates = parsed_dates.loc[sort_idx]
+
+    if sample_weights is None:
+        sorted_weights = None
+    else:
+        sorted_weights = pd.Series(sample_weights, index=X.index).loc[sort_idx].values
+
+    return X_sorted, y_sorted, sorted_weights, sorted_dates
+
+
+class TemporalStackingClassifier(BaseEstimator, ClassifierMixin):
+    """Time-aware stacking using expanding-window out-of-fold meta features."""
+
+    def __init__(self, estimators, final_estimator=None, n_splits=3):
+        self.estimators = estimators
+        self.final_estimator = final_estimator or LogisticRegression(max_iter=1000, C=1.0)
+        self.n_splits = n_splits
+
+    @staticmethod
+    def _proba_to_meta_features(proba):
+        if proba.ndim == 1:
+            return proba.reshape(-1, 1)
+        if proba.shape[1] == 2:
+            return proba[:, 1].reshape(-1, 1)
+        return proba
+
+    @staticmethod
+    def _fit_estimator(estimator, X, y, sample_weight=None):
+        if sample_weight is None:
+            estimator.fit(X, y)
+            return estimator
+        try:
+            estimator.fit(X, y, sample_weight=sample_weight)
+        except TypeError:
+            estimator.fit(X, y)
+        return estimator
+
+    def fit(self, X, y, sample_weight=None):
+        if hasattr(X, 'iloc'):
+            X_train = X
+        else:
+            X_train = pd.DataFrame(X)
+
+        if hasattr(y, 'iloc'):
+            y_train = y
+        else:
+            y_train = pd.Series(y, index=X_train.index)
+
+        n_samples = len(X_train)
+        if n_samples < (self.n_splits + 1) * 2:
+            raise ValueError("Not enough samples for temporal stacking")
+
+        blocks = [block for block in np.array_split(np.arange(n_samples), self.n_splits + 1) if len(block) > 0]
+        if len(blocks) < 2:
+            raise ValueError("Not enough chronological blocks for temporal stacking")
+
+        meta_rows = []
+        meta_targets = []
+        meta_weights = []
+
+        for block_idx in range(1, len(blocks)):
+            train_pos = np.concatenate(blocks[:block_idx])
+            test_pos = blocks[block_idx]
+
+            if len(train_pos) == 0 or len(test_pos) == 0:
+                continue
+
+            fold_parts = []
+            for _, estimator in self.estimators:
+                fold_model = clone(estimator)
+                fit_weights = sample_weight[train_pos] if sample_weight is not None else None
+                self._fit_estimator(
+                    fold_model,
+                    X_train.iloc[train_pos],
+                    y_train.iloc[train_pos],
+                    fit_weights,
+                )
+                proba = fold_model.predict_proba(X_train.iloc[test_pos])
+                fold_parts.append(self._proba_to_meta_features(proba))
+
+            meta_rows.append(np.hstack(fold_parts))
+            meta_targets.append(y_train.iloc[test_pos].to_numpy())
+            if sample_weight is not None:
+                meta_weights.append(sample_weight[test_pos])
+
+        if not meta_rows:
+            raise ValueError("Temporal stacking could not build any out-of-fold meta features")
+
+        meta_X = np.vstack(meta_rows)
+        meta_y = np.concatenate(meta_targets)
+        meta_w = np.concatenate(meta_weights) if meta_weights else None
+
+        self.final_estimator_ = clone(self.final_estimator)
+        self._fit_estimator(self.final_estimator_, meta_X, meta_y, meta_w)
+
+        self.estimators_ = []
+        for name, estimator in self.estimators:
+            fitted = clone(estimator)
+            self._fit_estimator(fitted, X_train, y_train, sample_weight)
+            self.estimators_.append((name, fitted))
+
+        self.classes_ = np.unique(y_train)
+        return self
+
+    def _transform(self, X):
+        if hasattr(X, 'iloc'):
+            X_data = X
+        else:
+            X_data = pd.DataFrame(X)
+
+        parts = []
+        for _, estimator in self.estimators_:
+            proba = estimator.predict_proba(X_data)
+            parts.append(self._proba_to_meta_features(proba))
+        return np.hstack(parts)
+
+    def predict(self, X):
+        meta_X = self._transform(X)
+        return self.final_estimator_.predict(meta_X)
+
+    def predict_proba(self, X):
+        meta_X = self._transform(X)
+        if hasattr(self.final_estimator_, 'predict_proba'):
+            return self.final_estimator_.predict_proba(meta_X)
+
+        preds = self.final_estimator_.predict(meta_X)
+        proba = np.zeros((len(preds), len(self.classes_)))
+        for idx, cls in enumerate(self.classes_):
+            proba[:, idx] = (preds == cls).astype(float)
+        return proba
 
 
 META_COLUMNS = {
@@ -521,7 +664,8 @@ class UniversalPredictor:
                 params['objective'] = 'binary'
             model = LGBMClassifier(**params)
             scores = cross_val_score(model, X_train, y_train, cv=tscv,
-                                     scoring='accuracy', n_jobs=-1)
+                                     scoring='accuracy', n_jobs=-1,
+                                     params={'sample_weight': sample_weights})
             return scores.mean()
 
         study = optuna.create_study(direction='maximize')
@@ -742,6 +886,7 @@ class UniversalPredictor:
         X_model_train = X_train
         y_model_train = y_train
         sample_weights_model = sample_weights
+        model_train_dates = None
         X_cal_raw = None
         X_cal_scaled = None
         y_cal = None
@@ -776,6 +921,15 @@ class UniversalPredictor:
                 print(f"Calibration holdout: train={len(X_model_train)}, cal={len(X_cal_raw)}")
             else:
                 print("Calibration holdout skipped: not all classes remain in training split")
+
+        X_model_train, y_model_train, sample_weights_model, model_train_dates = _sort_training_rows_by_date(
+            X_model_train,
+            y_model_train,
+            train_dates if train_dates is not None else None,
+            sample_weights_model,
+        )
+        if model_train_dates is not None:
+            print("Chronological order enforced for tuning and meta-model training")
 
         xgb_tuned, lgb_tuned = self._optuna_tune(
             X_model_train, y_model_train, sample_weights_model, target, n_trials=50
@@ -890,15 +1044,11 @@ class UniversalPredictor:
         if feature_importances:
             print(f"Tree feature importances extracted for {len(feature_importances)} models")
         cv_results = {}
-        if dates is not None:
+        if model_train_dates is not None:
             print(f"\n  Temporal cross-validation (5-fold)...")
             tscv = TimeSeriesSplit(n_splits=5)
-            train_dates_sorted = pd.to_datetime(
-                meta.get('date', pd.Series(dtype=str)).loc[X_train.index], errors='coerce'
-            )
-            sort_idx = train_dates_sorted.sort_values().index
-            X_train_sorted = X_train.loc[sort_idx]
-            y_train_sorted = y_train.loc[sort_idx]
+            X_train_sorted = X_model_train
+            y_train_sorted = y_model_train
 
             for name, mdata in self.models[target].items():
                 if name in ('Ensemble', 'Stacking', 'LSTM'):
@@ -936,7 +1086,12 @@ class UniversalPredictor:
             ensemble_weights = []
             for name in tree_models:
                 if name in self.models[target]:
-                    ensemble_weights.append(self.models[target][name].get('accuracy', 0.5))
+                    ensemble_weights.append(cv_results.get(name, {}).get('mean', 1.0))
+
+            if cv_results:
+                print("Ensemble weights: temporal CV means")
+            else:
+                print("Ensemble weights: equal (no temporal CV available)")
 
             proc = psutil.Process()
             mem_before_ens = proc.memory_info().rss / 1024 / 1024
@@ -987,11 +1142,19 @@ class UniversalPredictor:
             mem_before_st = proc.memory_info().rss / 1024 / 1024
             cpu_before_st = proc.cpu_times()
             t0 = time.time()
-            stacking = StackingClassifier(
-                estimators=stacking_estimators,
-                final_estimator=LogisticRegression(max_iter=1000, C=1.0),
-                cv=3, stack_method='predict_proba', n_jobs=-1
-            )
+            if model_train_dates is not None:
+                stacking = TemporalStackingClassifier(
+                    estimators=stacking_estimators,
+                    final_estimator=LogisticRegression(max_iter=1000, C=1.0),
+                    n_splits=3,
+                )
+                print("Stacking: temporal expanding-window meta features")
+            else:
+                stacking = StackingClassifier(
+                    estimators=stacking_estimators,
+                    final_estimator=LogisticRegression(max_iter=1000, C=1.0),
+                    cv=3, stack_method='predict_proba', n_jobs=-1
+                )
             stacking.fit(X_model_train, y_model_train, sample_weight=sample_weights_model)
             stack_time = time.time() - t0
             cpu_after_st = proc.cpu_times()
