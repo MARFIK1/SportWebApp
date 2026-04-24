@@ -253,6 +253,7 @@ class TemporalStackingClassifier(BaseEstimator, ClassifierMixin):
 
 META_COLUMNS = {
     'event_id', 'date', 'round', 'home_team', 'away_team',
+    'home_team_id', 'away_team_id',
     'comp_type', 'country', 'competition', 'league',
     'home_score', 'away_score', 'home_score_ht', 'away_score_ht', 'status',
 }
@@ -545,11 +546,26 @@ class UniversalPredictor:
         if new_features:
             print(f"  Auto-discovered {len(new_features)} new features beyond reference list")
 
+        min_non_null_ratio = 0.5
+        non_null_ratio = df[feature_cols].notna().mean()
+        sparse_features = non_null_ratio[non_null_ratio < min_non_null_ratio].index.tolist()
+        if sparse_features:
+            feature_cols = [c for c in feature_cols if c not in set(sparse_features)]
+            print(
+                f"  Sparse feature filter: dropping {len(sparse_features)} features "
+                f"(coverage < {min_non_null_ratio:.0%})"
+            )
+
         group_cols = [c for c in ['comp_type', 'country', 'competition'] if c in df.columns]
         extra_cols = (['date'] if 'date' in df.columns else []) + group_cols
 
         cols_needed = list(set(feature_cols + [label_col] + extra_cols))
-        df_clean = df[cols_needed].dropna(subset=feature_cols + [label_col])
+        df_clean = df[cols_needed].copy()
+        df_clean = df_clean.dropna(subset=[label_col])
+
+        feature_na_count = int(df_clean[feature_cols].isna().sum().sum())
+        if feature_na_count:
+            df_clean[feature_cols] = df_clean[feature_cols].fillna(0)
 
         X = df_clean[feature_cols]
         if config.get('task') == 'regression':
