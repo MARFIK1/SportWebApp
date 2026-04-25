@@ -155,19 +155,21 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                                     <td className="text-center py-2 px-2 text-gray-700 dark:text-gray-300">{pred.probabilities.DRAW?.toFixed(1)}%</td>
                                                     <td className="text-center py-2 px-2 text-gray-700 dark:text-gray-300">{pred.probabilities.AWAY?.toFixed(1)}%</td>
                                                     <td className="text-center py-2 px-2">
-                                                        <span className={`font-semibold ${pred.confidence >= 60 ? "text-emerald-400" : pred.confidence >= 45 ? "text-yellow-400" : "text-gray-500 dark:text-gray-400"}`}>
-                                                            {pred.confidence.toFixed(1)}%
+                                                        <span className={`font-semibold ${(pred.confidence ?? 0) >= 60 ? "text-emerald-400" : (pred.confidence ?? 0) >= 45 ? "text-yellow-400" : "text-gray-500 dark:text-gray-400"}`}>
+                                                            {pred.confidence !== null ? `${pred.confidence.toFixed(1)}%` : "-"}
                                                         </span>
                                                     </td>
                                                     {isFinished && (
                                                         <td className="text-center py-2 px-2">
-                                                            <span
-                                                                className={`text-xs font-bold ${pred.correct ? "text-emerald-400" : "text-red-400"}`}
-                                                                aria-label={pred.correct ? t("correct") : t("incorrect")}
-                                                                role="img"
-                                                            >
-                                                                <span aria-hidden="true">{pred.correct ? "\u2713" : "\u2717"}</span>
-                                                            </span>
+                                                            {pred.correct != null && (
+                                                                <span
+                                                                    className={`text-xs font-bold ${pred.correct ? "text-emerald-400" : "text-red-400"}`}
+                                                                    aria-label={pred.correct ? t("correct") : t("incorrect")}
+                                                                    role="img"
+                                                                >
+                                                                    <span aria-hidden="true">{pred.correct ? "\u2713" : "\u2717"}</span>
+                                                                </span>
+                                                            )}
                                                         </td>
                                                     )}
                                                 </tr>

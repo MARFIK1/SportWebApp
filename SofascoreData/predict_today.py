@@ -45,6 +45,19 @@ ODDS_KEYS = [
     'odds_over_2_5', 'odds_under_2_5',
     'odds_btts_yes', 'odds_btts_no',
 ]
+ODDS_REQUIREMENTS_BY_TARGET = {
+    '__all__': ODDS_KEYS,
+    'result': ['odds_home_win', 'odds_draw', 'odds_away_win'],
+    'btts': ['odds_btts_yes', 'odds_btts_no'],
+    'over_2_5': ['odds_over_2_5', 'odds_under_2_5'],
+}
+
+
+def _is_positive_odds(value) -> bool:
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def safe_print(text):
@@ -723,7 +736,7 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
     for odds_key in ['odds_home_win', 'odds_draw', 'odds_away_win',
                      'odds_over_2_5', 'odds_under_2_5',
                      'odds_btts_yes', 'odds_btts_no']:
-        if match.get(odds_key):
+        if _is_positive_odds(match.get(odds_key)):
             upcoming_match[odds_key] = match[odds_key]
 
     features = fg.generate_match_features(upcoming_match, historical_matches,
@@ -961,8 +974,10 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
 
 def _get_missing_odds_features(features: Dict, predictor, target_name: str) -> List[str]:
     feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
-    odds_cols = [col for col in feat_cols if col.startswith('odds_')]
-    return [col for col in odds_cols if (features.get(col) or 0) <= 0]
+    odds_cols = {col for col in feat_cols if col.startswith('odds_')}
+    odds_cols.update(ODDS_REQUIREMENTS_BY_TARGET.get('__all__', []))
+    odds_cols.update(ODDS_REQUIREMENTS_BY_TARGET.get(target_name, []))
+    return sorted(col for col in odds_cols if not _is_positive_odds(features.get(col)))
 
 
 def _split_target_predictions(all_target_preds: Dict) -> Dict:
@@ -1177,14 +1192,18 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
         
         prediction_variants = {}
         for variant_name, predictor in predictors.items():
+            variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
             all_target_preds = {}
             missing_odds_by_target = {}
             skipped_targets = []
 
             for target_name in predictor.models.keys():
-                missing_odds = _get_missing_odds_features(features, predictor, target_name)
-                if missing_odds:
-                    missing_odds_by_target[target_name] = missing_odds
+                if variant_uses_odds:
+                    missing_odds = _get_missing_odds_features(features, predictor, target_name)
+                    if missing_odds:
+                        missing_odds_by_target[target_name] = missing_odds
+                        skipped_targets.append(target_name)
+                        continue
 
                 feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
                 target_features = {col: features.get(col, 0) for col in feat_cols}
@@ -1201,7 +1220,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
                 continue
 
             variant_payload = _split_target_predictions(all_target_preds)
-            variant_payload['odds_used'] = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
+            variant_payload['odds_used'] = variant_uses_odds
             if missing_odds_by_target:
                 variant_payload['missing_odds_by_target'] = missing_odds_by_target
             if skipped_targets:

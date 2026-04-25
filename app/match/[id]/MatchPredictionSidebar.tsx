@@ -33,7 +33,8 @@ function getMarketLabel(key: string, t: (key: string) => string): string {
     return key;
 }
 
-function getMarketPredictionLabel(value: string | number, t: (key: string) => string): string {
+function getMarketPredictionLabel(value: string | number | null, t: (key: string) => string): string {
+    if (value === null) return "-";
     if (value === "YES") return t("yes");
     if (value === "NO") return t("no");
     if (value === "OVER") return t("over");
@@ -121,7 +122,7 @@ export default function MatchPredictionSidebar() {
                             <span className="text-gray-500 dark:text-gray-400">{t("agreement")}</span>
                             <span className="text-gray-900 dark:text-white font-semibold">{bundle.consensus.agreement}</span>
                         </div>
-                        {matchFinished && (
+                        {matchFinished && bundle.consensus.correct != null && (
                             <div className="flex justify-between">
                                 <span className="text-gray-500 dark:text-gray-400">{t("result")}</span>
                                 <span className={`font-semibold ${bundle.consensus.correct ? "text-emerald-400" : "text-red-400"}`}>

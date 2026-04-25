@@ -407,6 +407,43 @@ class UniversalPredictor:
         self.trained = False
         self.feature_columns = []   # Backward compat (result target)
         self.training_stats = {}
+
+    @staticmethod
+    def _filter_positive_odds(
+        df: pd.DataFrame,
+        target: str,
+        odds_requirements: Optional[Dict[str, List[str]]],
+    ) -> pd.DataFrame:
+        if not odds_requirements:
+            return df
+
+        required_cols = list(dict.fromkeys(
+            odds_requirements.get('__all__', []) + odds_requirements.get(target, [])
+        ))
+        if not required_cols:
+            return df
+
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            print(
+                f"\n  [SKIP] Target '{target}' - missing required odds columns: "
+                f"{', '.join(missing_cols)}"
+            )
+            return df.iloc[0:0].copy()
+
+        odds_values = df[required_cols].apply(pd.to_numeric, errors='coerce')
+        mask = odds_values.gt(0).all(axis=1)
+        filtered = df.loc[mask].copy()
+        removed = len(df) - len(filtered)
+
+        if removed > 0:
+            print(
+                f"  Odds completeness filter for {target}: "
+                f"keeping {len(filtered)} of {len(df)} rows "
+                f"({removed} missing/non-positive odds)"
+            )
+
+        return filtered
         
     def discover_all_competitions(self) -> Dict[str, Dict[str, List[str]]]:
         discovered = {}
@@ -582,7 +619,8 @@ class UniversalPredictor:
         return X, y, meta
     
     def train_all_models(self, df: pd.DataFrame, test_size: float = 0.2,
-                         targets: Optional[List[str]] = None) -> Dict:
+                         targets: Optional[List[str]] = None,
+                         odds_requirements: Optional[Dict[str, List[str]]] = None) -> Dict:
         if targets is None:
             targets = ['result', 'btts', 'over_2_5', 'over_1_5']
 
@@ -597,12 +635,17 @@ class UniversalPredictor:
                 print(f"\n  [SKIP] Target '{target}' - missing column '{label_col}' in data")
                 continue
 
+            target_df = self._filter_positive_odds(df, target, odds_requirements)
+            if target_df.empty:
+                print(f"\n  [SKIP] Target '{target}' - no rows after odds completeness filter")
+                continue
+
             print(f"\n{'='*70}")
             task_label = config.get('task', 'multiclass').upper()
             print(f"  TRAINING TARGET: {target.upper()} [{task_label}]")
             print(f"{'='*70}")
 
-            results = self._train_target(df, target, test_size)
+            results = self._train_target(target_df, target, test_size)
             all_results[target] = results
 
         self.trained = True

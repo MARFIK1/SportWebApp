@@ -10,6 +10,7 @@ export default function MatchPredictions() {
     const models = bundle.models;
 
     const outcomeLabel = (outcome: ModelPrediction["prediction"]) => {
+        if (!outcome) return "-";
         if (outcome === "HOME") return t("home_short");
         if (outcome === "AWAY") return t("away_short");
         return t("draw_short");
@@ -59,13 +60,13 @@ export default function MatchPredictions() {
                                 <td className="text-center py-3 px-2 text-gray-700 dark:text-gray-300">{pred.probabilities.DRAW?.toFixed(1)}%</td>
                                 <td className="text-center py-3 px-2 text-gray-700 dark:text-gray-300">{pred.probabilities.AWAY?.toFixed(1)}%</td>
                                 <td className="text-center py-3 px-2">
-                                    <span className={`font-semibold ${pred.confidence >= 60 ? "text-emerald-400" : pred.confidence >= 45 ? "text-yellow-400" : "text-gray-500 dark:text-gray-400"}`}>
-                                        {pred.confidence.toFixed(1)}%
+                                    <span className={`font-semibold ${(pred.confidence ?? 0) >= 60 ? "text-emerald-400" : (pred.confidence ?? 0) >= 45 ? "text-yellow-400" : "text-gray-500 dark:text-gray-400"}`}>
+                                        {pred.confidence !== null ? `${pred.confidence.toFixed(1)}%` : "-"}
                                     </span>
                                 </td>
                                 {matchFinished && (
                                     <td className="text-center py-3 px-2">
-                                        {pred.correct !== undefined && (
+                                        {pred.correct != null && (
                                             <span className={`text-xs font-bold ${pred.correct ? "text-emerald-400" : "text-red-400"}`}>
                                                 {pred.correct ? "\u2713" : "\u2717"}
                                             </span>

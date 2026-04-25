@@ -1,32 +1,32 @@
 export type MatchResult = "HOME" | "DRAW" | "AWAY";
 
 export interface ModelPrediction {
-    prediction: MatchResult;
-    prediction_int: number;
-    model: string;
+    prediction: MatchResult | null;
+    prediction_int?: number;
+    model?: string;
     calibrated?: boolean;
     probabilities: Record<MatchResult, number>;
-    confidence: number;
-    correct: boolean;
+    confidence: number | null;
+    correct: boolean | null;
 }
 
 export interface ConsensusPrediction {
-    prediction: MatchResult;
-    agreement: string;
-    agreement_pct: number;
+    prediction: MatchResult | null;
+    agreement: string | null;
+    agreement_pct: number | null;
     votes: Record<MatchResult, number>;
     avg_probabilities: Record<MatchResult, number>;
-    correct: boolean;
+    correct: boolean | null;
 }
 
 export interface MarketModelPrediction {
-    prediction: string | number;
+    prediction: string | number | null;
     confidence: number | null;
     probabilities: Record<string, number>;
 }
 
 export interface MarketConsensus {
-    prediction: string | number;
+    prediction: string | number | null;
     agreement: string | null;
     agreement_pct: number | null;
     avg_probabilities: Record<string, number>;
@@ -75,17 +75,18 @@ export interface PredictionMatch {
     actual_corners: number | null;
     referee_name: string | null;
     predictions: Record<string, ModelPrediction> & { consensus: ConsensusPrediction };
-    market_predictions: {
-        btts: MarketPrediction;
-        over_1_5: MarketPrediction;
-        over_2_5: MarketPrediction;
-        corners_over_8_5: MarketPrediction;
-        corners_over_10_5: MarketPrediction;
-        cards_over_3_5: MarketPrediction;
-        cards_over_4_5: MarketPrediction;
-        total_goals: MarketPrediction;
-        total_corners: MarketPrediction;
-        total_cards: MarketPrediction;
+    market_predictions?: {
+        btts?: MarketPrediction;
+        over_1_5?: MarketPrediction;
+        over_2_5?: MarketPrediction;
+        corners_over_8_5?: MarketPrediction;
+        corners_over_10_5?: MarketPrediction;
+        cards_over_3_5?: MarketPrediction;
+        cards_over_4_5?: MarketPrediction;
+        total_goals?: MarketPrediction;
+        total_corners?: MarketPrediction;
+        total_cards?: MarketPrediction;
+        [key: string]: MarketPrediction | undefined;
     };
     default_prediction_variant?: PredictionVariantKey;
     prediction_variants?: Partial<Record<PredictionVariantKey, PredictionVariant>>;
