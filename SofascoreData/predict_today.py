@@ -40,16 +40,15 @@ MODEL_VARIANT_CONFIG = {
     },
 }
 DEFAULT_PREDICTION_VARIANT = 'without_odds'
-ODDS_KEYS = [
-    'odds_home_win', 'odds_draw', 'odds_away_win',
+BASE_ODDS_KEYS = ['odds_home_win', 'odds_draw', 'odds_away_win']
+OPTIONAL_ODDS_KEYS = [
     'odds_over_2_5', 'odds_under_2_5',
     'odds_btts_yes', 'odds_btts_no',
 ]
+ODDS_KEYS = BASE_ODDS_KEYS + OPTIONAL_ODDS_KEYS
 ODDS_REQUIREMENTS_BY_TARGET = {
-    '__all__': ODDS_KEYS,
-    'result': ['odds_home_win', 'odds_draw', 'odds_away_win'],
+    '__all__': BASE_ODDS_KEYS,
     'btts': ['odds_btts_yes', 'odds_btts_no'],
-    'over_2_5': ['odds_over_2_5', 'odds_under_2_5'],
 }
 
 
