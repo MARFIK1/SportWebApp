@@ -24,7 +24,7 @@ function getPredictionBarColor(prediction: string): string {
     return "bg-amber-400";
 }
 
-function getPredictionLabel(match: PredictionMatch, t: (key: string) => string): { text: string; color: string; barColor: string; probability: number } | null {
+function getPredictionLabel(match: PredictionMatch, t: (key: string) => string): { text: string; color: string; barColor: string; probability: number; agreement: string | null } | null {
     const consensus = match.predictions.consensus as ConsensusPrediction;
     if (!consensus?.prediction) return null;
 
@@ -36,7 +36,7 @@ function getPredictionLabel(match: PredictionMatch, t: (key: string) => string):
     else if (pred === "AWAY") label = `${t("away_win")} (${prob.toFixed(0)}%)`;
     else label = `${t("draw")} (${prob.toFixed(0)}%)`;
 
-    return { text: label, color: getPredictionColor(pred), barColor: getPredictionBarColor(pred), probability: prob };
+    return { text: label, color: getPredictionColor(pred), barColor: getPredictionBarColor(pred), probability: prob, agreement: consensus.agreement };
 }
 
 function isPredictionCorrect(match: PredictionMatch): boolean | null {
@@ -59,10 +59,27 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
             : "border-red-500/60";
 
     const href = eventId ? `/match/${eventId}?date=${date}` : "#";
+    const statusTone = correct === null
+        ? "bg-gray-100 text-gray-500 dark:bg-white/10 dark:text-gray-300"
+        : correct
+            ? "bg-emerald-500/15 text-emerald-500"
+            : "bg-rose-500/15 text-rose-400";
 
     return (
-        <Link href={href} className={`group flex w-[240px] flex-col rounded-2xl border ${borderColor} bg-white/90 p-4 shadow-sm shadow-slate-900/5 transition-all hover:-translate-y-0.5 hover:bg-white dark:bg-gray-800/80 dark:shadow-black/10 dark:hover:bg-gray-800`}>
-            <div className="flex items-center justify-between gap-3">
+        <Link href={href} className={`group relative flex min-h-[190px] w-full flex-col overflow-hidden rounded-3xl border ${borderColor} bg-white/90 p-4 shadow-sm shadow-slate-900/5 transition-all hover:-translate-y-1 hover:border-emerald-400/50 hover:shadow-xl hover:shadow-emerald-950/10 dark:bg-gray-900/70 dark:shadow-black/10 dark:hover:bg-gray-900`}>
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+            <div className="mb-4 flex items-center justify-between">
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${statusTone}`}>
+                    {isFinished ? t("ft") : match.status === "postponed" ? t("postponed") : match.start_time || "TBD"}
+                </span>
+                {correct !== null && (
+                    <span className={`text-xs font-bold ${correct ? "text-emerald-400" : "text-rose-400"}`}>
+                        {correct ? t("correct") : t("incorrect")}
+                    </span>
+                )}
+            </div>
+
+            <div className="flex flex-1 items-center justify-between gap-3">
                 <div className="flex flex-col items-center gap-1 flex-1">
                     {homeTeamId ? (
                         <Image
@@ -78,32 +95,29 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
                             {match.home_team.slice(0, 2).toUpperCase()}
                         </div>
                     )}
-                    <span className="text-xs text-center text-gray-700 dark:text-gray-300 leading-tight max-w-[90px]">
+                    <span className="line-clamp-2 text-center text-sm font-semibold leading-tight text-gray-800 dark:text-gray-100">
                         {match.home_team}
                     </span>
                 </div>
 
-                <div className="flex flex-col items-center gap-1">
+                <div className="flex min-w-[68px] flex-col items-center gap-1">
                     {isFinished && score ? (
                         <>
-                            <span className="text-xl font-bold text-gray-900 dark:text-white">
+                            <span className="rounded-2xl bg-gray-950 px-3 py-2 text-xl font-black text-white dark:bg-black/60">
                                 {score[0]} - {score[1]}
                             </span>
-                            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:bg-gray-700/60 dark:text-gray-300">{t("ft")}</span>
                         </>
                     ) : match.status === "postponed" ? (
                         <>
                             <span className="text-sm font-semibold text-amber-400">
                                 {t("postponed")}
                             </span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">{match.start_time || ""}</span>
                         </>
                     ) : (
                         <>
-                            <span className="text-lg font-semibold text-emerald-500 dark:text-emerald-400">
-                                {match.start_time || "TBD"}
+                            <span className="text-2xl font-black text-gray-300 dark:text-gray-500">
+                                vs
                             </span>
-                            <span className="text-[10px] uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">{t("kick_off")}</span>
                         </>
                     )}
                 </div>
@@ -123,14 +137,14 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
                             {match.away_team.slice(0, 2).toUpperCase()}
                         </div>
                     )}
-                    <span className="text-xs text-center text-gray-700 dark:text-gray-300 leading-tight max-w-[90px]">
+                    <span className="line-clamp-2 text-center text-sm font-semibold leading-tight text-gray-800 dark:text-gray-100">
                         {match.away_team}
                     </span>
                 </div>
             </div>
 
             {prediction && (
-                <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
+                <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50/80 p-3 dark:border-white/10 dark:bg-black/20">
                     <div className="mb-2 flex items-center justify-between">
                         <span className="text-[10px] uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">{t("ml_prediction")}</span>
                         <span className={`text-xs font-semibold ${prediction.color}`}>
@@ -143,6 +157,12 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
                             style={{ width: `${Math.max(12, Math.min(100, prediction.probability))}%` }}
                         />
                     </div>
+                    {prediction.agreement && (
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500">
+                            <span>{t("agreement")}</span>
+                            <span className="font-semibold text-gray-500 dark:text-gray-300">{prediction.agreement}</span>
+                        </div>
+                    )}
                 </div>
             )}
         </Link>

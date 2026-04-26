@@ -23,6 +23,7 @@ const translations: Record<Locale, Record<string, string>> = {
         // Home
         matches_analyzed: "matches analyzed",
         all_completed: "All matches completed",
+        high_confidence: "high-confidence picks",
         accuracy: "Accuracy",
         view_standings: "VIEW STANDINGS",
         finished: "Finished",
@@ -174,6 +175,7 @@ const translations: Record<Locale, Record<string, string>> = {
         // Home
         matches_analyzed: "meczów przeanalizowanych",
         all_completed: "Wszystkie mecze zakończone",
+        high_confidence: "typów z wysoką pewnością",
         accuracy: "Skuteczność",
         view_standings: "TABELA",
         finished: "Zakończone",

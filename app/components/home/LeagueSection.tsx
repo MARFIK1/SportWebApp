@@ -34,7 +34,7 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
 
     function renderMatchList(list: PredictionMatch[]) {
         return (
-            <div className="flex flex-wrap gap-3 pb-2">
+            <div className="grid gap-4 pb-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {list.map((match) => (
                     <MatchCard
                         key={match.id}
@@ -50,8 +50,8 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
     }
 
     return (
-        <div className="mb-8">
-            <div className="mb-4 flex items-center justify-between gap-4 px-2">
+        <section className="mb-10">
+            <div className="mb-4 flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white/70 p-4 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-white/10 dark:bg-gray-950/30 dark:shadow-black/10 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-4">
                     <div className="h-12 w-1 rounded-full bg-gradient-to-b from-emerald-400 via-emerald-500 to-cyan-400" />
                     <div className="space-y-1">
@@ -81,7 +81,7 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
                 </div>
                 <Link
                     href={`/league/${slug}`}
-                    className="rounded-xl border border-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-500 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400"
+                    className="w-full rounded-xl border border-emerald-500/20 px-3 py-2 text-center text-sm font-semibold text-emerald-500 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400 sm:w-auto"
                 >
                     {t("view_standings")} {"\u2197"}
                 </Link>
@@ -98,6 +98,6 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
             )}
 
             {scheduled.length > 0 && renderMatchList(scheduled)}
-        </div>
+        </section>
     );
 }

@@ -17,10 +17,10 @@ export default function Navbar({ teamsData, playersData }: { teamsData: SearchTe
                 <Link href="/" className="flex items-center">
                     <Image
                         src="/logo.png"
-                        alt="logo"
-                        width={96}
-                        height={96}
-                        className="w-24 object-cover rounded-full"
+                        alt="SportWebApp logo"
+                        width={56}
+                        height={56}
+                        className="h-12 w-12 object-contain"
                     />
                 </Link>
             </div>
