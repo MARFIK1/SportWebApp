@@ -92,6 +92,7 @@ const translations: Record<Locale, Record<string, string>> = {
         without_odds: "Without odds",
         with_odds: "With odds",
         variant_partial_markets: "Some markets are unavailable for this variant.",
+        market_unavailable: "Unavailable",
 
         // Team
         rank: "Rank",
@@ -243,6 +244,7 @@ const translations: Record<Locale, Record<string, string>> = {
         prediction_variant: "Wariant predykcji",
         without_odds: "Bez kursow",
         with_odds: "Z kursami",
+        market_unavailable: "Niedostepne",
         variant_partial_markets: "Część rynków jest niedostępna dla tego wariantu.",
 
         // Team

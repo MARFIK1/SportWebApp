@@ -561,7 +561,12 @@ class UniversalPredictor:
         """Backwards compatible wrapper - loads all competition types."""
         return self.load_all_data(countries=countries)
     
-    def prepare_data(self, df: pd.DataFrame, target: str = 'result') -> Tuple[pd.DataFrame, pd.Series, Dict]:
+    def prepare_data(
+        self,
+        df: pd.DataFrame,
+        target: str = 'result',
+        odds_requirements: Optional[Dict[str, List[str]]] = None,
+    ) -> Tuple[pd.DataFrame, pd.Series, Dict]:
         """Returns (X, y, meta) with auto-discovered numeric features."""
         config = TARGET_CONFIGS[target]
         label_col = config['label_col']
@@ -576,6 +581,19 @@ class UniversalPredictor:
         known = [c for c in FEATURE_COLUMNS if c in discovered]
         new_features = [c for c in discovered if c not in set(FEATURE_COLUMNS)]
         feature_cols = known + new_features
+
+        if odds_requirements:
+            allowed_odds = set(
+                odds_requirements.get('__all__', []) + odds_requirements.get(target, [])
+            )
+            dropped_odds = [
+                c for c in feature_cols
+                if c.startswith('odds_') and c not in allowed_odds
+            ]
+            if dropped_odds:
+                dropped_set = set(dropped_odds)
+                feature_cols = [c for c in feature_cols if c not in dropped_set]
+                print(f"Odds feature filter: dropping {len(dropped_odds)} non-target odds features")
 
         if not feature_cols:
             raise ValueError("No feature columns found in data")
@@ -645,7 +663,7 @@ class UniversalPredictor:
             print(f"  TRAINING TARGET: {target.upper()} [{task_label}]")
             print(f"{'='*70}")
 
-            results = self._train_target(target_df, target, test_size)
+            results = self._train_target(target_df, target, test_size, odds_requirements)
             all_results[target] = results
 
         self.trained = True
@@ -814,11 +832,17 @@ class UniversalPredictor:
 
         return model_configs
 
-    def _train_target(self, df: pd.DataFrame, target: str, test_size: float) -> Dict:
+    def _train_target(
+        self,
+        df: pd.DataFrame,
+        target: str,
+        test_size: float,
+        odds_requirements: Optional[Dict[str, List[str]]] = None,
+    ) -> Dict:
         config = TARGET_CONFIGS[target]
         is_regression = config.get('task') == 'regression'
 
-        X, y, meta = self.prepare_data(df, target)
+        X, y, meta = self.prepare_data(df, target, odds_requirements)
         feature_cols = X.columns.tolist()
 
         print(f"\n  Dataset: {len(X)} matches, {len(feature_cols)} features")

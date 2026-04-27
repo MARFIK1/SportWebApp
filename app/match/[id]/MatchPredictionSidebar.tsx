@@ -56,6 +56,7 @@ export default function MatchPredictionSidebar() {
         bundle,
         matchFinished,
     } = useMatchPredictionVariant();
+    const showMarketPanel = Boolean(bundle.marketPredictions) || bundle.skippedTargets.length > 0;
 
     return (
         <>
@@ -134,16 +135,27 @@ export default function MatchPredictionSidebar() {
                 </div>
             )}
 
-            {bundle.marketPredictions && (
+            {showMarketPanel && (
                 <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
                     <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("advanced_markets")}</h3>
                     <div className="grid grid-cols-2 gap-3">
                         {PRIMARY_MARKETS.map((key) => {
                             const market = bundle.marketPredictions?.[key];
-                            if (!market?.consensus) return null;
+                            if (!market?.consensus) {
+                                return (
+                                    <div
+                                        key={key}
+                                        className="min-h-[84px] rounded-xl border border-dashed border-gray-300 bg-gray-100/70 p-3 opacity-80 dark:border-gray-700 dark:bg-gray-800/40"
+                                    >
+                                        <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{getMarketLabel(key, t)}</div>
+                                        <div className="text-xl font-bold text-gray-400 dark:text-gray-500">-</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-500">{t("market_unavailable")}</div>
+                                    </div>
+                                );
+                            }
                             const prob = maxProbability(market.consensus.avg_probabilities);
                             return (
-                                <div key={key} className="bg-gray-100 dark:bg-gray-800 rounded-xl p-3">
+                                <div key={key} className="min-h-[84px] bg-gray-100 dark:bg-gray-800 rounded-xl p-3">
                                     <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{getMarketLabel(key, t)}</div>
                                     <div className="text-xl font-bold text-emerald-400">{prob.toFixed(0)}%</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">{getMarketPredictionLabel(market.consensus.prediction, t)}</div>

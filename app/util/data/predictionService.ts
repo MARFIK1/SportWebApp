@@ -59,6 +59,26 @@ function readPredictionReportInDateDir(dateDir: string): PredictionReport | null
     );
 }
 
+function predictionReportMtime(dateDir: string): number {
+    let latest = 0;
+    for (const fileName of ["predictions_finished.json", "predictions_unfinished.json"]) {
+        try {
+            const stat = fs.statSync(path.join(dateDir, fileName));
+            latest = Math.max(latest, stat.mtimeMs);
+        } catch {
+            // Missing report files are expected for dates without predictions.
+        }
+    }
+    return latest;
+}
+
+function newestExistingReportDir(dateDirs: string[]): string | null {
+    return dateDirs
+        .map((dir) => ({ dir, mtime: predictionReportMtime(dir) }))
+        .filter(({ mtime }) => mtime > 0)
+        .sort((a, b) => b.mtime - a.mtime)[0]?.dir ?? null;
+}
+
 export const loadPredictionReport = cache((date: string): PredictionReport | null => {
     const env = process.env.SOFASCORE_REPORTS_DIR;
     if (env) {
@@ -66,7 +86,8 @@ export const loadPredictionReport = cache((date: string): PredictionReport | nul
     }
     const prebuiltDir = path.join(process.cwd(), ".data", "reports", date);
     const sourceDir = path.join(process.cwd(), "SofascoreData", "reports", date);
-    return readPredictionReportInDateDir(prebuiltDir) ?? readPredictionReportInDateDir(sourceDir);
+    const newestDir = newestExistingReportDir([prebuiltDir, sourceDir]);
+    return newestDir ? readPredictionReportInDateDir(newestDir) : null;
 });
 
 export const loadAnalysisReport = cache((date: string): AnalysisReport | null => {

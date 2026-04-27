@@ -48,7 +48,6 @@ OPTIONAL_ODDS_KEYS = [
 ODDS_KEYS = BASE_ODDS_KEYS + OPTIONAL_ODDS_KEYS
 ODDS_REQUIREMENTS_BY_TARGET = {
     '__all__': BASE_ODDS_KEYS,
-    'btts': ['odds_btts_yes', 'odds_btts_no'],
 }
 
 
@@ -972,8 +971,7 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
 
 
 def _get_missing_odds_features(features: Dict, predictor, target_name: str) -> List[str]:
-    feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
-    odds_cols = {col for col in feat_cols if col.startswith('odds_')}
+    odds_cols = set()
     odds_cols.update(ODDS_REQUIREMENTS_BY_TARGET.get('__all__', []))
     odds_cols.update(ODDS_REQUIREMENTS_BY_TARGET.get(target_name, []))
     return sorted(col for col in odds_cols if not _is_positive_odds(features.get(col)))
