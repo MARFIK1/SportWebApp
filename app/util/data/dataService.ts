@@ -232,8 +232,21 @@ export function loadLatestPlayers(competition: Competition): Record<string, Play
 
 export interface TeamCompetitionData {
     competition: Competition;
+    season: string;
     matches: SofascoreMatch[];
     standing: StandingRow | null;
+}
+
+function latestTeamSeason(matches: SofascoreMatch[], teamId: number): string {
+    const seasons = new Set<string>();
+
+    for (const match of matches) {
+        if (match.season && (match.home_team_id === teamId || match.away_team_id === teamId)) {
+            seasons.add(match.season);
+        }
+    }
+
+    return Array.from(seasons).sort().pop() ?? "";
 }
 
 export function findTeamData(teamId: number, competitions: Competition[]): { teamName: string; data: TeamCompetitionData[] } {
@@ -241,7 +254,11 @@ export function findTeamData(teamId: number, competitions: Competition[]): { tea
     const data: TeamCompetitionData[] = [];
 
     for (const comp of competitions) {
-        const matches = loadAllSeasons(comp);
+        const allMatches = loadAllSeasons(comp);
+        const season = latestTeamSeason(allMatches, teamId);
+        if (!season) continue;
+
+        const matches = allMatches.filter((m) => m.season === season);
         const teamMatches = matches.filter((m) => m.home_team_id === teamId || m.away_team_id === teamId);
         if (teamMatches.length === 0) continue;
 
@@ -253,7 +270,7 @@ export function findTeamData(teamId: number, competitions: Competition[]): { tea
         const standings = computeStandings(matches);
         const standing = standings.find((r) => r.teamId === teamId) ?? null;
 
-        data.push({ competition: comp, matches: teamMatches, standing });
+        data.push({ competition: comp, season, matches: teamMatches, standing });
     }
 
     return { teamName, data };
