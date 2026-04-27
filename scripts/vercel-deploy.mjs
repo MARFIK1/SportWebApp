@@ -1,6 +1,6 @@
 // Deploy to Vercel with local .data (the CLI respects .gitignore so .data would be skipped otherwise).
 // Copies the tree to a temp folder outside the repo (fs.cpSync cannot copy into a subfolder of the source),
-// patches /.data/ out of .gitignore in the copy, runs npx vercel deploy --prod --yes.
+// patches /.data/ out of .gitignore in the copy, runs npx --yes vercel deploy --prod --yes.
 // Run npm run build:prod first. One-time: npx vercel login, npx vercel link.
 
 import crypto from "crypto";
@@ -8,7 +8,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -66,9 +66,15 @@ try {
         process.exit(1);
     }
 
-    console.log("npx vercel deploy --prod --yes\n");
+    const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+    const vercelArgs = ["--yes", "vercel", "deploy", "--prod", "--yes"];
+    if (process.env.VERCEL_TOKEN) {
+        vercelArgs.push("--token", process.env.VERCEL_TOKEN);
+    }
 
-    execSync("npx vercel deploy --prod --yes", {
+    console.log("npx --yes vercel deploy --prod --yes" + (process.env.VERCEL_TOKEN ? " --token [redacted]" : "") + "\n");
+
+    execFileSync(npxCommand, vercelArgs, {
         cwd: STAGING,
         stdio: "inherit",
         env: { ...process.env, FORCE_COLOR: "1" },
