@@ -116,15 +116,15 @@ jobs:
         if: ${{ env.SKIP_PREDICTIONS != '1' }}
         shell: pwsh
         run: |
-          $arguments = @(
-            "-DaysAhead", $env:DAYS_AHEAD,
-            "-UpdateDaysBack", $env:UPDATE_DAYS_BACK,
-            "-Python", "python",
-            "-SkipBuild",
-            "-SkipDeploy"
-          )
+          $arguments = @{
+            DaysAhead = [int]$env:DAYS_AHEAD
+            UpdateDaysBack = [int]$env:UPDATE_DAYS_BACK
+            Python = "python"
+            SkipBuild = $true
+            SkipDeploy = $true
+          }
           if ($env:FULL_SCRAPE -eq "1") {
-            $arguments += "-FullScrape"
+            $arguments.FullScrape = $true
           }
           ./scripts/daily-predictions.ps1 @arguments
 
