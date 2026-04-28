@@ -408,6 +408,9 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
     if scheduled_events is None:
         print("Scheduled events endpoint unavailable; falling back to season lookup.")
         return False
+    if not scheduled_events:
+        print("Scheduled events endpoint returned 0 events; falling back to season lookup.")
+        return False
 
     competition_lookup = _competition_lookup_by_tournament_id(competitions)
     events_by_comp = {}
@@ -485,6 +488,9 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
     scheduled_events = scraper.get_scheduled_events(target_date)
     if scheduled_events is None:
         print("Scheduled events endpoint unavailable; falling back to season lookup.")
+        return None
+    if not scheduled_events:
+        print("Scheduled events endpoint returned 0 events; falling back to season lookup.")
         return None
 
     events_by_id = {event.get('id'): event for event in scheduled_events if event.get('id')}
