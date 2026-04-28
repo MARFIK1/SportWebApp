@@ -6,7 +6,7 @@ on:
       days_ahead:
         description: "Future days to predict"
         required: true
-        default: "2"
+        default: "14"
       update_days_back:
         description: "Past days to update with final scores"
         required: true
@@ -18,6 +18,11 @@ on:
         type: boolean
       skip_predictions:
         description: "Only restore data, build, and deploy"
+        required: true
+        default: false
+        type: boolean
+      full_scrape:
+        description: "Run full scrape_all.py before predictions"
         required: true
         default: false
         type: boolean
@@ -33,11 +38,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '2' }}
+      DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '14' }}
       UPDATE_DAYS_BACK: ${{ github.event.inputs.update_days_back || '1' }}
       GDRIVE_ROOT: gdrive:SportWebApp
       SKIP_VERCEL_DEPLOY: ${{ github.event.inputs.skip_deploy == 'true' && '1' || '0' }}
       SKIP_PREDICTIONS: ${{ github.event.inputs.skip_predictions == 'true' && '1' || '0' }}
+      FULL_SCRAPE: ${{ github.event.inputs.full_scrape == 'true' && '1' || '0' }}
       TZ: Europe/Warsaw
       SOFASCORE_HEADLESS: "1"
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -109,7 +115,18 @@ jobs:
       - name: Run daily prediction pipeline
         if: ${{ env.SKIP_PREDICTIONS != '1' }}
         shell: pwsh
-        run: ./scripts/daily-predictions.ps1 -DaysAhead $env:DAYS_AHEAD -UpdateDaysBack $env:UPDATE_DAYS_BACK -Python "python" -SkipBuild -SkipDeploy
+        run: |
+          $arguments = @(
+            "-DaysAhead", $env:DAYS_AHEAD,
+            "-UpdateDaysBack", $env:UPDATE_DAYS_BACK,
+            "-Python", "python",
+            "-SkipBuild",
+            "-SkipDeploy"
+          )
+          if ($env:FULL_SCRAPE -eq "1") {
+            $arguments += "-FullScrape"
+          }
+          ./scripts/daily-predictions.ps1 @arguments
 
       - name: Persist updated data to Google Drive
         if: ${{ env.SKIP_PREDICTIONS != '1' && success() }}

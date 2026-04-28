@@ -3,6 +3,7 @@ param(
     [int]$UpdateDaysBack = 1,
     [string]$Python = "python",
     [switch]$SkipScrape,
+    [switch]$FullScrape,
     [switch]$SkipBuild,
     [switch]$SkipDeploy
 )
@@ -31,20 +32,26 @@ function Format-Ymd {
 }
 
 $today = (Get-Date).Date
-
-if ($SkipScrape) {
-    Write-Host ""
-    Write-Host "==> Skipping scrape because -SkipScrape was provided"
-} else {
-    Invoke-Step "Scrape all competitions" $Python @("SofascoreData/scrape_all.py")
-}
+$todayYmd = Format-Ymd $today
 
 for ($i = $UpdateDaysBack; $i -ge 1; $i--) {
     $date = Format-Ymd $today.AddDays(-$i)
     Invoke-Step "Update finished report $date" $Python @("SofascoreData/predict_today.py", $date, "--update")
 }
 
-for ($i = 0; $i -le $DaysAhead; $i++) {
+if ($SkipScrape) {
+    Write-Host ""
+    Write-Host "==> Skipping scrape because -SkipScrape was provided"
+    $firstPredictionDay = 0
+} elseif ($FullScrape) {
+    Invoke-Step "Scrape all competitions" $Python @("SofascoreData/scrape_all.py")
+    $firstPredictionDay = 0
+} else {
+    Invoke-Step "Fetch upcoming matches and predict $todayYmd" $Python @("SofascoreData/predict_today.py", $todayYmd, "--scrape")
+    $firstPredictionDay = 1
+}
+
+for ($i = $firstPredictionDay; $i -le $DaysAhead; $i++) {
     $date = Format-Ymd $today.AddDays($i)
     Invoke-Step "Predict $date" $Python @("SofascoreData/predict_today.py", $date)
 }
