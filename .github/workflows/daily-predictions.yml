@@ -6,7 +6,7 @@ on:
       days_ahead:
         description: "Future days to predict"
         required: true
-        default: "14"
+        default: "1"
       update_days_back:
         description: "Past days to update with final scores"
         required: true
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '14' }}
+      DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '1' }}
       UPDATE_DAYS_BACK: ${{ github.event.inputs.update_days_back || '1' }}
       GDRIVE_ROOT: gdrive:SportWebApp
       SKIP_VERCEL_DEPLOY: ${{ github.event.inputs.skip_deploy == 'true' && '1' || '0' }}

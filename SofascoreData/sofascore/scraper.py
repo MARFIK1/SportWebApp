@@ -2,6 +2,7 @@
 Sofascore API Scraper using Selenium.
 """
 
+import json
 import os
 import time
 import random
@@ -82,6 +83,27 @@ def create_stealth_driver(headless=False):
 class SofascoreSeleniumScraper:
     def __init__(self, driver):
         self.driver = driver
+
+    def _read_json_from_page(self):
+        try:
+            raw = self.driver.execute_script("""
+                const pre = document.querySelector('pre');
+                return pre ? pre.innerText : document.body.innerText;
+            """)
+        except Exception:
+            return None
+
+        if not raw:
+            return None
+
+        raw = raw.strip()
+        if not raw.startswith(('{', '[')):
+            return None
+
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
     
     def get_api_data(self, endpoint):
         url = f"https://api.sofascore.com/api/v1{endpoint}"
@@ -93,8 +115,16 @@ class SofascoreSeleniumScraper:
             .catch(() => callback(null));
         """ % url
         try:
-            return self.driver.execute_async_script(script)
-        except:
+            data = self.driver.execute_async_script(script)
+            if data:
+                return data
+        except Exception:
+            pass
+
+        try:
+            self.driver.get(url)
+            return self._read_json_from_page()
+        except Exception:
             return None
     
     def get_seasons(self, tournament_id):
