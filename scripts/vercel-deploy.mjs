@@ -8,7 +8,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { execFileSync } from "child_process";
+import { execSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -66,15 +66,14 @@ try {
         process.exit(1);
     }
 
-    const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
-    const vercelArgs = ["--yes", "vercel", "deploy", "--prod", "--yes"];
-    if (process.env.VERCEL_TOKEN) {
-        vercelArgs.push("--token", process.env.VERCEL_TOKEN);
-    }
+    const tokenArg = process.env.VERCEL_TOKEN
+        ? ` --token "${process.env.VERCEL_TOKEN.replaceAll('"', '\\"')}"`
+        : "";
+    const command = `npx --yes vercel deploy --prod --yes${tokenArg}`;
 
     console.log("npx --yes vercel deploy --prod --yes" + (process.env.VERCEL_TOKEN ? " --token [redacted]" : "") + "\n");
 
-    execFileSync(npxCommand, vercelArgs, {
+    execSync(command, {
         cwd: STAGING,
         stdio: "inherit",
         env: { ...process.env, FORCE_COLOR: "1" },
