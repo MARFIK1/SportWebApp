@@ -1,4 +1,5 @@
 selenium
+curl_cffi
 pandas
 numpy
 scikit-learn

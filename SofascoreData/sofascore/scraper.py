@@ -9,6 +9,11 @@ import random
 
 from selenium import webdriver
 
+try:
+    from curl_cffi import requests as curl_requests
+except ImportError:
+    curl_requests = None
+
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -17,6 +22,8 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
 ]
+
+API_BASE_URL = "https://api.sofascore.com/api/v1"
 
 VIEWPORTS = [
     (1920, 1080),
@@ -83,6 +90,55 @@ def create_stealth_driver(headless=False):
 class SofascoreSeleniumScraper:
     def __init__(self, driver):
         self.driver = driver
+        self.http_session = None
+        self.http_user_agent = random.choice(USER_AGENTS)
+        self._http_debug_logged = set()
+
+    def _get_http_session(self):
+        if os.environ.get('SOFASCORE_CURL_CFFI', '1').lower() in ('0', 'false', 'no'):
+            return None
+        if curl_requests is None:
+            return None
+        if self.http_session is None:
+            impersonate = os.environ.get('SOFASCORE_CURL_IMPERSONATE', 'chrome')
+            self.http_session = curl_requests.Session(impersonate=impersonate)
+            self.http_session.headers.update({
+                'User-Agent': self.http_user_agent,
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Origin': 'https://www.sofascore.com',
+                'Referer': 'https://www.sofascore.com/',
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-site',
+            })
+        return self.http_session
+
+    def _get_api_data_http(self, endpoint):
+        session = self._get_http_session()
+        if session is None:
+            return None
+
+        url = f"{API_BASE_URL}{endpoint}"
+        for attempt in range(3):
+            try:
+                response = session.get(url, timeout=20)
+                if response.status_code == 200:
+                    return response.json()
+
+                debug_key = (endpoint, response.status_code)
+                if debug_key not in self._http_debug_logged:
+                    print(f"[DEBUG] curl_cffi {endpoint}: HTTP {response.status_code}")
+                    self._http_debug_logged.add(debug_key)
+            except Exception as exc:
+                debug_key = (endpoint, type(exc).__name__)
+                if debug_key not in self._http_debug_logged:
+                    print(f"[DEBUG] curl_cffi {endpoint}: {type(exc).__name__}")
+                    self._http_debug_logged.add(debug_key)
+
+            time.sleep(0.5 * (attempt + 1))
+
+        return None
 
     def _read_json_from_page(self):
         try:
@@ -106,7 +162,11 @@ class SofascoreSeleniumScraper:
             return None
     
     def get_api_data(self, endpoint):
-        url = f"https://api.sofascore.com/api/v1{endpoint}"
+        data = self._get_api_data_http(endpoint)
+        if data:
+            return data
+
+        url = f"{API_BASE_URL}{endpoint}"
         script = """
         var callback = arguments[arguments.length - 1];
         fetch('%s')
