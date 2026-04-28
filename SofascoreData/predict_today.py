@@ -372,6 +372,181 @@ def find_matches_for_date(target_date: str) -> list:
     return list(seen_matches.values())
 
 
+def _event_unique_tournament_id(event: dict):
+    tournament = event.get('tournament') or {}
+    unique_tournament = tournament.get('uniqueTournament') or event.get('uniqueTournament') or {}
+    return unique_tournament.get('id')
+
+
+def _competition_lookup_by_tournament_id(competitions: dict) -> dict:
+    lookup = {}
+    for comp_type, countries in competitions.items():
+        for country, comps in countries.items():
+            for comp_name, comp_data in comps.items():
+                tournament_id = comp_data.get('tournament_id')
+                if tournament_id:
+                    lookup[tournament_id] = (comp_type, country, comp_name)
+    return lookup
+
+
+def _load_finished_matches_for_features(raw_dir: Path) -> list:
+    all_seasons_path = raw_dir / 'all_seasons.json'
+    if all_seasons_path.exists():
+        try:
+            with open(all_seasons_path, 'r', encoding='utf-8') as f:
+                return json.load(f).get('matches', [])
+        except Exception:
+            return []
+    return []
+
+
+def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, base_dir: Path) -> bool:
+    from sofascore import FootballDataManager
+    from sofascore.utils import extract_match_data, extract_referee_data, extract_odds
+
+    scheduled_events = scraper.get_scheduled_events(target_date)
+    if scheduled_events is None:
+        print("Scheduled events endpoint unavailable; falling back to season lookup.")
+        return False
+
+    competition_lookup = _competition_lookup_by_tournament_id(competitions)
+    events_by_comp = {}
+    for event in scheduled_events:
+        comp_key = competition_lookup.get(_event_unique_tournament_id(event))
+        if comp_key:
+            events_by_comp.setdefault(comp_key, []).append(event)
+
+    tracked_count = sum(len(v) for v in events_by_comp.values())
+    print(f"Scheduled events for {target_date}: {len(scheduled_events)} total, {tracked_count} tracked")
+
+    for comp_type, country, comp_name in sorted(events_by_comp):
+        events = events_by_comp[(comp_type, country, comp_name)]
+        print(f"\n[{country}/{comp_name}]")
+
+        dm = FootballDataManager(base_dir, comp_type, country, comp_name)
+        raw_dir = Path(dm.paths['raw'])
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        finished_matches = _load_finished_matches_for_features(raw_dir)
+        fg = MLFeatureGenerator(dm)
+
+        processed = []
+        features = []
+        for event in events:
+            match_data = extract_match_data(event)
+            event_id = event.get('id')
+
+            if event_id:
+                odds_markets = scraper.get_match_odds(event_id)
+                if odds_markets:
+                    odds = extract_odds(odds_markets)
+                    if odds:
+                        match_data.update(odds)
+
+                event_details = scraper.get_event_details(event_id)
+                referee_data = extract_referee_data(event_details)
+                if referee_data:
+                    match_data.update(referee_data)
+
+            processed.append(match_data)
+            feature_data = fg.generate_match_features(match_data, finished_matches + [match_data])
+            feature_data['result'] = None
+            feature_data['label_result'] = None
+            feature_data['label_result_int'] = None
+            feature_data['label_home_goals'] = None
+            feature_data['label_away_goals'] = None
+            feature_data['label_total_goals'] = None
+            feature_data['status'] = match_data.get('status')
+            features.append(feature_data)
+
+        upcoming_dir = raw_dir / 'upcoming'
+        upcoming_dir.mkdir(parents=True, exist_ok=True)
+        upcoming_path = upcoming_dir / f'upcoming_scheduled_{target_date}.json'
+        with open(upcoming_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'metadata': {
+                    'competition_type': comp_type,
+                    'country': country,
+                    'league': comp_name,
+                    'season': f'Scheduled {target_date}',
+                    'scraped_at': datetime.now().isoformat(),
+                    'total_matches': len(processed),
+                },
+                'matches': processed,
+                'features': features,
+            }, f, ensure_ascii=False, indent=2)
+
+        print(f"  Saved {len(processed)} scheduled matches")
+
+    return True
+
+
+def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: Path) -> Optional[int]:
+    scheduled_events = scraper.get_scheduled_events(target_date)
+    if scheduled_events is None:
+        print("Scheduled events endpoint unavailable; falling back to season lookup.")
+        return None
+
+    events_by_id = {event.get('id'): event for event in scheduled_events if event.get('id')}
+    events_by_teams = {}
+    for event in scheduled_events:
+        home_id = event.get('homeTeam', {}).get('id')
+        away_id = event.get('awayTeam', {}).get('id')
+        if home_id and away_id:
+            events_by_teams[(home_id, away_id)] = event
+
+    updated_count = 0
+    for _comp_type, _country, _comp_name, comp_dir in iter_competition_dirs(base_dir):
+        raw_dir = comp_dir / 'raw'
+        if not raw_dir.exists():
+            continue
+
+        raw_files = list(raw_dir.glob('*.json'))
+        upcoming_dir = raw_dir / 'upcoming'
+        if upcoming_dir.exists():
+            raw_files.extend(upcoming_dir.glob('*.json'))
+
+        for raw_file in raw_files:
+            try:
+                with open(raw_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            modified = False
+            for match in data.get('matches', []):
+                if not match.get('date', '').startswith(target_date):
+                    continue
+
+                api_match = events_by_id.get(match.get('event_id'))
+                if not api_match:
+                    api_match = events_by_teams.get((match.get('home_team_id'), match.get('away_team_id')))
+                if not api_match:
+                    continue
+
+                api_status = api_match.get('status', {}).get('type', '')
+                home_score = api_match.get('homeScore', {}).get('current')
+                away_score = api_match.get('awayScore', {}).get('current')
+
+                if api_status == 'finished' and home_score is not None and away_score is not None:
+                    match['home_score'] = home_score
+                    match['away_score'] = away_score
+                    match['status'] = 'finished'
+                    if api_match.get('id') and not match.get('event_id'):
+                        match['event_id'] = api_match.get('id')
+                    modified = True
+                    updated_count += 1
+
+            if modified:
+                if data.get('metadata'):
+                    data['metadata']['last_update'] = datetime.now().isoformat()
+                with open(raw_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+
+    print(f"[OK] Updated {updated_count} matches from scheduled events")
+    return updated_count
+
+
 def scrape_upcoming(target_date: str = None, force: bool = False):
     from sofascore import (
         create_stealth_driver,
@@ -395,6 +570,11 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
     time.sleep(3)
     
     try:
+        if target_date and not force:
+            if _scrape_scheduled_upcoming(scraper, target_date, COMPETITIONS, Path(BASE_DIR)):
+                print("\n[OK] Fetching complete")
+                return
+
         for comp_type in COMP_TYPES:
             type_config = COMPETITIONS.get(comp_type, {})
             if not type_config:
@@ -528,6 +708,10 @@ def update_match_results(target_date: str):
     updated_count = 0
     
     try:
+        scheduled_updated_count = _update_results_from_scheduled_events(scraper, target_date, base_dir)
+        if scheduled_updated_count is not None:
+            return
+
         for comp_type, country, comp_name in sorted(comps_to_check):
             comp_config = COMPETITIONS.get(comp_type, {}).get(country, {}).get(comp_name, {})
             tournament_id = comp_config.get('tournament_id')

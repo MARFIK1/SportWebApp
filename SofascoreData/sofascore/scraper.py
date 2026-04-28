@@ -182,3 +182,7 @@ class SofascoreSeleniumScraper:
         data = self.get_api_data(f"/event/{event_id}")
         return data.get('event', data) if data and isinstance(data, dict) else None
 
+    def get_scheduled_events(self, date_ymd):
+        data = self.get_api_data(f"/sport/football/scheduled-events/{date_ymd}")
+        return data.get('events', []) if data and isinstance(data, dict) else None
+
