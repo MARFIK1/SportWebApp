@@ -92,6 +92,7 @@ class SofascoreSeleniumScraper:
         self.driver = driver
         self.http_session = None
         self.http_user_agent = random.choice(USER_AGENTS)
+        self.http_warmed_up = False
         self._http_debug_logged = set()
 
     def _get_http_session(self):
@@ -100,25 +101,40 @@ class SofascoreSeleniumScraper:
         if curl_requests is None:
             return None
         if self.http_session is None:
-            impersonate = os.environ.get('SOFASCORE_CURL_IMPERSONATE', 'chrome')
+            impersonate = os.environ.get('SOFASCORE_CURL_IMPERSONATE', 'chrome124')
             self.http_session = curl_requests.Session(impersonate=impersonate)
             self.http_session.headers.update({
                 'User-Agent': self.http_user_agent,
                 'Accept': 'application/json, text/plain, */*',
                 'Accept-Language': 'en-US,en;q=0.9',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
                 'Origin': 'https://www.sofascore.com',
                 'Referer': 'https://www.sofascore.com/',
+                'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
                 'Sec-Fetch-Dest': 'empty',
                 'Sec-Fetch-Mode': 'cors',
                 'Sec-Fetch-Site': 'same-site',
             })
         return self.http_session
 
+    def _warm_up_http_session(self, session):
+        if self.http_warmed_up:
+            return
+        self.http_warmed_up = True
+        try:
+            session.get('https://www.sofascore.com/', timeout=20)
+        except Exception as exc:
+            print(f"[DEBUG] curl_cffi warmup: {type(exc).__name__}")
+
     def _get_api_data_http(self, endpoint):
         session = self._get_http_session()
         if session is None:
             return None
 
+        self._warm_up_http_session(session)
         url = f"{API_BASE_URL}{endpoint}"
         for attempt in range(3):
             try:
