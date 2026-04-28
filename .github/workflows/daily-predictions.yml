@@ -45,7 +45,6 @@ jobs:
       SKIP_PREDICTIONS: ${{ github.event.inputs.skip_predictions == 'true' && '1' || '0' }}
       FULL_SCRAPE: ${{ github.event.inputs.full_scrape == 'true' && '1' || '0' }}
       TZ: Europe/Warsaw
-      SOFASCORE_HEADLESS: "1"
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
     steps:
@@ -69,7 +68,7 @@ jobs:
       - name: Install rclone
         run: |
           sudo apt-get update
-          sudo apt-get install -y rclone
+          sudo apt-get install -y rclone xvfb
 
       - name: Configure rclone
         shell: bash
@@ -126,7 +125,7 @@ jobs:
           if ($env:FULL_SCRAPE -eq "1") {
             $arguments.FullScrape = $true
           }
-          ./scripts/daily-predictions.ps1 @arguments
+          xvfb-run -a pwsh -NoProfile -File ./scripts/daily-predictions.ps1 @arguments
 
       - name: Persist updated data to Google Drive
         if: ${{ env.SKIP_PREDICTIONS != '1' && success() }}

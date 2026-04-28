@@ -30,8 +30,8 @@ VIEWPORTS = [
 def create_stealth_driver(headless=False):
     """Creates Chrome WebDriver with anti-detection measures. Returns (driver, user_agent)."""
     env_headless = os.environ.get('SOFASCORE_HEADLESS', '').lower() in ('1', 'true', 'yes')
-    ci_headless = os.environ.get('CI', '').lower() == 'true'
-    headless = headless or env_headless or ci_headless
+    ci_without_display = os.environ.get('CI', '').lower() == 'true' and not os.environ.get('DISPLAY')
+    headless = headless or env_headless or ci_without_display
 
     options = webdriver.ChromeOptions()
     
