@@ -2,6 +2,7 @@
 Sofascore API Scraper using Selenium.
 """
 
+import os
 import time
 import random
 
@@ -27,6 +28,10 @@ VIEWPORTS = [
 
 def create_stealth_driver(headless=False):
     """Creates Chrome WebDriver with anti-detection measures. Returns (driver, user_agent)."""
+    env_headless = os.environ.get('SOFASCORE_HEADLESS', '').lower() in ('1', 'true', 'yes')
+    ci_headless = os.environ.get('CI', '').lower() == 'true'
+    headless = headless or env_headless or ci_headless
+
     options = webdriver.ChromeOptions()
     
     user_agent = random.choice(USER_AGENTS)

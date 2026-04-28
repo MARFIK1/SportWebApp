@@ -16,6 +16,11 @@ on:
         required: true
         default: false
         type: boolean
+      skip_predictions:
+        description: "Only restore data, build, and deploy"
+        required: true
+        default: false
+        type: boolean
   schedule:
     - cron: "30 0 * * *"
 
@@ -32,7 +37,9 @@ jobs:
       UPDATE_DAYS_BACK: ${{ github.event.inputs.update_days_back || '1' }}
       GDRIVE_ROOT: gdrive:SportWebApp
       SKIP_VERCEL_DEPLOY: ${{ github.event.inputs.skip_deploy == 'true' && '1' || '0' }}
+      SKIP_PREDICTIONS: ${{ github.event.inputs.skip_predictions == 'true' && '1' || '0' }}
       TZ: Europe/Warsaw
+      SOFASCORE_HEADLESS: "1"
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
     steps:
@@ -46,6 +53,7 @@ jobs:
           cache: npm
 
       - name: Set up Python
+        if: ${{ env.SKIP_PREDICTIONS != '1' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -85,26 +93,35 @@ jobs:
         shell: bash
         run: |
           mkdir -p SofascoreData/data SofascoreData/reports SofascoreData/top_picks
-          rclone copy "$GDRIVE_ROOT/SofascoreData/data" SofascoreData/data --create-empty-src-dirs --progress
-          rclone copy "$GDRIVE_ROOT/SofascoreData/reports" SofascoreData/reports --create-empty-src-dirs --progress || true
-          rclone copy "$GDRIVE_ROOT/SofascoreData/top_picks" SofascoreData/top_picks --create-empty-src-dirs --progress || true
+          rclone copy "$GDRIVE_ROOT/SofascoreData/data" SofascoreData/data --create-empty-src-dirs --progress --fast-list --transfers 8 --checkers 16
+          rclone copy "$GDRIVE_ROOT/SofascoreData/reports" SofascoreData/reports --create-empty-src-dirs --progress --fast-list --transfers 8 --checkers 16 || true
+          rclone copy "$GDRIVE_ROOT/SofascoreData/top_picks" SofascoreData/top_picks --create-empty-src-dirs --progress --fast-list --transfers 8 --checkers 16 || true
 
       - name: Install Node dependencies
         run: npm ci
 
       - name: Install Python dependencies
+        if: ${{ env.SKIP_PREDICTIONS != '1' }}
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r SofascoreData/requirements.txt
 
       - name: Run daily prediction pipeline
+        if: ${{ env.SKIP_PREDICTIONS != '1' }}
         shell: pwsh
-        run: ./scripts/daily-predictions.ps1 -DaysAhead $env:DAYS_AHEAD -UpdateDaysBack $env:UPDATE_DAYS_BACK -Python "python"
+        run: ./scripts/daily-predictions.ps1 -DaysAhead $env:DAYS_AHEAD -UpdateDaysBack $env:UPDATE_DAYS_BACK -Python "python" -SkipBuild -SkipDeploy
 
       - name: Persist updated data to Google Drive
-        if: success()
+        if: ${{ env.SKIP_PREDICTIONS != '1' && success() }}
         shell: bash
         run: |
-          rclone sync SofascoreData/data "$GDRIVE_ROOT/SofascoreData/data" --progress --exclude "__pycache__/**"
-          rclone sync SofascoreData/reports "$GDRIVE_ROOT/SofascoreData/reports" --progress --exclude "__pycache__/**"
-          rclone sync SofascoreData/top_picks "$GDRIVE_ROOT/SofascoreData/top_picks" --progress --exclude "__pycache__/**"
+          rclone sync SofascoreData/data "$GDRIVE_ROOT/SofascoreData/data" --progress --fast-list --transfers 8 --checkers 16 --exclude "__pycache__/**"
+          rclone sync SofascoreData/reports "$GDRIVE_ROOT/SofascoreData/reports" --progress --fast-list --transfers 8 --checkers 16 --exclude "__pycache__/**"
+          rclone sync SofascoreData/top_picks "$GDRIVE_ROOT/SofascoreData/top_picks" --progress --fast-list --transfers 8 --checkers 16 --exclude "__pycache__/**"
+
+      - name: Build production bundle
+        run: npm run build:prod
+
+      - name: Deploy to Vercel
+        if: ${{ env.SKIP_VERCEL_DEPLOY != '1' }}
+        run: npm run deploy:vercel
