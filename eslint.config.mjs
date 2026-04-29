@@ -7,7 +7,11 @@ export default defineConfig([
     ...nextTs,
     globalIgnores([
         ".data/**",
+        ".data-build/**",
+        ".data.stale-*/**",
         ".next/**",
+        "next-build/**",
+        ".venv/**",
         ".vercel/**",
         ".vercel-deploy-staging/**",
         "SofascoreData/**",

@@ -13,6 +13,7 @@ Requires Chrome/Brave browser for scraping.
 import argparse
 import json
 import os
+import re
 import sys
 import warnings
 from datetime import datetime
@@ -29,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from sofascore.features import MLFeatureGenerator
 
 REPORTS_DIR = Path(__file__).parent / 'reports'
+DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MODEL_VARIANT_CONFIG = {
     'without_odds': {
         'filename': 'universal_predictor.pkl',
@@ -49,6 +51,16 @@ ODDS_KEYS = BASE_ODDS_KEYS + OPTIONAL_ODDS_KEYS
 ODDS_REQUIREMENTS_BY_TARGET = {
     '__all__': BASE_ODDS_KEYS,
 }
+
+
+def validate_target_date(target_date: str) -> str:
+    if not isinstance(target_date, str) or not DATE_RE.fullmatch(target_date):
+        raise ValueError(f"Invalid date '{target_date}'. Expected YYYY-MM-DD.")
+    parsed = datetime.strptime(target_date, '%Y-%m-%d')
+    normalized = parsed.strftime('%Y-%m-%d')
+    if normalized != target_date:
+        raise ValueError(f"Invalid date '{target_date}'. Expected a real calendar date.")
+    return normalized
 
 
 def _is_positive_odds(value) -> bool:
@@ -1653,12 +1665,14 @@ def print_predictions(results: list, target_date: str):
 
 
 def _date_dir(target_date: str) -> Path:
+    target_date = validate_target_date(target_date)
     d = REPORTS_DIR / target_date
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def get_report_path(target_date: str, status: str = None) -> Path:
+    target_date = validate_target_date(target_date)
     date_dir = _date_dir(target_date)
 
     if status:
@@ -1676,6 +1690,7 @@ def get_report_path(target_date: str, status: str = None) -> Path:
 
 
 def load_existing_report(target_date: str) -> Optional[Dict]:
+    target_date = validate_target_date(target_date)
     date_dir = REPORTS_DIR / target_date
     for status in ['finished', 'unfinished']:
         path = date_dir / f"predictions_{status}.json"
@@ -1978,12 +1993,37 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
     return report
 
 
+def _atomic_write_json(path: Path, data: Dict):
+    """Write JSON through a temporary file and atomically replace the target."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(
+        f".{path.name}.tmp-{os.getpid()}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    )
+
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+
 def save_report(report: Dict, target_date: str):
     """Save report to file (remove old one if status changed)."""
+    target_date = validate_target_date(target_date)
     date_dir = _date_dir(target_date)
 
     status = report['status']
     new_path = date_dir / f"predictions_{status}.json"
+
+    _atomic_write_json(new_path, report)
 
     other_status = 'finished' if status == 'unfinished' else 'unfinished'
     for old in [date_dir / f"predictions_{other_status}.json",
@@ -1991,13 +2031,11 @@ def save_report(report: Dict, target_date: str):
         if old.exists():
             old.unlink()
 
-    with open(new_path, 'w', encoding='utf-8') as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-
     return new_path
 
 
 def save_analysis(analysis_map: Dict, target_date: str):
+    target_date = validate_target_date(target_date)
     date_dir = _date_dir(target_date)
     path = date_dir / f"analysis.json"
 
@@ -2007,8 +2045,7 @@ def save_analysis(analysis_map: Dict, target_date: str):
         'matches': analysis_map,
     }
 
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(path, data)
 
     print(f"Statistical analysis saved: {path}")
 
@@ -2168,7 +2205,11 @@ def main():
                         help='Do not save report to file')
     
     args = parser.parse_args()
-    target_date = args.date
+    try:
+        target_date = validate_target_date(args.date)
+    except ValueError as exc:
+        print(exc)
+        sys.exit(2)
     
     print("="*70)
     print("MATCH PREDICTION SYSTEM")

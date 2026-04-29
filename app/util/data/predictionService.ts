@@ -3,6 +3,7 @@ import path from "path";
 import { cache } from "../serverCache";
 import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
+import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
 
 type RawPredictionMatch = Omit<PredictionMatch, "predictions"> & {
@@ -59,6 +60,10 @@ function readPredictionReportInDateDir(dateDir: string): PredictionReport | null
     );
 }
 
+function safeReportDate(date: string): string | null {
+    return normalizeReportDate(date);
+}
+
 function predictionReportMtime(dateDir: string): number {
     let latest = 0;
     for (const fileName of ["predictions_finished.json", "predictions_unfinished.json"]) {
@@ -80,23 +85,29 @@ function newestExistingReportDir(dateDirs: string[]): string | null {
 }
 
 export const loadPredictionReport = cache((date: string): PredictionReport | null => {
+    const safeDate = safeReportDate(date);
+    if (!safeDate) return null;
+
     const env = process.env.SOFASCORE_REPORTS_DIR;
     if (env) {
-        return readPredictionReportInDateDir(path.join(env, date));
+        return readPredictionReportInDateDir(path.join(env, safeDate));
     }
-    const prebuiltDir = path.join(process.cwd(), ".data", "reports", date);
-    const sourceDir = path.join(process.cwd(), "SofascoreData", "reports", date);
+    const prebuiltDir = path.join(process.cwd(), ".data", "reports", safeDate);
+    const sourceDir = path.join(process.cwd(), "SofascoreData", "reports", safeDate);
     const newestDir = newestExistingReportDir([prebuiltDir, sourceDir]);
     return newestDir ? readPredictionReportInDateDir(newestDir) : null;
 });
 
 export const loadAnalysisReport = cache((date: string): AnalysisReport | null => {
+    const safeDate = safeReportDate(date);
+    if (!safeDate) return null;
+
     const env = process.env.SOFASCORE_REPORTS_DIR;
     if (env) {
-        return readJson<AnalysisReport>(path.join(env, date, "analysis.json"));
+        return readJson<AnalysisReport>(path.join(env, safeDate, "analysis.json"));
     }
-    const prebuilt = path.join(process.cwd(), ".data", "reports", date, "analysis.json");
-    const source = path.join(process.cwd(), "SofascoreData", "reports", date, "analysis.json");
+    const prebuilt = path.join(process.cwd(), ".data", "reports", safeDate, "analysis.json");
+    const source = path.join(process.cwd(), "SofascoreData", "reports", safeDate, "analysis.json");
     return readJson<AnalysisReport>(prebuilt) ?? readJson<AnalysisReport>(source);
 });
 
@@ -111,7 +122,7 @@ export const listReportDates = cache((): string[] => {
             continue;
         }
         for (const d of entries) {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+            if (!isValidYmdDate(d)) continue;
             try {
                 if (fs.statSync(path.join(dir, d)).isDirectory()) dates.add(d);
             } catch {
@@ -195,9 +206,35 @@ export function loadComparisonSummary(): ModelComparisonRow[] {
         return Number.isFinite(v) ? v : 0;
     };
 
+    const parseCsvLine = (line: string): string[] => {
+        const cols: string[] = [];
+        let current = "";
+        let quoted = false;
+
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const next = line[i + 1];
+
+            if (char === '"' && quoted && next === '"') {
+                current += '"';
+                i++;
+            } else if (char === '"') {
+                quoted = !quoted;
+            } else if (char === "," && !quoted) {
+                cols.push(current);
+                current = "";
+            } else {
+                current += char;
+            }
+        }
+
+        cols.push(current);
+        return cols;
+    };
+
     const rows: ModelComparisonRow[] = [];
     for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",");
+        const cols = parseCsvLine(lines[i]);
         if (cols.length < 10) continue;
         rows.push({
             model: cols[0],

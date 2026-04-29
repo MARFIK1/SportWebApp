@@ -90,6 +90,10 @@ function report(date: string, accuracy: Record<string, ModelAccuracy>, matches: 
 beforeEach(() => {
     jest.resetAllMocks();
     mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.statSync.mockReturnValue({
+        isDirectory: () => true,
+        mtimeMs: 1,
+    } as fs.Stats);
 });
 
 describe("aggregateAccuracy", () => {
@@ -115,7 +119,11 @@ describe("aggregateAccuracy", () => {
     });
 
     it("ignores dates with no report", () => {
-        mockedFs.readFileSync.mockImplementation(() => { throw new Error("not found"); });
+        mockedFs.readFileSync.mockImplementation(() => {
+            const error = new Error("not found") as NodeJS.ErrnoException;
+            error.code = "ENOENT";
+            throw error;
+        });
         const result = aggregateAccuracy(["2025-01-01"]);
         expect(Object.keys(result)).toHaveLength(0);
     });
@@ -172,6 +180,13 @@ describe("computeResultTypeAccuracy", () => {
 });
 
 describe("prediction report normalization", () => {
+    it("rejects invalid report dates before building filesystem paths", () => {
+        const loaded = loadPredictionReport("../2025-01-01");
+
+        expect(loaded).toBeNull();
+        expect(mockedFs.readFileSync).not.toHaveBeenCalled();
+    });
+
     it("moves top-level consensus into predictions when loading a report", () => {
         const r1 = report("2025-01-01", {}, [
             { actual: "HOME", predictions: { LightGBM: "HOME" } },
@@ -274,6 +289,19 @@ describe("loadComparisonSummary", () => {
             brierScore: 0.6085,
         });
         expect(rows[1].model).toBe("MLP");
+    });
+
+    it("parses quoted CSV fields", () => {
+        const csv = [
+            "Model,Test Accuracy,Test F1,Live Accuracy,Live Matches,Brier Score,Train Time (s),Predict Time (ms),Memory (MB),Model Size (KB)",
+            "\"Model, With Comma\",0.5,0.4,0.6,10,0.7,1,2,3,4",
+        ].join("\n");
+        mockedFs.readFileSync.mockReturnValue(csv);
+
+        const rows = loadComparisonSummary();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].model).toBe("Model, With Comma");
+        expect(rows[0].liveAccuracy).toBe(0.6);
     });
 
     it("returns empty array when file missing", () => {

@@ -14,6 +14,7 @@ import DatePicker from "../components/home/DatePicker";
 import PredictionsClient from "./PredictionsClient";
 import ModelComparisonCharts from "./ModelComparisonCharts";
 import { getServerT } from "../util/i18n/getLocale";
+import { normalizeReportDate } from "../util/data/dateUtils";
 
 export const metadata: Metadata = {
     title: "Predictions Dashboard",
@@ -41,7 +42,8 @@ function buildTeamIdsForReport(leagueDataPaths: string[]): Record<string, number
 export default async function Predictions({ searchParams }: PageProps) {
     const resolvedSearchParams = await searchParams;
     const dates = listReportDates();
-    const selectedDate = resolvedSearchParams.date || dates[dates.length - 1] || "";
+    const requestedDate = normalizeReportDate(resolvedSearchParams.date);
+    const selectedDate = (requestedDate && dates.includes(requestedDate) ? requestedDate : null) || dates[dates.length - 1] || "";
     const report = selectedDate ? loadPredictionReport(selectedDate) : null;
 
     const t = await getServerT();

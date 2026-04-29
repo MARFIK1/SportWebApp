@@ -1,3 +1,5 @@
+import { isValidYmdDate } from "./dateUtils";
+
 function utcTodayYmd(): string {
     return new Date().toISOString().slice(0, 10);
 }
@@ -10,7 +12,8 @@ function addCalendarDaysYmd(ymd: string, deltaDays: number): string {
 
 export function filterReportDatesByWindow(dates: string[]): string[] {
     const disabled = process.env.REPORT_WINDOW_DISABLED === "1" || process.env.REPORT_WINDOW_DISABLED === "true";
-    if (disabled) return dates;
+    const validDates = dates.filter(isValidYmdDate);
+    if (disabled) return validDates;
 
     const past = Math.max(0, parseInt(process.env.REPORT_DAYS_PAST ?? "14", 10));
     const future = Math.max(0, parseInt(process.env.REPORT_DAYS_FUTURE ?? "14", 10));
@@ -18,5 +21,5 @@ export function filterReportDatesByWindow(dates: string[]): string[] {
     const minYmd = addCalendarDaysYmd(today, -past);
     const maxYmd = addCalendarDaysYmd(today, future);
 
-    return dates.filter((d) => d >= minYmd && d <= maxYmd);
+    return validDates.filter((d) => d >= minYmd && d <= maxYmd);
 }

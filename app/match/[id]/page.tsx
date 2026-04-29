@@ -10,6 +10,7 @@ import { teamLogoUrl } from "@/app/util/urls";
 import MatchPredictions from "./MatchPredictions";
 import MatchStatistics from "./MatchStatistics";
 import { getServerT } from "@/app/util/i18n/getLocale";
+import { normalizeReportDate } from "@/app/util/data/dateUtils";
 import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
 
@@ -97,7 +98,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     }
 
     const { match, competition } = result;
-    const date = resolvedSearchParams.date || match.date.slice(0, 10);
+    const date = normalizeReportDate(resolvedSearchParams.date) || match.date.slice(0, 10);
 
     const predReport = loadPredictionReport(date);
     const analysisReport = loadAnalysisReport(date);
