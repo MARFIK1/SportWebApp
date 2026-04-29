@@ -58,15 +58,19 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
             ? "border-emerald-500/60"
             : "border-red-500/60";
 
-    const href = eventId ? `/match/${eventId}?date=${date}` : "#";
+    const href = eventId ? `/match/${eventId}?date=${date}` : null;
     const statusTone = correct === null
         ? "bg-gray-100 text-gray-500 dark:bg-white/10 dark:text-gray-300"
         : correct
             ? "bg-emerald-500/15 text-emerald-500"
             : "bg-rose-500/15 text-rose-400";
 
-    return (
-        <Link href={href} className={`group relative flex min-h-[190px] w-full flex-col overflow-hidden rounded-3xl border ${borderColor} bg-white/90 p-4 shadow-sm shadow-slate-900/5 transition-all hover:-translate-y-1 hover:border-emerald-400/50 hover:shadow-xl hover:shadow-emerald-950/10 dark:bg-gray-900/70 dark:shadow-black/10 dark:hover:bg-gray-900`}>
+    const cardClassName = `group relative flex min-h-[190px] w-full flex-col overflow-hidden rounded-3xl border ${borderColor} bg-white/90 p-4 shadow-sm shadow-slate-900/5 transition-all dark:bg-gray-900/70 dark:shadow-black/10 ${
+        href ? "hover:-translate-y-1 hover:border-emerald-400/50 hover:shadow-xl hover:shadow-emerald-950/10 dark:hover:bg-gray-900" : "cursor-not-allowed opacity-80"
+    }`;
+
+    const content = (
+        <>
             <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
             <div className="mb-4 flex items-center justify-between">
                 <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${statusTone}`}>
@@ -165,6 +169,20 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
                     )}
                 </div>
             )}
+        </>
+    );
+
+    if (!href) {
+        return (
+            <div className={cardClassName} aria-disabled="true">
+                {content}
+            </div>
+        );
+    }
+
+    return (
+        <Link href={href} className={cardClassName}>
+            {content}
         </Link>
     );
 }

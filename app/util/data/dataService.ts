@@ -13,6 +13,30 @@ function resolveDataDir(): string {
 
 const DATA_DIR = process.env.SOFASCORE_DATA_DIR || resolveDataDir();
 
+function competitionsCacheKey(competitions: Competition[]): string {
+    return `${DATA_DIR}::${competitions.map((c) => c.dataPath).sort().join("|")}`;
+}
+
+const matchIndexCache = new Map<string, Map<number, { match: SofascoreMatch; competition: Competition }>>();
+const searchDataCache = new Map<string, { teams: SearchTeam[]; players: SearchPlayer[] }>();
+
+function getMatchIndex(competitions: Competition[]): Map<number, { match: SofascoreMatch; competition: Competition }> {
+    const key = competitionsCacheKey(competitions);
+    const cached = matchIndexCache.get(key);
+    if (cached) return cached;
+
+    const index = new Map<number, { match: SofascoreMatch; competition: Competition }>();
+    for (const comp of competitions) {
+        for (const match of loadAllSeasons(comp)) {
+            if (!index.has(match.event_id)) {
+                index.set(match.event_id, { match, competition: comp });
+            }
+        }
+    }
+    matchIndexCache.set(key, index);
+    return index;
+}
+
 export const loadAllSeasons = cache((competition: Competition): SofascoreMatch[] => {
     const filePath = path.join(DATA_DIR, competition.dataPath, "raw", "all_seasons.json");
     const data = readJson<SofascoreMatchFile>(filePath);
@@ -177,12 +201,7 @@ export function loadLineups(competition: Competition, seasonFile: string): Match
 }
 
 export function findMatchInCompetitions(eventId: number, competitions: Competition[]): { match: SofascoreMatch; competition: Competition } | null {
-    for (const comp of competitions) {
-        const matches = loadAllSeasons(comp);
-        const match = matches.find((m) => m.event_id === eventId);
-        if (match) return { match, competition: comp };
-    }
-    return null;
+    return getMatchIndex(competitions).get(eventId) ?? null;
 }
 
 export function buildTeamIdMap(competitions: Competition[]): Map<string, number> {
@@ -310,6 +329,10 @@ export interface SearchPlayer {
 }
 
 export function buildSearchData(competitions: Competition[]): { teams: SearchTeam[]; players: SearchPlayer[] } {
+    const key = competitionsCacheKey(competitions);
+    const cached = searchDataCache.get(key);
+    if (cached) return cached;
+
     const teamMap = new Map<number, string>();
     const playerMap = new Map<number, SearchPlayer>();
 
@@ -333,5 +356,7 @@ export function buildSearchData(competitions: Competition[]): { teams: SearchTea
     const teams = Array.from(teamMap.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
     const players = Array.from(playerMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
-    return { teams, players };
+    const data = { teams, players };
+    searchDataCache.set(key, data);
+    return data;
 }

@@ -89,11 +89,15 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     {t("ml_comparison")}
                 </h3>
-                <div className="flex gap-1 flex-wrap">
+                <div className="flex gap-1 flex-wrap" role="tablist" aria-label={t("ml_comparison")}>
                     {tabs.map((tab) => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
+                            role="tab"
+                            id={`chart-tab-${tab.id}`}
+                            aria-selected={activeTab === tab.id}
+                            aria-controls={`chart-panel-${tab.id}`}
                             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                                 activeTab === tab.id
                                     ? "bg-emerald-600 text-white"
@@ -106,7 +110,12 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
                 </div>
             </div>
 
-            <div className="h-[420px]">
+            <div
+                id={`chart-panel-${activeTab}`}
+                role="tabpanel"
+                aria-labelledby={`chart-tab-${activeTab}`}
+                className="h-[420px]"
+            >
                 {activeTab === "comparison" && sortedComparison.length > 0 && (
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={sortedComparison.map((r) => ({

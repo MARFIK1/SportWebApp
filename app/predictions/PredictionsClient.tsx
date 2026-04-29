@@ -57,9 +57,11 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                         <div key={match.id} className="bg-white dark:bg-gray-900/50 rounded-xl overflow-hidden">
                             <button
                                 onClick={() => setExpandedMatch(isExpanded ? null : match.id)}
-                                className="w-full flex items-center gap-4 p-4 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors text-left"
+                                aria-expanded={isExpanded}
+                                aria-controls={`prediction-details-${match.id}`}
+                                className="w-full flex flex-col gap-3 p-4 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors text-left sm:flex-row sm:items-center sm:gap-4"
                             >
-                                <div className="flex items-center gap-2 w-[280px]">
+                                <div className="flex w-full min-w-0 items-center gap-2 sm:w-[280px]">
                                     {teamIds[match.home_team] && (
                                         <Image
                                             src={teamLogoUrl(teamIds[match.home_team])}
@@ -89,7 +91,7 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                     )}
                                 </div>
 
-                                <div className="flex-1 flex items-center gap-4">
+                                <div className="flex w-full flex-wrap items-center gap-3 sm:flex-1 sm:gap-4">
                                     {consensus && (
                                         <>
                                             <span className={`px-2 py-0.5 rounded text-xs font-bold ${
@@ -125,8 +127,9 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                             </button>
 
                             {isExpanded && (
-                                <div className="px-4 pb-4">
-                                    <table className="w-full text-sm">
+                                <div id={`prediction-details-${match.id}`} className="px-4 pb-4">
+                                    <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[720px] text-sm">
                                         <thead>
                                             <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-800">
                                                 <th className="text-left py-2 px-2">{t("model")}</th>
@@ -176,6 +179,7 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                             ))}
                                         </tbody>
                                     </table>
+                                    </div>
                                 </div>
                             )}
                         </div>

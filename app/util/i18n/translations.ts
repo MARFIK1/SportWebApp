@@ -242,9 +242,9 @@ const translations: Record<Locale, Record<string, string>> = {
         corners_over_85: "Rzuty rożne 8.5+",
         cards_over_35: "Kartki 3.5+",
         prediction_variant: "Wariant predykcji",
-        without_odds: "Bez kursow",
+        without_odds: "Bez kursów",
         with_odds: "Z kursami",
-        market_unavailable: "Niedostepne",
+        market_unavailable: "Niedostępne",
         variant_partial_markets: "Część rynków jest niedostępna dla tego wariantu.",
 
         // Team

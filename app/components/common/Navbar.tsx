@@ -10,11 +10,37 @@ import { useTheme } from "./ThemeProvider";
 export default function Navbar({ teamsData, playersData }: { teamsData: SearchTeam[]; playersData: SearchPlayer[] }) {
     const { locale, setLocale, t } = useLanguage();
     const { theme, toggle } = useTheme();
+    const languageLabel = locale === "en" ? "Zmień na polski" : "Switch to English";
+    const themeLabel = theme === "dark" ? "Light mode" : "Dark mode";
+
+    const actions = (
+        <>
+            <Link href="/predictions" className="text-sm text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-white">
+                {t("predictions")}
+            </Link>
+            <button
+                onClick={() => setLocale(locale === "en" ? "pl" : "en")}
+                className="rounded-lg px-2 py-1 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                title={languageLabel}
+                aria-label={languageLabel}
+            >
+                {locale === "en" ? "PL" : "EN"}
+            </button>
+            <button
+                onClick={toggle}
+                className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                title={themeLabel}
+                aria-label={themeLabel}
+            >
+                {theme === "dark" ? <SunIcon className="h-5 w-5" /> : <MoonIcon className="h-5 w-5" />}
+            </button>
+        </>
+    );
 
     return (
-        <div className="flex justify-between items-center w-full">
-            <div className="flex items-center">
-                <Link href="/" className="flex items-center">
+        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center justify-between gap-3 sm:justify-start">
+                <Link href="/" className="flex items-center" aria-label="SportWebApp home">
                     <Image
                         src="/logo.png"
                         alt="SportWebApp logo"
@@ -23,28 +49,15 @@ export default function Navbar({ teamsData, playersData }: { teamsData: SearchTe
                         className="h-12 w-12 object-contain"
                     />
                 </Link>
+                <div className="flex items-center gap-2 sm:hidden">
+                    {actions}
+                </div>
             </div>
-            <div className="flex-1 mx-4">
+            <div className="min-w-0 flex-1 sm:mx-4">
                 <SearchBarForm teamsData={teamsData} playersData={playersData} />
             </div>
-            <div className="flex items-center gap-3">
-                <Link href="/predictions" className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
-                    {t("predictions")}
-                </Link>
-                <button
-                    onClick={() => setLocale(locale === "en" ? "pl" : "en")}
-                    className="px-2 py-1 rounded-lg text-xs font-bold text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                    title={locale === "en" ? "Zmień na polski" : "Switch to English"}
-                >
-                    {locale === "en" ? "PL" : "EN"}
-                </button>
-                <button
-                    onClick={toggle}
-                    className="p-1.5 rounded-lg text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                    title={theme === "dark" ? "Light mode" : "Dark mode"}
-                >
-                    {theme === "dark" ? <SunIcon className="w-5 h-5" /> : <MoonIcon className="w-5 h-5" />}
-                </button>
+            <div className="hidden items-center gap-3 sm:flex">
+                {actions}
             </div>
         </div>
     );

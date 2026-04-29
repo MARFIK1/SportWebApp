@@ -45,12 +45,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <body className={`${inter.className}`}>
                 <ThemeProvider initial={theme}>
                     <LanguageProvider initial={locale}>
-                        <div className="flex h-screen">
+                        <div className="flex min-h-dvh">
                             <div className="flex flex-col flex-1">
                                 <header className="sticky top-0 z-30 w-full border-b border-gray-200/80 bg-white/85 p-3 backdrop-blur-xl dark:border-white/10 dark:bg-[#0b1220]/85">
                                     <Navbar teamsData={teams} playersData={players} />
                                 </header>
-                                <main className="flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.10),_transparent_30%),linear-gradient(180deg,_#f8fafc_0%,_#eef2f7_100%)] dark:bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.12),_transparent_32%),linear-gradient(180deg,_#0b1220_0%,_#111827_48%,_#0b1220_100%)]">
+                                <main className="flex-1 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.10),_transparent_30%),linear-gradient(180deg,_#f8fafc_0%,_#eef2f7_100%)] dark:bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.12),_transparent_32%),linear-gradient(180deg,_#0b1220_0%,_#111827_48%,_#0b1220_100%)]">
                                     {children}
                                 </main>
                             </div>
