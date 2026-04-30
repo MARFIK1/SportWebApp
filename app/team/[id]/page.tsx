@@ -82,7 +82,7 @@ export default async function TeamPage({ params }: PageProps) {
     return (
         <div className="flex flex-col w-full max-w-[1400px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
             <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
-                <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
+                <Link href="/" prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
                 <span>/</span>
                 <span className="text-gray-700 dark:text-gray-300">{teamName}</span>
             </div>
@@ -162,7 +162,7 @@ export default async function TeamPage({ params }: PageProps) {
                             <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("upcoming_matches")}</h3>
                             <div className="space-y-2">
                                 {nextMatches.map((m) => (
-                                    <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                    <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                         <div className="flex items-center gap-2 flex-1">
                                             <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                             <span className="text-sm truncate">{m.home_team}</span>
@@ -190,7 +190,7 @@ export default async function TeamPage({ params }: PageProps) {
                                 const drew = teamScore !== null && opponentScore !== null && teamScore === opponentScore;
 
                                 return (
-                                    <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                    <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                         <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
                                             won ? "bg-emerald-600" : drew ? "bg-gray-600" : "bg-red-600"
                                         }`}>
@@ -227,7 +227,7 @@ export default async function TeamPage({ params }: PageProps) {
                                         </div>
                                         <div className="space-y-1">
                                             {players.map((p) => (
-                                                <Link key={p.id} href={`/player/${p.id}`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                                <Link key={p.id} href={`/player/${p.id}`} prefetch={false} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                                     <Image
                                                         src={playerImageUrl(p.id)}
                                                         alt={p.name}

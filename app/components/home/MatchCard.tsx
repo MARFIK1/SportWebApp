@@ -181,7 +181,7 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
     }
 
     return (
-        <Link href={href} className={cardClassName}>
+        <Link href={href} prefetch={false} className={cardClassName}>
             {content}
         </Link>
     );

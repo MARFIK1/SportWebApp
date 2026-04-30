@@ -81,7 +81,7 @@ function StandingsTable({ standings, t }: { standings: StandingRow[]; t: (key: s
                         <tr key={row.teamId} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                             <td className="py-3 px-2 text-gray-500 dark:text-gray-400">{row.position}</td>
                             <td className="py-3 px-2">
-                                <Link href={`/team/${row.teamId}`} className="flex items-center gap-2 hover:text-emerald-400 transition-colors">
+                                <Link href={`/team/${row.teamId}`} prefetch={false} className="flex items-center gap-2 hover:text-emerald-400 transition-colors">
                                     <Image src={teamLogoUrl(row.teamId)} alt={row.teamName} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                     <span className="font-medium">{row.teamName}</span>
                                 </Link>
@@ -162,7 +162,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
     return (
         <div className="flex flex-col w-full max-w-[1400px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
             <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
-                <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
+                <Link href="/" prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
                 <span>/</span>
                 <span className="text-gray-700 dark:text-gray-300">{competition.name}</span>
             </div>
@@ -180,6 +180,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                         <Link
                             key={s}
                             href={`/league/${resolvedParams.slug}?season=${encodeURIComponent(s)}`}
+                            prefetch={false}
                             className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors ${
                                 s === selectedSeason
                                     ? "bg-emerald-600 text-white"
@@ -218,7 +219,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                                 {playoffMatches
                                     .sort((a, b) => a.date.localeCompare(b.date))
                                     .map((m) => (
-                                    <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                    <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                         <div className="flex items-center gap-2 flex-1">
                                             <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                             <span className="text-sm truncate">{m.home_team}</span>
@@ -254,7 +255,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                         <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("upcoming_matches")}</h3>
                         <div className="space-y-2">
                             {upcoming.map((m) => (
-                                <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                     <div className="flex items-center gap-2 flex-1">
                                         <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         <span className="text-sm truncate">{m.home_team}</span>
@@ -276,7 +277,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                         <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("recent_results")}</h3>
                         <div className="space-y-2">
                             {finished.map((m) => (
-                                <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                     <div className="flex items-center gap-2 flex-1">
                                         <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         <span className="text-sm truncate">{m.home_team}</span>

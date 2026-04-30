@@ -142,9 +142,9 @@ export default async function Match({ params, searchParams }: PageProps) {
     const content = (
         <>
             <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
-                <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
+                <Link href="/" prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
                 <span>/</span>
-                <Link href={`/?date=${date}`} className="hover:text-gray-900 dark:hover:text-white transition-colors">{competition.name}</Link>
+                <Link href={`/?date=${date}`} prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{competition.name}</Link>
                 <span>/</span>
                 <span className="text-gray-700 dark:text-gray-300">{t("round_label")} {match.round}</span>
             </div>
@@ -257,7 +257,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                             </div>
                             <div className="space-y-2">
                                 {h2h.map((m) => (
-                                    <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                    <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                         <div className="flex items-center gap-2 flex-1">
                                             <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={20} height={20} className="object-contain" style={{ width: "20px", height: "20px" }} />
                                             <span className="text-sm truncate">{m.home_team}</span>

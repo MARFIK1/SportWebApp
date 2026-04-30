@@ -56,7 +56,7 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
                     <div className="h-12 w-1 rounded-full bg-gradient-to-b from-emerald-400 via-emerald-500 to-cyan-400" />
                     <div className="space-y-1">
                         <div className="flex items-center gap-3">
-                            <Link href={`/league/${slug}`} className="text-xl font-bold text-gray-900 dark:text-white hover:text-emerald-400 transition-colors">{leagueName}</Link>
+                            <Link href={`/league/${slug}`} prefetch={false} className="text-xl font-bold text-gray-900 dark:text-white hover:text-emerald-400 transition-colors">{leagueName}</Link>
                             <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-500 dark:border-gray-700 dark:text-gray-400">
                                 {matches.length} {t("matches_count")}
                             </span>
@@ -81,6 +81,7 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
                 </div>
                 <Link
                     href={`/league/${slug}`}
+                    prefetch={false}
                     className="w-full rounded-xl border border-emerald-500/20 px-3 py-2 text-center text-sm font-semibold text-emerald-500 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400 sm:w-auto"
                 >
                     {t("view_standings")} {"\u2197"}

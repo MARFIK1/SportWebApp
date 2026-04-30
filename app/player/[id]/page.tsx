@@ -90,11 +90,11 @@ export default async function PlayerPage({ params }: PageProps) {
     return (
         <div className="flex flex-col w-full max-w-[1000px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
             <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
-                <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
+                <Link href="/" prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
                 <span>/</span>
                 {teamId && (
                     <>
-                        <Link href={`/team/${teamId}`} className="hover:text-gray-900 dark:hover:text-white transition-colors">{player.team}</Link>
+                        <Link href={`/team/${teamId}`} prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{player.team}</Link>
                         <span>/</span>
                     </>
                 )}
@@ -133,7 +133,7 @@ export default async function PlayerPage({ params }: PageProps) {
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-8">
                     {teamId && (
-                        <Link href={`/team/${teamId}`} className="text-center hover:bg-gray-100 dark:hover:bg-gray-800/50 rounded-xl p-3 transition-colors">
+                        <Link href={`/team/${teamId}`} prefetch={false} className="text-center hover:bg-gray-100 dark:hover:bg-gray-800/50 rounded-xl p-3 transition-colors">
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t("team")}</div>
                             <Image
                                 src={teamLogoUrl(teamId)}
@@ -182,7 +182,7 @@ export default async function PlayerPage({ params }: PageProps) {
                             const drew = teamScore !== null && opponentScore !== null && teamScore === opponentScore;
 
                             return (
-                                <Link key={m.event_id} href={`/match/${m.event_id}`} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                                <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                     <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
                                         won ? "bg-emerald-600" : drew ? "bg-gray-600" : "bg-red-600"
                                     }`}>

@@ -2,12 +2,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { SunIcon, MoonIcon } from "@heroicons/react/24/outline";
-import type { SearchTeam, SearchPlayer } from "@/app/util/data/dataService";
 import SearchBarForm from "./SearchBarForm";
 import { useLanguage } from "./LanguageProvider";
 import { useTheme } from "./ThemeProvider";
 
-export default function Navbar({ teamsData, playersData }: { teamsData: SearchTeam[]; playersData: SearchPlayer[] }) {
+export default function Navbar() {
     const { locale, setLocale, t } = useLanguage();
     const { theme, toggle } = useTheme();
     const languageLabel = locale === "en" ? "Zmień na polski" : "Switch to English";
@@ -15,7 +14,7 @@ export default function Navbar({ teamsData, playersData }: { teamsData: SearchTe
 
     const actions = (
         <>
-            <Link href="/predictions" className="text-sm text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-white">
+            <Link href="/predictions" prefetch={false} className="text-sm text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-white">
                 {t("predictions")}
             </Link>
             <button
@@ -40,7 +39,7 @@ export default function Navbar({ teamsData, playersData }: { teamsData: SearchTe
     return (
         <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center justify-between gap-3 sm:justify-start">
-                <Link href="/" className="flex items-center" aria-label="SportWebApp home">
+                <Link href="/" prefetch={false} className="flex items-center" aria-label="SportWebApp home">
                     <Image
                         src="/logo.png"
                         alt="SportWebApp logo"
@@ -54,7 +53,7 @@ export default function Navbar({ teamsData, playersData }: { teamsData: SearchTe
                 </div>
             </div>
             <div className="min-w-0 flex-1 sm:mx-4">
-                <SearchBarForm teamsData={teamsData} playersData={playersData} />
+                <SearchBarForm />
             </div>
             <div className="hidden items-center gap-3 sm:flex">
                 {actions}

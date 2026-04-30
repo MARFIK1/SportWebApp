@@ -7,17 +7,19 @@ import type { SearchTeam, SearchPlayer } from "@/app/util/data/dataService";
 import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
 import { useLanguage } from "./LanguageProvider";
 
-export default function SearchBarForm({ teamsData, playersData }: { teamsData: SearchTeam[]; playersData: SearchPlayer[] }) {
+export default function SearchBarForm() {
     const router = useRouter();
     const { t } = useLanguage();
     const [searchTerm, setSearchTerm] = useState("");
     const [focusedIndex, setFocusedIndex] = useState(-1);
     const [showFilteredBox, setShowFilteredBox] = useState(false);
+    const [teamsData, setTeamsData] = useState<SearchTeam[]>([]);
+    const [playersData, setPlayersData] = useState<SearchPlayer[]>([]);
     const listRef = useRef<HTMLDivElement>(null);
     const listboxId = useId();
 
-    const filteredTeams = searchTerm ? teamsData.filter((t) => t.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 5) : [];
-    const filteredPlayers = searchTerm ? playersData.filter((p) => p.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 5) : [];
+    const filteredTeams = searchTerm.trim().length >= 2 ? teamsData : [];
+    const filteredPlayers = searchTerm.trim().length >= 2 ? playersData : [];
 
     const totalResults = filteredTeams.length + filteredPlayers.length;
     const showResults = searchTerm.length > 0 && totalResults > 0 && showFilteredBox;
@@ -59,6 +61,36 @@ export default function SearchBarForm({ teamsData, playersData }: { teamsData: S
         return () => document.removeEventListener("click", handleOutsideClick);
     }, []);
 
+    useEffect(() => {
+        const q = searchTerm.trim();
+        if (q.length < 2) {
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeout = window.setTimeout(async () => {
+            try {
+                const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+                    signal: controller.signal,
+                });
+                if (!res.ok) return;
+                const data = await res.json() as { teams?: SearchTeam[]; players?: SearchPlayer[] };
+                setTeamsData(data.teams ?? []);
+                setPlayersData(data.players ?? []);
+            } catch (error) {
+                if ((error as Error).name !== "AbortError") {
+                    setTeamsData([]);
+                    setPlayersData([]);
+                }
+            }
+        }, 180);
+
+        return () => {
+            window.clearTimeout(timeout);
+            controller.abort();
+        };
+    }, [searchTerm]);
+
     return (
         <div className="flex justify-center items-center w-full max-w-lg relative" ref={listRef}>
             <input
@@ -86,6 +118,7 @@ export default function SearchBarForm({ teamsData, playersData }: { teamsData: S
                     {filteredTeams.map((team, i) => (
                         <Link
                             href={`/team/${team.id}`}
+                            prefetch={false}
                             key={team.id}
                             id={`${listboxId}-option-${i}`}
                             role="option"
@@ -103,6 +136,7 @@ export default function SearchBarForm({ teamsData, playersData }: { teamsData: S
                     {filteredPlayers.map((player, i) => (
                         <Link
                             href={`/player/${player.id}`}
+                            prefetch={false}
                             key={player.id}
                             id={`${listboxId}-option-${i + filteredTeams.length}`}
                             role="option"
