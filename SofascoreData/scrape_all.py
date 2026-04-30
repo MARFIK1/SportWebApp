@@ -2,7 +2,8 @@
 Scrape football data from Sofascore API.
 
 Usage:
-    python scrape_all.py                              # All leagues (default)
+    python scrape_all.py                              # Current/latest season only (default)
+    python scrape_all.py --all                        # Full 5-season scrape
     python scrape_all.py --type league                # Only domestic leagues
     python scrape_all.py --type cups                  # Only domestic cups
     python scrape_all.py --type european              # Only European competitions
@@ -40,21 +41,13 @@ from sofascore import (
 from sofascore.pipeline import scrape_competition, combine_all_seasons_data
 from sofascore.utils import extract_odds, random_delay
 
-# Optimal season counts for international tournaments
-# (they run every 2-4 years, not annually like leagues)
-INTERNATIONAL_SEASONS = {
-    'euro': 2,
-    'world_cup': 2,
-    'nations_league': 3,
-    'euro_qualifiers': 2,
-    'world_cup_qualifiers_europe': 2,
-}
-
 COMP_TYPES = ['league', 'cups', 'european', 'international']
+DEFAULT_SEASONS = 1
+FULL_HISTORY_SEASONS = 5
 
 
 def scrape_all(scraper, comp_types=None, country_filter=None, league_filter=None,
-               num_seasons=5, scrape_players=True):
+               num_seasons=DEFAULT_SEASONS, scrape_players=True):
     if comp_types is None:
         comp_types = COMP_TYPES
 
@@ -85,11 +78,6 @@ def scrape_all(scraper, comp_types=None, country_filter=None, league_filter=None
                 print(f"# {country.upper()} / {comp_name.upper()}")
                 print(f"{'#'*60}")
 
-                if comp_type == 'international':
-                    seasons = INTERNATIONAL_SEASONS.get(comp_name, 3)
-                else:
-                    seasons = num_seasons
-
                 try:
                     data = scrape_competition(
                         scraper,
@@ -97,7 +85,7 @@ def scrape_all(scraper, comp_types=None, country_filter=None, league_filter=None
                         country=country,
                         league=comp_name,
                         scrape_players=scrape_players,
-                        num_seasons=seasons,
+                        num_seasons=num_seasons,
                     )
                     results[f"{comp_type}/{country}/{comp_name}"] = data
                 except Exception as e:
@@ -236,11 +224,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scrape_all.py                          # All leagues, cups, european, international
+  python scrape_all.py                          # Current/latest season for all competitions
+  python scrape_all.py --all                    # Full 5-season scrape
   python scrape_all.py --type league            # Only domestic leagues
   python scrape_all.py --type cups --type european  # Cups + European
   python scrape_all.py --league premier_league  # Just Premier League
   python scrape_all.py --country england        # All English competitions
+  python scrape_all.py --seasons 3              # Custom season count
   python scrape_all.py --backfill-odds          # Add missing betting odds
   python scrape_all.py --show-seasons la_liga   # Check season IDs
 """
@@ -253,8 +243,10 @@ Examples:
                         help='Filter by country (e.g. england, spain)')
     parser.add_argument('--league', type=str,
                         help='Filter by league name (e.g. premier_league)')
-    parser.add_argument('--seasons', type=int, default=5,
-                        help='Number of seasons to scrape (default: 5)')
+    parser.add_argument('--all', action='store_true',
+                        help=f'Scrape the full {FULL_HISTORY_SEASONS}-season history instead of only the current/latest season')
+    parser.add_argument('--seasons', type=int,
+                        help=f'Custom number of seasons to scrape (default: {DEFAULT_SEASONS}; --all uses {FULL_HISTORY_SEASONS})')
     parser.add_argument('--no-players', action='store_true',
                         help='Skip player data scraping')
 
@@ -290,13 +282,31 @@ Examples:
             backfill_odds(scraper, limit=args.limit, recent_days=args.recent_days)
             return
 
+        if args.all and args.seasons is not None:
+            parser.error('--all cannot be combined with --seasons')
+
+        if args.seasons is not None and args.seasons < 1:
+            parser.error('--seasons must be at least 1')
+
+        if args.seasons is not None:
+            season_count = args.seasons
+            mode = "custom"
+        elif args.all:
+            season_count = FULL_HISTORY_SEASONS
+            mode = "full history"
+        else:
+            season_count = DEFAULT_SEASONS
+            mode = "current/latest"
+
+        print(f"Season count: {season_count} ({mode})")
+
         comp_types = args.types or COMP_TYPES
         results = scrape_all(
             scraper,
             comp_types=comp_types,
             country_filter=args.country,
             league_filter=args.league,
-            num_seasons=args.seasons,
+            num_seasons=season_count,
             scrape_players=not args.no_players,
         )
 

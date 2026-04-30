@@ -109,13 +109,14 @@ class SofascoreSeleniumScraper:
         url = f"https://api.sofascore.com/api/v1{endpoint}"
         script = """
         var callback = arguments[arguments.length - 1];
-        fetch('%s')
+        var url = arguments[0];
+        fetch(url)
             .then(r => r.json())
             .then(data => callback(data))
             .catch(() => callback(null));
-        """ % url
+        """
         try:
-            data = self.driver.execute_async_script(script)
+            data = self.driver.execute_async_script(script, url)
             if data:
                 return data
         except Exception:

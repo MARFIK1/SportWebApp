@@ -583,7 +583,18 @@ class MLFeatureGenerator:
 
     def _compute_elo_table(self, matches):
         """Precompute ELO for all matches. Returns {event_id: (home_elo, away_elo)}."""
-        sorted_matches = sorted(matches, key=lambda x: x.get('date') or '')
+        def kickoff_key(match):
+            return (
+                match.get('date') or '',
+                match.get('time') or match.get('start_time') or '',
+                match.get('event_id') or 0,
+            )
+
+        def update_group_key(match):
+            date_value = match.get('date') or ''
+            return date_value[:10]
+
+        sorted_matches = sorted(matches, key=kickoff_key)
 
         elo = {}
         match_elos = {}
@@ -591,38 +602,50 @@ class MLFeatureGenerator:
         K = 32
         HOME_ADV = 50
 
-        for m in sorted_matches:
-            home = m.get('home_team')
-            away = m.get('away_team')
-            eid = m.get('event_id')
+        i = 0
+        while i < len(sorted_matches):
+            day_key = update_group_key(sorted_matches[i])
+            day_matches = []
+            while i < len(sorted_matches) and update_group_key(sorted_matches[i]) == day_key:
+                day_matches.append(sorted_matches[i])
+                i += 1
 
-            if not home or not away or not eid:
-                continue
+            updates = []
+            for m in day_matches:
+                home = m.get('home_team')
+                away = m.get('away_team')
+                eid = m.get('event_id')
 
-            elo.setdefault(home, 1500)
-            elo.setdefault(away, 1500)
+                if not home or not away or not eid:
+                    continue
 
-            match_elos[eid] = (round(elo[home], 1), round(elo[away], 1))
+                elo.setdefault(home, 1500)
+                elo.setdefault(away, 1500)
 
-            hs = m.get('home_score')
-            as_ = m.get('away_score')
-            if hs is None or as_ is None:
-                continue
+                match_elos[eid] = (round(elo[home], 1), round(elo[away], 1))
 
-            elo_h = elo[home] + HOME_ADV
-            elo_a = elo[away]
-            exp_home = 1 / (1 + 10 ** ((elo_a - elo_h) / 400))
-            exp_away = 1 - exp_home
+                hs = m.get('home_score')
+                as_ = m.get('away_score')
+                if hs is None or as_ is None:
+                    continue
 
-            if hs > as_:
-                s_home, s_away = 1, 0
-            elif hs < as_:
-                s_home, s_away = 0, 1
-            else:
-                s_home, s_away = 0.5, 0.5
+                elo_h = elo[home] + HOME_ADV
+                elo_a = elo[away]
+                exp_home = 1 / (1 + 10 ** ((elo_a - elo_h) / 400))
+                exp_away = 1 - exp_home
 
-            elo[home] += K * (s_home - exp_home)
-            elo[away] += K * (s_away - exp_away)
+                if hs > as_:
+                    s_home, s_away = 1, 0
+                elif hs < as_:
+                    s_home, s_away = 0, 1
+                else:
+                    s_home, s_away = 0.5, 0.5
+
+                updates.append((home, K * (s_home - exp_home)))
+                updates.append((away, K * (s_away - exp_away)))
+
+            for team, delta in updates:
+                elo[team] += delta
 
         return match_elos
 

@@ -4,6 +4,7 @@ Universal Match Predictor.
 
 import json
 import os
+import hashlib
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -23,6 +24,7 @@ from sklearn.metrics import (
     accuracy_score, classification_report,
     precision_score, recall_score, f1_score,
     mean_absolute_error, mean_squared_error, r2_score,
+    brier_score_loss, log_loss, confusion_matrix,
 )
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
@@ -127,6 +129,112 @@ def _sort_training_rows_by_date(X, y, dates=None, sample_weights=None):
         sorted_weights = pd.Series(sample_weights, index=X.index).loc[sort_idx].values
 
     return X_sorted, y_sorted, sorted_weights, sorted_dates
+
+
+def _date_range_summary(dates) -> Dict:
+    if dates is None:
+        return {}
+    parsed = pd.to_datetime(dates, errors='coerce').dropna()
+    if parsed.empty:
+        return {}
+    return {
+        'min': parsed.min().strftime('%Y-%m-%d'),
+        'max': parsed.max().strftime('%Y-%m-%d'),
+    }
+
+
+def _align_predict_proba(model, X, class_labels: List[int]) -> Optional[np.ndarray]:
+    if not hasattr(model, 'predict_proba'):
+        return None
+    try:
+        raw = model.predict_proba(X)
+    except Exception:
+        return None
+    if raw is None:
+        return None
+
+    raw = np.asarray(raw)
+    if raw.ndim != 2:
+        return None
+
+    classes = getattr(model, 'classes_', class_labels)
+    aligned = np.zeros((raw.shape[0], len(class_labels)))
+    class_to_pos = {cls: idx for idx, cls in enumerate(classes)}
+    for out_idx, cls in enumerate(class_labels):
+        raw_idx = class_to_pos.get(cls)
+        if raw_idx is not None and raw_idx < raw.shape[1]:
+            aligned[:, out_idx] = raw[:, raw_idx]
+    return aligned
+
+
+def _expected_calibration_error(y_true, proba, class_labels: List[int], n_bins: int = 10) -> float:
+    y_arr = np.asarray(y_true)
+    pred_pos = np.argmax(proba, axis=1)
+    confidences = np.max(proba, axis=1)
+    pred_labels = np.asarray([class_labels[pos] for pos in pred_pos])
+    correct = (pred_labels == y_arr).astype(float)
+
+    ece = 0.0
+    for lower in np.linspace(0, 1, n_bins, endpoint=False):
+        upper = lower + 1 / n_bins
+        if upper >= 1:
+            mask = (confidences >= lower) & (confidences <= upper)
+        else:
+            mask = (confidences >= lower) & (confidences < upper)
+        if not mask.any():
+            continue
+        ece += float(mask.mean()) * abs(float(correct[mask].mean()) - float(confidences[mask].mean()))
+    return ece
+
+
+def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int]) -> Dict:
+    metrics = {
+        'confusion_matrix': confusion_matrix(y_true, y_pred, labels=class_labels).tolist(),
+        'per_class_recall': {},
+    }
+
+    cm = np.asarray(metrics['confusion_matrix'])
+    for idx, cls in enumerate(class_labels):
+        denom = cm[idx].sum() if idx < cm.shape[0] else 0
+        metrics['per_class_recall'][str(cls)] = round(float(cm[idx, idx] / denom), 4) if denom else 0.0
+
+    if proba is None or len(y_true) == 0:
+        return metrics
+
+    try:
+        metrics['log_loss'] = round(float(log_loss(y_true, proba, labels=class_labels)), 4)
+    except Exception:
+        metrics['log_loss'] = None
+
+    try:
+        y_arr = np.asarray(y_true)
+        briers = []
+        for idx, cls in enumerate(class_labels):
+            briers.append(brier_score_loss((y_arr == cls).astype(int), proba[:, idx]))
+        metrics['brier_score'] = round(float(np.mean(briers)), 4)
+    except Exception:
+        metrics['brier_score'] = None
+
+    try:
+        metrics['ece'] = round(_expected_calibration_error(y_true, proba, class_labels), 4)
+    except Exception:
+        metrics['ece'] = None
+
+    return metrics
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    return value
 
 
 class TemporalStackingClassifier(BaseEstimator, ClassifierMixin):
@@ -329,6 +437,40 @@ FEATURE_COLUMNS = [
     'odds_btts_yes', 'odds_btts_no', 'odds_btts_prob',
 ]
 
+LIVE_UNSAFE_FEATURE_TOKENS = (
+    'player',
+    'squad',
+    'starter',
+    'top_scorer',
+    'total_team',
+    'avg_minutes',
+)
+SAFE_AUTO_FEATURE_PREFIXES = ('home_stats_', 'away_stats_', 'stats_')
+
+
+def _is_odds_feature(column: str) -> bool:
+    return column.startswith('odds_')
+
+
+def _is_live_safe_feature(column: str) -> bool:
+    if _is_odds_feature(column):
+        return False
+    return not any(token in column for token in LIVE_UNSAFE_FEATURE_TOKENS)
+
+
+PRE_MATCH_SAFE_FEATURE_COLUMNS = [c for c in FEATURE_COLUMNS if _is_live_safe_feature(c)]
+LINEUP_AVAILABLE_FEATURE_COLUMNS = [c for c in FEATURE_COLUMNS if not _is_odds_feature(c)]
+ODDS_AVAILABLE_FEATURE_COLUMNS = PRE_MATCH_SAFE_FEATURE_COLUMNS + [
+    c for c in FEATURE_COLUMNS if _is_odds_feature(c)
+]
+
+FEATURE_SETS = {
+    'pre_match_safe': PRE_MATCH_SAFE_FEATURE_COLUMNS,
+    'lineup_available': LINEUP_AVAILABLE_FEATURE_COLUMNS,
+    'odds_available': ODDS_AVAILABLE_FEATURE_COLUMNS,
+    'all_reference': FEATURE_COLUMNS,
+}
+
 RESULT_MAP = {0: 'HOME', 1: 'DRAW', 2: 'AWAY'}
 BINARY_MAP = {0: 'NO', 1: 'YES'}
 
@@ -407,6 +549,7 @@ class UniversalPredictor:
         self.trained = False
         self.feature_columns = []   # Backward compat (result target)
         self.training_stats = {}
+        self.feature_sets_by_target = {}
 
     @staticmethod
     def _filter_positive_odds(
@@ -578,9 +721,33 @@ class UniversalPredictor:
         numeric_cols = df.select_dtypes(include='number').columns.tolist()
         discovered = [c for c in numeric_cols if c not in skip]
 
-        known = [c for c in FEATURE_COLUMNS if c in discovered]
+        if odds_requirements:
+            feature_set_name = 'odds_available'
+        else:
+            feature_set_name = os.environ.get('SOFASCORE_FEATURE_SET', 'pre_match_safe')
+
+        if feature_set_name == 'auto':
+            known = [c for c in FEATURE_COLUMNS if c in discovered]
+        else:
+            reference_cols = FEATURE_SETS.get(feature_set_name)
+            if reference_cols is None:
+                raise ValueError(
+                    f"Unknown SOFASCORE_FEATURE_SET='{feature_set_name}'. "
+                    f"Choose one of: {', '.join(sorted(FEATURE_SETS))}, auto"
+                )
+            known = [c for c in reference_cols if c in discovered]
+
         new_features = [c for c in discovered if c not in set(FEATURE_COLUMNS)]
-        feature_cols = known + new_features
+        allow_auto_features = (
+            feature_set_name == 'auto' or
+            os.environ.get('SOFASCORE_ALLOW_AUTO_FEATURES') in ('1', 'true', 'True')
+        )
+        safe_auto_features = [
+            c for c in new_features
+            if c.startswith(SAFE_AUTO_FEATURE_PREFIXES) and _is_live_safe_feature(c)
+        ]
+        added_new_features = new_features if allow_auto_features else safe_auto_features
+        feature_cols = known + added_new_features
 
         if odds_requirements:
             allowed_odds = set(
@@ -598,8 +765,18 @@ class UniversalPredictor:
         if not feature_cols:
             raise ValueError("No feature columns found in data")
 
-        if new_features:
-            print(f"  Auto-discovered {len(new_features)} new features beyond reference list")
+        if new_features and allow_auto_features:
+            print(f"Auto-discovered {len(new_features)} new features beyond reference list")
+        elif safe_auto_features:
+            print(
+                f"Feature whitelist '{feature_set_name}': adding "
+                f"{len(safe_auto_features)} safe stats_* columns"
+            )
+        elif new_features:
+            print(
+                f"Feature whitelist '{feature_set_name}': ignoring "
+                f"{len(new_features)} auto-discovered numeric columns"
+            )
 
         min_non_null_ratio = 0.5
         non_null_ratio = df[feature_cols].notna().mean()
@@ -633,6 +810,7 @@ class UniversalPredictor:
             meta['date'] = df_clean['date']
         for col in group_cols:
             meta[col] = df_clean[col]
+        meta['feature_set_name'] = feature_set_name
 
         return X, y, meta
     
@@ -843,6 +1021,7 @@ class UniversalPredictor:
         is_regression = config.get('task') == 'regression'
 
         X, y, meta = self.prepare_data(df, target, odds_requirements)
+        feature_set_name = meta.get('feature_set_name', 'unknown')
         feature_cols = X.columns.tolist()
 
         print(f"\n  Dataset: {len(X)} matches, {len(feature_cols)} features")
@@ -942,6 +1121,7 @@ class UniversalPredictor:
         print(f"  Final features: {len(feature_cols)}")
 
         self.feature_columns_by_target[target] = feature_cols
+        self.feature_sets_by_target[target] = feature_set_name
 
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
@@ -1029,6 +1209,7 @@ class UniversalPredictor:
 
         is_binary = config['task'] == 'binary'
         avg_method = 'binary' if is_binary else 'weighted'
+        class_labels = sorted(config['class_names'].keys())
 
         print(f"\n  Training models...")
         for name, mc in model_configs.items():
@@ -1068,6 +1249,8 @@ class UniversalPredictor:
             y_pred = model.predict(X_te)
             predict_time_ms = (time.time() - t_pred) * 1000
             acc = accuracy_score(y_test, y_pred)
+            proba = _align_predict_proba(model, X_te, class_labels)
+            prob_metrics = _classification_eval_metrics(y_test, y_pred, proba, class_labels)
 
             from collections import Counter
             pred_dist = Counter(y_pred.tolist())
@@ -1081,6 +1264,9 @@ class UniversalPredictor:
             self.models[target][name] = {
                 'model': model, 'scaled': mc['scaled'], 'accuracy': acc,
                 'precision': prec, 'recall': rec, 'f1': f1,
+                'brier_score': prob_metrics.get('brier_score'),
+                'log_loss': prob_metrics.get('log_loss'),
+                'ece': prob_metrics.get('ece'),
                 'train_time_s': round(train_time, 2),
                 'predict_time_ms': round(predict_time_ms, 2),
                 'cpu_time_s': round(cpu_train_s, 2),
@@ -1091,6 +1277,11 @@ class UniversalPredictor:
             detailed_metrics[name] = {
                 'accuracy': round(acc, 4), 'precision': round(prec, 4),
                 'recall': round(rec, 4), 'f1': round(f1, 4),
+                'brier_score': prob_metrics.get('brier_score'),
+                'log_loss': prob_metrics.get('log_loss'),
+                'ece': prob_metrics.get('ece'),
+                'per_class_recall': prob_metrics.get('per_class_recall'),
+                'confusion_matrix': prob_metrics.get('confusion_matrix'),
                 'train_time_s': round(train_time, 2),
                 'predict_time_ms': round(predict_time_ms, 2),
                 'cpu_time_s': round(cpu_train_s, 2),
@@ -1194,12 +1385,17 @@ class UniversalPredictor:
             y_ens = ensemble.predict(X_test)
             pred_time_ens = (time.time() - t_pred) * 1000
             acc_ens = accuracy_score(y_test, y_ens)
+            ens_proba = _align_predict_proba(ensemble, X_test, class_labels)
+            ens_prob_metrics = _classification_eval_metrics(y_test, y_ens, ens_proba, class_labels)
             prec_ens = precision_score(y_test, y_ens, average=avg_method, zero_division=0)
             rec_ens = recall_score(y_test, y_ens, average=avg_method, zero_division=0)
             f1_ens = f1_score(y_test, y_ens, average=avg_method, zero_division=0)
             self.models[target]['Ensemble'] = {
                 'model': ensemble, 'scaled': False, 'accuracy': acc_ens,
                 'precision': prec_ens, 'recall': rec_ens, 'f1': f1_ens,
+                'brier_score': ens_prob_metrics.get('brier_score'),
+                'log_loss': ens_prob_metrics.get('log_loss'),
+                'ece': ens_prob_metrics.get('ece'),
                 'train_time_s': round(ens_time, 2),
                 'predict_time_ms': round(pred_time_ens, 2),
                 'cpu_time_s': round(cpu_ens_s, 2),
@@ -1209,6 +1405,11 @@ class UniversalPredictor:
             detailed_metrics['Ensemble'] = {
                 'accuracy': round(acc_ens, 4), 'precision': round(prec_ens, 4),
                 'recall': round(rec_ens, 4), 'f1': round(f1_ens, 4),
+                'brier_score': ens_prob_metrics.get('brier_score'),
+                'log_loss': ens_prob_metrics.get('log_loss'),
+                'ece': ens_prob_metrics.get('ece'),
+                'per_class_recall': ens_prob_metrics.get('per_class_recall'),
+                'confusion_matrix': ens_prob_metrics.get('confusion_matrix'),
                 'train_time_s': round(ens_time, 2), 'predict_time_ms': round(pred_time_ens, 2),
                 'cpu_time_s': round(cpu_ens_s, 2), 'memory_mb': round(mem_ens, 1),
             }
@@ -1248,12 +1449,17 @@ class UniversalPredictor:
             y_stack = stacking.predict(X_test)
             pred_time_st = (time.time() - t_pred) * 1000
             acc_stack = accuracy_score(y_test, y_stack)
+            stack_proba = _align_predict_proba(stacking, X_test, class_labels)
+            stack_prob_metrics = _classification_eval_metrics(y_test, y_stack, stack_proba, class_labels)
             prec_stack = precision_score(y_test, y_stack, average=avg_method, zero_division=0)
             rec_stack = recall_score(y_test, y_stack, average=avg_method, zero_division=0)
             f1_stack = f1_score(y_test, y_stack, average=avg_method, zero_division=0)
             self.models[target]['Stacking'] = {
                 'model': stacking, 'scaled': False, 'accuracy': acc_stack,
                 'precision': prec_stack, 'recall': rec_stack, 'f1': f1_stack,
+                'brier_score': stack_prob_metrics.get('brier_score'),
+                'log_loss': stack_prob_metrics.get('log_loss'),
+                'ece': stack_prob_metrics.get('ece'),
                 'train_time_s': round(stack_time, 2),
                 'predict_time_ms': round(pred_time_st, 2),
                 'cpu_time_s': round(cpu_stack_s, 2),
@@ -1263,6 +1469,11 @@ class UniversalPredictor:
             detailed_metrics['Stacking'] = {
                 'accuracy': round(acc_stack, 4), 'precision': round(prec_stack, 4),
                 'recall': round(rec_stack, 4), 'f1': round(f1_stack, 4),
+                'brier_score': stack_prob_metrics.get('brier_score'),
+                'log_loss': stack_prob_metrics.get('log_loss'),
+                'ece': stack_prob_metrics.get('ece'),
+                'per_class_recall': stack_prob_metrics.get('per_class_recall'),
+                'confusion_matrix': stack_prob_metrics.get('confusion_matrix'),
                 'train_time_s': round(stack_time, 2), 'predict_time_ms': round(pred_time_st, 2),
                 'cpu_time_s': round(cpu_stack_s, 2), 'memory_mb': round(mem_stack, 1),
             }
@@ -1315,6 +1526,9 @@ class UniversalPredictor:
 
                         y_pred_lstm = np.argmax(proba, axis=1)
                         acc_lstm = accuracy_score(y_test_valid, y_pred_lstm)
+                        lstm_prob_metrics = _classification_eval_metrics(
+                            y_test_valid, y_pred_lstm, proba, class_labels
+                        )
                         prec_lstm = precision_score(y_test_valid, y_pred_lstm, average=avg_method, zero_division=0)
                         rec_lstm = recall_score(y_test_valid, y_pred_lstm, average=avg_method, zero_division=0)
                         f1_lstm = f1_score(y_test_valid, y_pred_lstm, average=avg_method, zero_division=0)
@@ -1322,6 +1536,9 @@ class UniversalPredictor:
                         self.models[target]['LSTM'] = {
                             'model': lstm, 'scaled': False, 'accuracy': acc_lstm,
                             'precision': prec_lstm, 'recall': rec_lstm, 'f1': f1_lstm,
+                            'brier_score': lstm_prob_metrics.get('brier_score'),
+                            'log_loss': lstm_prob_metrics.get('log_loss'),
+                            'ece': lstm_prob_metrics.get('ece'),
                             'type': 'lstm',
                             'train_time_s': round(lstm_time, 2),
                             'predict_time_ms': round(pred_time_lstm, 2),
@@ -1334,6 +1551,11 @@ class UniversalPredictor:
                         detailed_metrics['LSTM'] = {
                             'accuracy': round(acc_lstm, 4), 'precision': round(prec_lstm, 4),
                             'recall': round(rec_lstm, 4), 'f1': round(f1_lstm, 4),
+                            'brier_score': lstm_prob_metrics.get('brier_score'),
+                            'log_loss': lstm_prob_metrics.get('log_loss'),
+                            'ece': lstm_prob_metrics.get('ece'),
+                            'per_class_recall': lstm_prob_metrics.get('per_class_recall'),
+                            'confusion_matrix': lstm_prob_metrics.get('confusion_matrix'),
                             'train_time_s': round(lstm_time, 2),
                             'predict_time_ms': round(pred_time_lstm, 2),
                             'cpu_time_s': round(cpu_lstm_s, 2),
@@ -1352,6 +1574,14 @@ class UniversalPredictor:
             'test_matches': len(X_test),
             'features': len(feature_cols),
             'feature_names': feature_cols,
+            'feature_set': self.feature_sets_by_target.get(target),
+            'date_ranges': {
+                'all': _date_range_summary(dates),
+                'train': _date_range_summary(train_dates.loc[X_train.index] if train_dates is not None else None),
+                'model_train': _date_range_summary(model_train_dates),
+                'calibration': _date_range_summary(train_dates.loc[X_cal_raw.index] if train_dates is not None and X_cal_raw is not None else None),
+                'test': _date_range_summary(dates.loc[X_test.index] if dates is not None else None),
+            },
             'mi_scores_top10': mi_series.head(10).to_dict(),
             'results': results,
             'detailed_metrics': detailed_metrics,
@@ -1474,6 +1704,12 @@ class UniversalPredictor:
             'test_matches': len(X_test),
             'features': len(feature_cols),
             'feature_names': feature_cols,
+            'feature_set': self.feature_sets_by_target.get(target),
+            'date_ranges': {
+                'all': _date_range_summary(meta.get('date') if meta else None),
+                'train': _date_range_summary(meta.get('date').loc[X_train.index] if meta and meta.get('date') is not None else None),
+                'test': _date_range_summary(meta.get('date').loc[X_test.index] if meta and meta.get('date') is not None else None),
+            },
             'results': results,
             'detailed_metrics': detailed_metrics,
         }
@@ -1688,6 +1924,12 @@ class UniversalPredictor:
     
     def _get_match_features(self, df: pd.DataFrame, home_team: str, 
                            away_team: str, match_date: str) -> Optional[Dict]:
+        if 'date' in df.columns and match_date:
+            cutoff = pd.to_datetime(match_date, errors='coerce')
+            parsed_dates = pd.to_datetime(df['date'], errors='coerce')
+            if pd.notna(cutoff):
+                df = df[parsed_dates < cutoff]
+
         df_sorted = df.sort_values('date', ascending=False)
         
         home_matches = df_sorted[
@@ -1808,6 +2050,31 @@ class UniversalPredictor:
         }
         
         return confident, stats
+
+    def _build_artifact_manifest(self, path: str) -> Dict:
+        try:
+            code_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        except OSError:
+            code_hash = None
+
+        return {
+            'version': 2,
+            'artifact': str(path),
+            'created_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+            'dataset_hash': os.environ.get('SOFASCORE_DATASET_HASH'),
+            'code_hash': code_hash,
+            'feature_sets_by_target': self.feature_sets_by_target,
+            'feature_columns_by_target': self.feature_columns_by_target,
+            'targets': sorted(self.models.keys()),
+            'date_ranges_by_target': {
+                target: stats.get('date_ranges', {})
+                for target, stats in self.training_stats.items()
+            },
+            'metrics_by_target': {
+                target: stats.get('detailed_metrics', {})
+                for target, stats in self.training_stats.items()
+            },
+        }
     
     def save_models(self, path: str):
         """Save trained models to disk (multi-target format v2)."""
@@ -1825,24 +2092,33 @@ class UniversalPredictor:
                     placeholder = {
                         'model': None, 'scaled': False, 'type': 'lstm',
                     }
-                    for k in ('accuracy', 'f1', 'mae', 'rmse', 'r2', 'task'):
+                    for k in ('accuracy', 'f1', 'brier_score', 'log_loss', 'ece', 'mae', 'rmse', 'r2', 'task'):
                         if k in data:
                             placeholder[k] = data[k]
                     models_for_joblib[target][name] = placeholder
                 else:
                     models_for_joblib[target][name] = data
 
+        manifest = _json_safe(self._build_artifact_manifest(path))
+
         save_data = {
             'version': 2,
             'models': models_for_joblib,
             'scalers': self.scalers,
             'feature_columns_by_target': self.feature_columns_by_target,
+            'feature_sets_by_target': self.feature_sets_by_target,
             'training_stats': self.training_stats,
             'lstm_states': lstm_states,
+            'manifest': manifest,
         }
 
         joblib.dump(save_data, path, compress=3)
+        manifest_path = f"{path}.manifest.json"
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+            f.write('\n')
         print(f"Models saved to: {path}")
+        print(f"Model manifest saved to: {manifest_path}")
 
     def load_models(self, path: str):
         """Load trained models from disk (handles v1 and v2 format)."""
@@ -1854,6 +2130,7 @@ class UniversalPredictor:
             self.models = save_data['models']
             self.scalers = save_data.get('scalers', {})
             self.feature_columns_by_target = save_data.get('feature_columns_by_target', {})
+            self.feature_sets_by_target = save_data.get('feature_sets_by_target', {})
             self.training_stats = save_data.get('training_stats', {})
 
             lstm_states = save_data.get('lstm_states', {})
@@ -1871,12 +2148,17 @@ class UniversalPredictor:
             self.feature_columns_by_target = {
                 'result': save_data.get('feature_columns', [])
             }
+            self.feature_sets_by_target = {'result': 'legacy'}
             self.training_stats = save_data.get('training_stats', {})
 
         if 'result' in self.feature_columns_by_target:
             self.feature_columns = self.feature_columns_by_target['result']
         if 'result' in self.scalers:
             self.scaler = self.scalers['result']
+        if not self.feature_sets_by_target:
+            self.feature_sets_by_target = {
+                target: 'unknown' for target in self.feature_columns_by_target
+            }
 
         self.trained = True
 
