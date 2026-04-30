@@ -148,10 +148,10 @@ __tests__/                  # unit tests
 
 The repo is currently developed with modern Node.js and Python 3.11.
 
-Install frontend dependencies:
+Install frontend dependencies from the lockfile:
 
 ```bash
-npm install
+npm ci
 ```
 
 Run the app locally:
@@ -190,7 +190,7 @@ Important: pushing Git commits alone does **not** deploy the local `.data/` snap
 
 ```bash
 npm test
-npx tsc --noEmit --incremental false
-npx tsc -p tsconfig.test.json --noEmit --incremental false
+npm run typecheck
+npm run typecheck:test
 npm run lint
 ```

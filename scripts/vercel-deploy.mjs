@@ -12,6 +12,11 @@ import { execSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
+const DATA_BUILD_SOURCE = process.env.SOFASCORE_DATA_BUILD_DIR ||
+    path.join(os.tmpdir(), "sportwebapp-data-build");
+const DATA_SOURCE = fs.existsSync(DATA_BUILD_SOURCE)
+    ? DATA_BUILD_SOURCE
+    : path.join(ROOT, ".data");
 
 function shouldSkipSrc(src) {
     const rel = path.relative(ROOT, src);
@@ -21,12 +26,16 @@ function shouldSkipSrc(src) {
     const skipRoots = new Set([
         "node_modules",
         ".next",
+        "next-build",
         ".git",
+        ".data",
+        ".data-build",
         ".vercel-deploy-staging",
         "SofascoreData",
         "coverage",
     ]);
     if (skipRoots.has(first)) return true;
+    if (first.startsWith(".data.stale-")) return true;
     if (first === ".env" || norm.startsWith(".env.")) return true;
     return false;
 }
@@ -48,16 +57,33 @@ console.log("staging copy for Vercel (.data included, no node_modules / full Sof
 const STAGING = path.join(os.tmpdir(), "sportwebapp-vercel-" + crypto.randomBytes(16).toString("hex"));
 
 try {
+    if (!fs.existsSync(DATA_SOURCE)) {
+        console.error("missing data snapshot - run npm run build:prod first\n");
+        process.exit(1);
+    }
+
     fs.cpSync(ROOT, STAGING, {
         recursive: true,
         filter: (src) => !shouldSkipSrc(src),
     });
+    fs.cpSync(DATA_SOURCE, path.join(STAGING, ".data"), { recursive: true });
 
     patchGitignore(STAGING);
 
     const dataPath = path.join(STAGING, ".data");
     if (!fs.existsSync(dataPath)) {
         console.error("missing .data - run npm run build:prod first\n");
+        try {
+            fs.rmSync(STAGING, { recursive: true, force: true });
+        } catch {
+            // ignore
+        }
+        process.exit(1);
+    }
+
+    const manifestPath = path.join(dataPath, ".prebuild-manifest.json");
+    if (!fs.existsSync(manifestPath)) {
+        console.error("missing .data prebuild manifest - run npm run build:prod with local SofascoreData/data first\n");
         try {
             fs.rmSync(STAGING, { recursive: true, force: true });
         } catch {

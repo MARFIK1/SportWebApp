@@ -11,7 +11,10 @@ const ROOT = path.join(__dirname, "..");
 const SOURCE_DATA = path.join(ROOT, "SofascoreData", "data");
 const SOURCE_REPORTS = path.join(ROOT, "SofascoreData", "reports");
 const SOURCE_MODELS = path.join(ROOT, "SofascoreData", "data", "models");
-const OUT_DIR = path.join(ROOT, ".data");
+const OUT_DIR = process.env.PREBUILD_OUT_DIR
+    ? path.resolve(ROOT, process.env.PREBUILD_OUT_DIR)
+    : path.join(ROOT, ".data");
+const MANIFEST_PATH = path.join(OUT_DIR, ".prebuild-manifest.json");
 
 const MATCH_FIELDS = new Set([
     "event_id", "home_team", "away_team", "home_team_id", "away_team_id",
@@ -78,8 +81,30 @@ function ensureDir(dir) {
     fs.mkdirSync(dir, { recursive: true });
 }
 
+function makeWritableRecursive(targetPath) {
+    if (!fs.existsSync(targetPath)) return;
+    const stat = fs.lstatSync(targetPath);
+    if (stat.isDirectory()) {
+        for (const entry of fs.readdirSync(targetPath)) {
+            makeWritableRecursive(path.join(targetPath, entry));
+        }
+        try {
+            fs.chmodSync(targetPath, 0o700);
+        } catch {
+            
+        }
+    } else {
+        try {
+            fs.chmodSync(targetPath, 0o600);
+        } catch {
+
+        }
+    }
+}
+
 function removePathWithRetry(targetPath) {
     try {
+        makeWritableRecursive(targetPath);
         fs.rmSync(targetPath, {
             recursive: true,
             force: true,
@@ -91,6 +116,12 @@ function removePathWithRetry(targetPath) {
         const stalePath = targetPath + ".stale-" + Date.now();
         try {
             fs.renameSync(targetPath, stalePath);
+        } catch {
+            throw err;
+        }
+
+        try {
+            makeWritableRecursive(stalePath);
             fs.rmSync(stalePath, {
                 recursive: true,
                 force: true,
@@ -98,17 +129,21 @@ function removePathWithRetry(targetPath) {
                 retryDelay: 200,
             });
             return;
-        } catch {
-            throw err;
+        } catch (staleErr) {
+            console.warn(
+                "warning: moved stale path aside but could not remove it yet: " +
+                stalePath + " (" + staleErr.message + ")"
+            );
+            return;
         }
     }
 }
 
 function resetDir(dir) {
-    ensureDir(dir);
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        removePathWithRetry(path.join(dir, entry.name));
+    if (fs.existsSync(dir)) {
+        removePathWithRetry(dir);
     }
+    ensureDir(dir);
 }
 
 function copyDir(src, dest) {
@@ -123,6 +158,10 @@ function copyDir(src, dest) {
             fs.copyFileSync(srcPath, destPath);
         }
     }
+}
+
+function writeJsonFile(filePath, data) {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function utcTodayYmd() {
@@ -172,14 +211,20 @@ function copyReportsWindowed(srcReports, destReports) {
     return { copied, skipped, total: copied + skipped };
 }
 
-console.log("prebuild: writing trimmed data to .data/\n");
+console.log("prebuild: writing trimmed data to " + OUT_DIR + "\n");
 
 if (!fs.existsSync(SOURCE_DATA)) {
-    console.log("no SofascoreData/data - exit (existing .data left as-is)\n");
-    process.exit(0);
+    const message = "no SofascoreData/data - cannot create a fresh .data snapshot";
+    if (process.env.PREBUILD_ALLOW_MISSING_SOURCE === "1" || process.env.PREBUILD_ALLOW_MISSING_SOURCE === "true") {
+        console.log(message + " (allowed for CI smoke builds)\n");
+        process.exit(0);
+    }
+    console.error(message + "\n");
+    process.exit(1);
 }
 
-if (process.env.PREBUILD_CLEAN === "1" || process.env.PREBUILD_CLEAN === "true") {
+const cleanOutput = process.env.PREBUILD_CLEAN !== "0" && process.env.PREBUILD_CLEAN !== "false";
+if (cleanOutput) {
     resetDir(OUT_DIR);
 } else {
     ensureDir(OUT_DIR);
@@ -255,6 +300,20 @@ if (fs.existsSync(summaryCsv)) {
 }
 
 const totalBytes = matchBytes + playerBytes;
+writeJsonFile(MANIFEST_PATH, {
+    generated_at: new Date().toISOString(),
+    source_data: SOURCE_DATA,
+    source_reports: SOURCE_REPORTS,
+    clean_output: cleanOutput,
+    competitions: COMPETITIONS.length,
+    matches: totalMatches,
+    player_rows: totalPlayers,
+    bytes: {
+        match_json: matchBytes,
+        player_json: playerBytes,
+        total_json_no_reports: totalBytes,
+    },
+});
 console.log("");
 console.log("summary");
 console.log("competitions: " + COMPETITIONS.length);

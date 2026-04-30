@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
+    distDir: process.env.NEXT_DIST_DIR || ".next",
     async headers() {
         return [
             {
@@ -9,6 +10,14 @@ const nextConfig = {
                     {
                         key: "Referrer-Policy",
                         value: "no-referrer",
+                    },
+                    {
+                        key: "X-Content-Type-Options",
+                        value: "nosniff",
+                    },
+                    {
+                        key: "Permissions-Policy",
+                        value: "camera=(), microphone=(), geolocation=()",
                     },
                 ],
             },
