@@ -473,6 +473,32 @@ FEATURE_SETS = {
 
 RESULT_MAP = {0: 'HOME', 1: 'DRAW', 2: 'AWAY'}
 BINARY_MAP = {0: 'NO', 1: 'YES'}
+DATASET_HASH_FILE_SUFFIXES = {'.csv', '.json', '.parquet', '.pkl'}
+DATASET_HASH_EXCLUDED_DIRS = {'models', '__pycache__', '.ipynb_checkpoints'}
+
+CONSENSUS_WEIGHTS_BY_TARGET = {
+    'result': {
+        'pre_match_safe': {
+            'LightGBM': 0.30,
+            'XGBoost': 0.25,
+            'Logistic Regression': 0.25,
+            'Random Forest': 0.20,
+        },
+        'odds_available': {
+            'LightGBM': 0.30,
+            'MLP': 0.25,
+            'XGBoost': 0.20,
+            'Random Forest': 0.15,
+            'Logistic Regression': 0.10,
+        },
+        'default': {
+            'LightGBM': 0.30,
+            'XGBoost': 0.25,
+            'Logistic Regression': 0.25,
+            'Random Forest': 0.20,
+        },
+    },
+}
 
 TARGET_CONFIGS = {
     'result': {
@@ -550,6 +576,77 @@ class UniversalPredictor:
         self.feature_columns = []   # Backward compat (result target)
         self.training_stats = {}
         self.feature_sets_by_target = {}
+
+    def _get_consensus_weights(self, target: str) -> Dict[str, float]:
+        target_weights = CONSENSUS_WEIGHTS_BY_TARGET.get(target, {})
+        if not target_weights:
+            return {}
+
+        if all(isinstance(value, (int, float)) for value in target_weights.values()):
+            return target_weights
+
+        feature_set = self.feature_sets_by_target.get(target, 'default')
+        return (
+            target_weights.get(feature_set)
+            or target_weights.get('default')
+            or {}
+        )
+
+    @staticmethod
+    def _compute_dataset_hash(data_dir: Path) -> Dict:
+        if not data_dir.exists():
+            return {
+                'hash': None,
+                'source': str(data_dir),
+                'file_count': 0,
+                'total_bytes': 0,
+            }
+
+        digest = hashlib.sha256()
+        file_count = 0
+        total_bytes = 0
+        files = []
+
+        for path in data_dir.rglob('*'):
+            if not path.is_file():
+                continue
+            if any(part in DATASET_HASH_EXCLUDED_DIRS for part in path.relative_to(data_dir).parts):
+                continue
+            if path.suffix.lower() not in DATASET_HASH_FILE_SUFFIXES:
+                continue
+            files.append(path)
+
+        for path in sorted(files, key=lambda p: p.relative_to(data_dir).as_posix()):
+            relative_path = path.relative_to(data_dir).as_posix()
+            stat = path.stat()
+            digest.update(relative_path.encode('utf-8'))
+            digest.update(b'\0')
+            digest.update(str(stat.st_size).encode('ascii'))
+            digest.update(b'\0')
+            with open(path, 'rb') as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                    digest.update(chunk)
+            digest.update(b'\0')
+            file_count += 1
+            total_bytes += stat.st_size
+
+        return {
+            'hash': digest.hexdigest() if file_count else None,
+            'source': str(data_dir),
+            'file_count': file_count,
+            'total_bytes': total_bytes,
+        }
+
+    def _get_dataset_hash_info(self) -> Dict:
+        env_hash = os.environ.get('SOFASCORE_DATASET_HASH')
+        if env_hash:
+            return {
+                'hash': env_hash,
+                'source': 'SOFASCORE_DATASET_HASH',
+                'file_count': None,
+                'total_bytes': None,
+            }
+        return self._compute_dataset_hash(self.data_dir)
 
     @staticmethod
     def _filter_positive_odds(
@@ -1836,9 +1933,27 @@ class UniversalPredictor:
         for label in class_names.values():
             votes_breakdown.setdefault(label, 0)
 
+        consensus_weights = self._get_consensus_weights(target)
+        weighted_probs = []
+        weight_total = 0.0
+
+        if consensus_weights:
+            for model_name, weight in consensus_weights.items():
+                probs = predictions.get(model_name, {}).get('probabilities', {})
+                if not probs:
+                    continue
+                weighted_probs.append((probs, float(weight)))
+                weight_total += float(weight)
+
         all_probs = [p.get('probabilities', {}) for p in predictions.values() if p.get('probabilities')]
         avg_probabilities = {}
-        if all_probs:
+        if weighted_probs and weight_total > 0:
+            for label in class_names.values():
+                avg_probabilities[label] = round(
+                    sum(probs.get(label, 0) * weight for probs, weight in weighted_probs) / weight_total,
+                    1
+                )
+        elif all_probs:
             for label in class_names.values():
                 avg_probabilities[label] = round(
                     sum(p.get(label, 0) for p in all_probs) / len(all_probs), 1
@@ -1850,11 +1965,12 @@ class UniversalPredictor:
             consensus_prediction = best_label
         else:
             consensus_prediction = class_names.get(top_vote[0], str(top_vote[0]))
+        consensus_vote_count = votes_breakdown.get(consensus_prediction, 0)
 
         predictions['consensus'] = {
             'prediction': consensus_prediction,
-            'agreement': f"{top_vote[1]}/{len(votes)}",
-            'agreement_pct': round(top_vote[1] / len(votes) * 100, 1),
+            'agreement': f"{consensus_vote_count}/{len(votes)}",
+            'agreement_pct': round(consensus_vote_count / len(votes) * 100, 1),
             'votes': votes_breakdown,
             'avg_probabilities': avg_probabilities,
         }
@@ -2056,12 +2172,16 @@ class UniversalPredictor:
             code_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         except OSError:
             code_hash = None
+        dataset_hash_info = self._get_dataset_hash_info()
 
         return {
             'version': 2,
             'artifact': str(path),
             'created_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
-            'dataset_hash': os.environ.get('SOFASCORE_DATASET_HASH'),
+            'dataset_hash': dataset_hash_info.get('hash'),
+            'dataset_hash_source': dataset_hash_info.get('source'),
+            'dataset_hash_file_count': dataset_hash_info.get('file_count'),
+            'dataset_hash_total_bytes': dataset_hash_info.get('total_bytes'),
             'code_hash': code_hash,
             'feature_sets_by_target': self.feature_sets_by_target,
             'feature_columns_by_target': self.feature_columns_by_target,
