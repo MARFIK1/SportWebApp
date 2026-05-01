@@ -14,7 +14,7 @@ import DatePicker from "../components/home/DatePicker";
 import PredictionsClient from "./PredictionsClient";
 import ModelComparisonCharts from "./ModelComparisonCharts";
 import { getServerT } from "../util/i18n/getLocale";
-import { normalizeReportDate } from "../util/data/dateUtils";
+import { normalizeReportDate, todayYmd } from "../util/data/dateUtils";
 
 export const metadata: Metadata = {
     title: "Predictions Dashboard",
@@ -39,11 +39,18 @@ function buildTeamIdsForReport(leagueDataPaths: string[]): Record<string, number
     return teamIds;
 }
 
+function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
+    if (requestedDate && dates.includes(requestedDate)) return requestedDate;
+    if (dates.includes(todayIso)) return todayIso;
+    return dates[dates.length - 1] || "";
+}
+
 export default async function Predictions({ searchParams }: PageProps) {
     const resolvedSearchParams = await searchParams;
     const dates = listReportDates();
     const requestedDate = normalizeReportDate(resolvedSearchParams.date);
-    const selectedDate = (requestedDate && dates.includes(requestedDate) ? requestedDate : null) || dates[dates.length - 1] || "";
+    const todayIso = todayYmd();
+    const selectedDate = selectReportDate(dates, requestedDate, todayIso);
     const report = selectedDate ? loadPredictionReport(selectedDate) : null;
 
     const t = await getServerT();
@@ -56,9 +63,9 @@ export default async function Predictions({ searchParams }: PageProps) {
         );
     }
 
-    const allDatesAccuracy = aggregateAccuracy(dates);
+    const allDatesAccuracy = aggregateAccuracy();
     const comparisonSummary = loadComparisonSummary();
-    const accuracyOverTime = computeAccuracyOverTime(dates);
+    const accuracyOverTime = computeAccuracyOverTime();
     const resultTypeBreakdown = computeResultTypeAccuracy(dates);
 
     const leagueDataPaths = Array.from(new Set(report.matches.map((m) => `${m.comp_type}/${m.league}`)));
@@ -83,14 +90,20 @@ export default async function Predictions({ searchParams }: PageProps) {
     const consensusAcc = computeConsensusAccuracy(report.matches);
     const bestModel = Object.entries(report.summary.model_accuracy)
         .filter(([key]) => key !== "consensus")
+        .filter(([, acc]) => acc.total > 0)
         .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct)[0];
+
+    const dayModelRanking = Object.entries(report.summary.model_accuracy)
+        .filter(([key]) => key !== "consensus")
+        .filter(([, acc]) => acc.total > 0)
+        .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct);
 
     const modelRanking = Object.entries(allDatesAccuracy)
         .filter(([key]) => key !== "consensus")
         .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct);
 
     return (
-        <div className="flex flex-col w-full max-w-[1600px] mx-auto px-6 py-6">
+        <div className="flex w-full min-w-0 max-w-[1600px] flex-col overflow-x-hidden px-4 py-6 sm:px-6 lg:mx-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                 <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10">
                     <div className="absolute inset-y-0 left-0 w-1 bg-emerald-400" />
@@ -110,7 +123,7 @@ export default async function Predictions({ searchParams }: PageProps) {
                 </div>
             </div>
 
-            <DatePicker dates={dates} selectedDate={selectedDate} todayIso={new Date().toISOString().slice(0, 10)} basePath="/predictions" />
+            <DatePicker dates={dates} selectedDate={selectedDate} todayIso={todayIso} basePath="/predictions" />
 
             <ModelComparisonCharts
                 comparison={comparisonSummary}
@@ -118,8 +131,8 @@ export default async function Predictions({ searchParams }: PageProps) {
                 resultTypeBreakdown={resultTypeBreakdown}
             />
 
-            <div className="flex flex-col lg:flex-row gap-6 mt-6">
-                <div className="flex-1">
+            <div className="mt-6 grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="min-w-0">
                     <PredictionsClient
                         matches={report.matches}
                         leagues={leagues}
@@ -127,27 +140,54 @@ export default async function Predictions({ searchParams }: PageProps) {
                     />
                 </div>
 
-                <div className="w-full lg:w-[320px]">
-                    <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-5 sticky top-4">
-                        <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">
-                            {t("model_performance")}
-                            <span className="text-[10px] text-gray-400 dark:text-gray-600 ml-2">({t("all_time")})</span>
-                        </h3>
-                        <div className="space-y-2">
-                            {modelRanking.map(([model, acc], i) => (
-                                <div key={model} className="flex items-center justify-between py-2 border-b border-gray-200 dark:border-gray-800 last:border-0">
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-xs text-gray-400 dark:text-gray-500 w-4">{i + 1}</span>
-                                        <span className="text-sm text-gray-900 dark:text-white font-medium">{model}</span>
+                <div className="min-w-0">
+                    <div className="sticky top-4 space-y-4">
+                        <div className="rounded-2xl bg-white p-5 dark:bg-gray-900/50">
+                            <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                                {t("model_performance")}
+                                <span className="ml-2 text-[10px] text-gray-400 dark:text-gray-600">({t("day")})</span>
+                            </h3>
+                            <div className="space-y-2">
+                                {dayModelRanking.length > 0 ? dayModelRanking.map(([model, acc], i) => (
+                                    <div key={model} className="flex min-w-0 items-center justify-between gap-3 border-b border-gray-200 py-2 last:border-0 dark:border-gray-800">
+                                        <div className="flex min-w-0 items-center gap-3">
+                                            <span className="w-4 shrink-0 text-xs text-gray-400 dark:text-gray-500">{i + 1}</span>
+                                            <span className="truncate text-sm font-medium text-gray-900 dark:text-white">{model}</span>
+                                        </div>
+                                        <div className="flex shrink-0 items-center gap-3">
+                                            <span className={`text-sm font-bold ${acc.accuracy_pct >= 45 ? "text-emerald-400" : "text-gray-500 dark:text-gray-400"}`}>
+                                                {acc.accuracy_pct}%
+                                            </span>
+                                            <span className="text-xs text-gray-400 dark:text-gray-500">{acc.correct}/{acc.total}</span>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className={`text-sm font-bold ${acc.accuracy_pct >= 45 ? "text-emerald-400" : "text-gray-500 dark:text-gray-400"}`}>
-                                            {acc.accuracy_pct}%
-                                        </span>
-                                        <span className="text-xs text-gray-400 dark:text-gray-500">{acc.correct}/{acc.total}</span>
+                                )) : (
+                                    <p className="py-2 text-sm text-gray-500 dark:text-gray-400">{t("no_finished_matches")}</p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-white p-5 dark:bg-gray-900/50">
+                            <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                                {t("model_performance")}
+                                <span className="ml-2 text-[10px] text-gray-400 dark:text-gray-600">({t("all_time")})</span>
+                            </h3>
+                            <div className="space-y-2">
+                                {modelRanking.map(([model, acc], i) => (
+                                    <div key={model} className="flex min-w-0 items-center justify-between gap-3 border-b border-gray-200 py-2 last:border-0 dark:border-gray-800">
+                                        <div className="flex min-w-0 items-center gap-3">
+                                            <span className="w-4 shrink-0 text-xs text-gray-400 dark:text-gray-500">{i + 1}</span>
+                                            <span className="truncate text-sm font-medium text-gray-900 dark:text-white">{model}</span>
+                                        </div>
+                                        <div className="flex shrink-0 items-center gap-3">
+                                            <span className={`text-sm font-bold ${acc.accuracy_pct >= 45 ? "text-emerald-400" : "text-gray-500 dark:text-gray-400"}`}>
+                                                {acc.accuracy_pct}%
+                                            </span>
+                                            <span className="text-xs text-gray-400 dark:text-gray-500">{acc.correct}/{acc.total}</span>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
                     </div>
                 </div>

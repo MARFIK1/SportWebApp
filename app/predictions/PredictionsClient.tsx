@@ -21,8 +21,8 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
         : matches.filter((m) => `${m.comp_type}/${m.league}` === selectedLeague);
 
     return (
-        <div>
-            <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
+        <div className="min-w-0">
+            <div className="scrollbar-app mb-4 flex max-w-full items-center gap-2 overflow-x-auto pb-2">
                 <button
                     onClick={() => setSelectedLeague("all")}
                     className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors ${
@@ -44,7 +44,7 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                 ))}
             </div>
 
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
                 {filtered.map((match) => {
                     const consensus = match.predictions.consensus as ConsensusPrediction;
                     const isExpanded = expandedMatch === match.id;
@@ -54,7 +54,7 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                     const correct = consensus?.correct;
 
                     return (
-                        <div key={match.id} className="bg-white dark:bg-gray-900/50 rounded-xl overflow-hidden">
+                        <div key={match.id} className="min-w-0 overflow-hidden rounded-xl bg-white dark:bg-gray-900/50">
                             <button
                                 onClick={() => setExpandedMatch(isExpanded ? null : match.id)}
                                 aria-expanded={isExpanded}
@@ -128,7 +128,7 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
 
                             {isExpanded && (
                                 <div id={`prediction-details-${match.id}`} className="px-4 pb-4">
-                                    <div className="overflow-x-auto">
+                                    <div className="scrollbar-app max-w-full overflow-x-auto">
                                     <table className="w-full min-w-[720px] text-sm">
                                         <thead>
                                             <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-800">

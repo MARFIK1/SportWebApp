@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
     LineChart,
     Line,
@@ -42,10 +42,34 @@ function colorFor(model: string): string {
     return MODEL_COLORS[model] ?? "#9ca3af";
 }
 
+function ChartViewport({ children }: { children: ReactNode }) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [ready, setReady] = useState(false);
+
+    useEffect(() => {
+        const node = ref.current;
+        if (!node || typeof ResizeObserver === "undefined") return;
+
+        const observer = new ResizeObserver(([entry]) => {
+            setReady(entry.contentRect.width > 0 && entry.contentRect.height > 0);
+        });
+
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    return (
+        <div ref={ref} className="h-full min-h-[320px] min-w-0">
+            {ready ? children : null}
+        </div>
+    );
+}
+
 export default function ModelComparisonCharts({ comparison, accuracyOverTime, resultTypeBreakdown }: Props) {
     const { t } = useLanguage();
     const { theme } = useTheme();
     const [activeTab, setActiveTab] = useState<"comparison" | "overtime" | "resulttype" | "efficiency">("comparison");
+    const [selectedOvertimeModels, setSelectedOvertimeModels] = useState<string[] | null>(null);
 
     const chartColors = theme === "dark"
         ? { grid: "#374151", axis: "#9ca3af", tooltipBg: "rgba(31, 41, 55, 0.95)", tooltipBorder: "#374151", tooltipText: "#f3f4f6", tooltipLabel: "#d1d5db" }
@@ -64,10 +88,26 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
         [accuracyOverTime]
     );
 
-    const visibleModels = useMemo(
+    const overtimeModelOptions = useMemo(
         () => models.filter((m) => m !== "consensus").slice(0, 9),
         [models]
     );
+
+    const visibleModels = useMemo(
+        () => (selectedOvertimeModels ?? overtimeModelOptions)
+            .filter((model) => overtimeModelOptions.includes(model)),
+        [overtimeModelOptions, selectedOvertimeModels]
+    );
+
+    const toggleOvertimeModel = (model: string) => {
+        setSelectedOvertimeModels((current) => {
+            const base = (current ?? overtimeModelOptions)
+                .filter((item) => overtimeModelOptions.includes(item));
+            return base.includes(model)
+                ? base.filter((item) => item !== model)
+                : [...base, model];
+        });
+    };
 
     const brierSorted = useMemo(
         () => [...comparison].sort((a, b) => a.brierScore - b.brierScore),
@@ -84,7 +124,7 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
     ];
 
     return (
-        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-5 mt-6">
+        <div className="mt-6 min-w-0 overflow-hidden rounded-2xl bg-white p-5 dark:bg-gray-900/50">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     {t("ml_comparison")}
@@ -110,86 +150,155 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
                 </div>
             </div>
 
-            <div
-                id={`chart-panel-${activeTab}`}
-                role="tabpanel"
-                aria-labelledby={`chart-tab-${activeTab}`}
-                className="h-[420px]"
-            >
-                {activeTab === "comparison" && sortedComparison.length > 0 && (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={sortedComparison.map((r) => ({
-                            model: r.model,
-                            [t("chart_test_acc")]: Math.round(r.testAccuracy * 1000) / 10,
-                            [t("chart_live_acc")]: Math.round(r.liveAccuracy * 1000) / 10,
-                        }))}>
-                            <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                            <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
-                            <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
-                            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
-                            <Legend wrapperStyle={{ fontSize: 12 }} />
-                            <Bar dataKey={t("chart_test_acc")} fill="#3b82f6" />
-                            <Bar dataKey={t("chart_live_acc")} fill="#10b981" />
-                        </BarChart>
-                    </ResponsiveContainer>
-                )}
+            <div className={activeTab === "overtime" ? "grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_250px]" : "min-w-0"}>
+                <div
+                    id={`chart-panel-${activeTab}`}
+                    role="tabpanel"
+                    aria-labelledby={`chart-tab-${activeTab}`}
+                    className="h-[420px] min-w-0"
+                >
+                    {activeTab === "comparison" && sortedComparison.length > 0 && (
+                        <ChartViewport>
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                                <BarChart data={sortedComparison.map((r) => ({
+                                    model: r.model,
+                                    [t("chart_test_acc")]: Math.round(r.testAccuracy * 1000) / 10,
+                                    [t("chart_live_acc")]: Math.round(r.liveAccuracy * 1000) / 10,
+                                }))}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
+                                    <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
+                                    <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
+                                    <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                                    <Bar dataKey={t("chart_test_acc")} fill="#3b82f6" />
+                                    <Bar dataKey={t("chart_live_acc")} fill="#10b981" />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </ChartViewport>
+                    )}
 
-                {activeTab === "overtime" && accuracyOverTime.length > 0 && (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={accuracyOverTime}>
-                            <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: chartColors.axis }} />
-                            <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[30, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
-                            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
-                            <Legend wrapperStyle={{ fontSize: 11 }} />
-                            {visibleModels.map((m) => (
-                                <Line key={m} type="monotone" dataKey={m} stroke={colorFor(m)} strokeWidth={2} dot={false} />
-                            ))}
-                        </LineChart>
-                    </ResponsiveContainer>
-                )}
+                    {activeTab === "overtime" && accuracyOverTime.length > 0 && (
+                        visibleModels.length > 0 ? (
+                            <ChartViewport>
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                                    <LineChart data={accuracyOverTime}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
+                                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: chartColors.axis }} />
+                                        <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[30, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
+                                        <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                                        {visibleModels.map((m) => (
+                                            <Line key={m} type="monotone" dataKey={m} stroke={colorFor(m)} strokeWidth={2} dot={false} />
+                                        ))}
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </ChartViewport>
+                        ) : (
+                            <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-gray-200 text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                                {t("chart_no_models")}
+                            </div>
+                        )
+                    )}
 
-                {activeTab === "resulttype" && resultTypeBreakdown.length > 0 && (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={resultTypeBreakdown}>
-                            <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                            <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
-                            <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 100]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
-                            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
-                            <Legend wrapperStyle={{ fontSize: 12 }} />
-                            <Bar dataKey="HOME" fill="#10b981" />
-                            <Bar dataKey="DRAW" fill="#f59e0b" />
-                            <Bar dataKey="AWAY" fill="#3b82f6" />
-                        </BarChart>
-                    </ResponsiveContainer>
-                )}
+                    {activeTab === "resulttype" && resultTypeBreakdown.length > 0 && (
+                        <ChartViewport>
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                                <BarChart data={resultTypeBreakdown}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
+                                    <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
+                                    <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 100]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
+                                    <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                                    <Bar dataKey="HOME" fill="#10b981" />
+                                    <Bar dataKey="DRAW" fill="#f59e0b" />
+                                    <Bar dataKey="AWAY" fill="#3b82f6" />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </ChartViewport>
+                    )}
 
-                {activeTab === "efficiency" && brierSorted.length > 0 && (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                            data={brierSorted.map((r) => ({
-                                model: r.model,
-                                [t("chart_brier")]: r.brierScore,
-                            }))}
-                        >
-                            <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                            <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
-                            <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={["auto", "auto"]} />
-                            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
-                            <Legend wrapperStyle={{ fontSize: 12 }} />
-                            <Bar
-                                dataKey={t("chart_brier")}
-                                shape={(props: BarShapeProps) => {
-                                    const payload = props.payload as { model?: string } | undefined;
-                                    const model = typeof payload?.model === "string" ? payload.model : "";
-                                    const { isActive, option, ...rectProps } = props;
-                                    void isActive;
-                                    void option;
-                                    return <Rectangle {...rectProps} fill={colorFor(model)} />;
-                                }}
-                            />
-                        </BarChart>
-                    </ResponsiveContainer>
+                    {activeTab === "efficiency" && brierSorted.length > 0 && (
+                        <ChartViewport>
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                                <BarChart
+                                    data={brierSorted.map((r) => ({
+                                        model: r.model,
+                                        [t("chart_brier")]: r.brierScore,
+                                    }))}
+                                >
+                                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
+                                    <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
+                                    <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={["auto", "auto"]} />
+                                    <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                                    <Bar
+                                        dataKey={t("chart_brier")}
+                                        shape={(props: BarShapeProps) => {
+                                            const payload = props.payload as { model?: string } | undefined;
+                                            const model = typeof payload?.model === "string" ? payload.model : "";
+                                            const { isActive, option, ...rectProps } = props;
+                                            void isActive;
+                                            void option;
+                                            return <Rectangle {...rectProps} fill={colorFor(model)} />;
+                                        }}
+                                    />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </ChartViewport>
+                    )}
+                </div>
+
+                {activeTab === "overtime" && overtimeModelOptions.length > 0 && (
+                    <div className="min-w-0 rounded-xl border border-gray-200 bg-white/70 p-3 shadow-sm shadow-slate-950/5 dark:border-white/10 dark:bg-[#0b1220]/70 dark:shadow-black/10">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">
+                                    {t("chart_models")}
+                                </p>
+                                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                                    {visibleModels.length}/{overtimeModelOptions.length}
+                                </p>
+                            </div>
+                            <div className="flex gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedOvertimeModels(null)}
+                                    className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 transition-colors hover:border-emerald-300 hover:text-gray-950 dark:border-white/10 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:border-emerald-400/40 dark:hover:text-white"
+                                >
+                                    {t("select_all")}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedOvertimeModels([])}
+                                    className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 transition-colors hover:border-emerald-300 hover:text-gray-950 dark:border-white/10 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:border-emerald-400/40 dark:hover:text-white"
+                                >
+                                    {t("clear_selection")}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="scrollbar-app flex flex-wrap gap-2 lg:max-h-[330px] lg:overflow-y-auto lg:pr-1">
+                            {overtimeModelOptions.map((model) => {
+                                const selected = visibleModels.includes(model);
+                                return (
+                                    <button
+                                        key={model}
+                                        type="button"
+                                        onClick={() => toggleOvertimeModel(model)}
+                                        aria-pressed={selected}
+                                        className={`inline-flex max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                                            selected
+                                                ? "border-emerald-300 bg-emerald-50 text-gray-950 shadow-sm dark:border-emerald-400/40 dark:bg-emerald-400/10 dark:text-white"
+                                                : "border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-900 dark:border-white/10 dark:bg-white/[0.04] dark:text-gray-400 dark:hover:border-white/20 dark:hover:text-white"
+                                        }`}
+                                    >
+                                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorFor(model) }} />
+                                        <span className="truncate">{model}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
                 )}
             </div>
 

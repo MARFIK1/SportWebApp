@@ -19,6 +19,7 @@ const translations: Record<Locale, Record<string, string>> = {
         no_data: "No prediction data available",
         empty_placeholder: "-",
         today: "TODAY",
+        day: "day",
 
         // Home
         matches_analyzed: "matches analyzed",
@@ -44,8 +45,13 @@ const translations: Record<Locale, Record<string, string>> = {
         chart_test_acc: "Test acc.",
         chart_live_acc: "Live acc.",
         chart_brier: "Brier score",
+        chart_models: "Models",
+        chart_no_models: "Select at least one model",
+        select_all: "All",
+        clear_selection: "Clear",
         chart_hint:
             "Cumulative accuracy uses all report dates in the window. Lower Brier score means better-calibrated probabilities.",
+        no_finished_matches: "No finished matches yet",
 
         // Match
         full_time: "FULL TIME",
@@ -172,6 +178,7 @@ const translations: Record<Locale, Record<string, string>> = {
         no_data: "Brak danych predykcji",
         empty_placeholder: "-",
         today: "DZIŚ",
+        day: "dzień",
 
         // Home
         matches_analyzed: "meczów przeanalizowanych",
@@ -197,8 +204,13 @@ const translations: Record<Locale, Record<string, string>> = {
         chart_test_acc: "Test",
         chart_live_acc: "Live",
         chart_brier: "Brier",
+        chart_models: "Modele",
+        chart_no_models: "Wybierz przynajmniej jeden model",
+        select_all: "Wszystkie",
+        clear_selection: "Wyczyść",
         chart_hint:
             "Skuteczność narastająco z uwzględnieniem dat raportów w oknie. Niższy Brier oznacza lepszą kalibrację prawdopodobieństw.",
+        no_finished_matches: "Brak zakończonych meczów",
 
         // Match
         full_time: "KONIEC MECZU",

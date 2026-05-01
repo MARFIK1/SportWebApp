@@ -2,10 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+    --scrollbar-track: rgba(226, 232, 240, 0.9);
+    --scrollbar-thumb: rgba(100, 116, 139, 0.72);
+    --scrollbar-thumb-hover: rgba(71, 85, 105, 0.9);
+}
+
+.dark {
+    --scrollbar-track: rgba(15, 23, 42, 0.72);
+    --scrollbar-thumb: rgba(16, 185, 129, 0.42);
+    --scrollbar-thumb-hover: rgba(16, 185, 129, 0.68);
+}
+
 html, body {
     @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white;
     min-height: 100%;
     margin: 0;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    scrollbar-width: thin;
+}
+
+* {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border: 2px solid var(--scrollbar-track);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+.scrollbar-app::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
 }
 
 @keyframes slide-in {

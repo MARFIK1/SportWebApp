@@ -34,7 +34,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
     const visibleDates = dates.slice(start, end);
 
     return (
-        <div className="mx-auto w-full max-w-3xl overflow-x-auto pb-1">
+        <div className="scrollbar-app mx-auto w-full max-w-3xl overflow-x-auto pb-1">
             <div className="flex min-w-max items-center justify-start gap-2 rounded-2xl border border-gray-200 bg-white/85 px-3 py-3 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-gray-700/70 dark:bg-gray-900/65 dark:shadow-black/10 sm:justify-center">
             {start > 0 && (
                 <button
