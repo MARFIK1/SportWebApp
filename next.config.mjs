@@ -24,7 +24,10 @@ const nextConfig = {
         ];
     },
     outputFileTracingIncludes: {
-        "/": [".data/**/*"],
+        "/*": [
+            ".data/**/*",
+            "node_modules/next/dist/server/dev/browser-logs/**/*",
+        ],
     },
     outputFileTracingExcludes: {
         "/": [
@@ -35,8 +38,6 @@ const nextConfig = {
             "coverage/**/*",
             ".venv/**/*",
             "SofascoreData/.venv/**/*",
-            ".next/**/*",
-            "next-build/**/*",
             ".data-build/**/*",
             ".data.stale-*",
             "*.ipynb",
