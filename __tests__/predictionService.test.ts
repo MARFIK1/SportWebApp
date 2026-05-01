@@ -149,6 +149,26 @@ describe("computeAccuracyOverTime", () => {
         expect(result[0]).toMatchObject({ date: "2025-01-01", LightGBM: 50 });
         expect(result[1]).toMatchObject({ date: "2025-01-02", LightGBM: 75 });
     });
+
+    it("uses compact accuracy history when dates are omitted", () => {
+        mockedFs.readFileSync.mockImplementation((fp: unknown) => {
+            const s = String(fp);
+            if (s.includes("accuracy_history.json")) {
+                return JSON.stringify({
+                    dates: [
+                        { date: "2025-01-01", models: { LightGBM: { correct: 5, incorrect: 5, total: 10 } } },
+                        { date: "2025-01-02", models: { LightGBM: { correct: 10, incorrect: 0, total: 10 } } },
+                    ],
+                });
+            }
+            throw new Error("reports should not be read");
+        });
+
+        const result = computeAccuracyOverTime();
+        expect(result).toHaveLength(2);
+        expect(result[0]).toMatchObject({ date: "2025-01-01", LightGBM: 50 });
+        expect(result[1]).toMatchObject({ date: "2025-01-02", LightGBM: 75 });
+    });
 });
 
 describe("computeResultTypeAccuracy", () => {

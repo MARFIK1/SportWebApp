@@ -1,4 +1,4 @@
-import { isValidYmdDate, normalizeReportDate } from "@/app/util/data/dateUtils";
+import { isValidYmdDate, normalizeReportDate, todayYmd } from "@/app/util/data/dateUtils";
 
 describe("dateUtils", () => {
     it("accepts real YYYY-MM-DD dates", () => {
@@ -11,5 +11,9 @@ describe("dateUtils", () => {
             expect(isValidYmdDate(value)).toBe(false);
             expect(normalizeReportDate(value)).toBeNull();
         }
+    });
+
+    it("formats today in the report timezone instead of UTC", () => {
+        expect(todayYmd(new Date("2026-04-30T22:30:00Z"))).toBe("2026-05-01");
     });
 });

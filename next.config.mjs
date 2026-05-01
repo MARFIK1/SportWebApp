@@ -26,6 +26,23 @@ const nextConfig = {
     outputFileTracingIncludes: {
         "/": [".data/**/*"],
     },
+    outputFileTracingExcludes: {
+        "/": [
+            "SofascoreData/**/*",
+            "logs/**/*",
+            "__tests__/**/*",
+            "__mocks__/**/*",
+            "coverage/**/*",
+            ".venv/**/*",
+            "SofascoreData/.venv/**/*",
+            ".next/**/*",
+            "next-build/**/*",
+            ".data-build/**/*",
+            ".data.stale-*",
+            "*.ipynb",
+            "tsconfig.tsbuildinfo",
+        ],
+    },
     images: {
         unoptimized: true,
         remotePatterns: [

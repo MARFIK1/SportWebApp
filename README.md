@@ -126,11 +126,15 @@ Before production build/deploy, `scripts/prebuild.mjs` prepares a smaller `.data
 - trims match/player payloads to fields actually used in the UI
 - copies model comparison outputs
 - copies only a recent report window by default
+- writes compact historical `accuracy_history.json` for dashboard charts
 
 This keeps the deployment payload much smaller and separates:
 
 - full working data in `SofascoreData/data`
 - app-ready snapshot in `.data`
+
+By default the app ships reports from `14` days back through `14` days ahead.
+The `/predictions` dashboard keeps the full accuracy-over-time history from the compact prebuild artifact instead of requiring all historical report folders in production.
 
 Useful environment flags:
 

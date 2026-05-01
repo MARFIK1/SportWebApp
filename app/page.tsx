@@ -5,7 +5,7 @@ import { loadAllSeasons } from "./util/data/dataService";
 import DatePicker from "./components/home/DatePicker";
 import LeagueSection from "./components/home/LeagueSection";
 import { getServerT } from "./util/i18n/getLocale";
-import { normalizeReportDate } from "./util/data/dateUtils";
+import { normalizeReportDate, todayYmd } from "./util/data/dateUtils";
 import type { ConsensusPrediction, PredictionMatch } from "@/types/predictions";
 
 export const metadata: Metadata = {
@@ -40,11 +40,18 @@ function getConsensusConfidence(match: PredictionMatch): number {
     return prediction ? consensus.avg_probabilities?.[prediction] ?? 0 : 0;
 }
 
+function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
+    if (requestedDate && dates.includes(requestedDate)) return requestedDate;
+    if (dates.includes(todayIso)) return todayIso;
+    return dates[dates.length - 1] || "";
+}
+
 export default async function Home({ searchParams }: PageProps) {
     const resolvedSearchParams = await searchParams;
     const dates = listReportDates();
     const requestedDate = normalizeReportDate(resolvedSearchParams.date);
-    const selectedDate = (requestedDate && dates.includes(requestedDate) ? requestedDate : null) || dates[dates.length - 1] || "";
+    const todayIso = todayYmd();
+    const selectedDate = selectReportDate(dates, requestedDate, todayIso);
     const report = selectedDate ? loadPredictionReport(selectedDate) : null;
 
     const t = await getServerT();
@@ -134,7 +141,7 @@ export default async function Home({ searchParams }: PageProps) {
                 </div>
             </div>
 
-            <DatePicker dates={dates} selectedDate={selectedDate} todayIso={new Date().toISOString().slice(0, 10)} />
+            <DatePicker dates={dates} selectedDate={selectedDate} todayIso={todayIso} />
 
             <div className="mt-6">
                 {leagueSections.map(({ dataPath, leagueName, slug, matches }) => (

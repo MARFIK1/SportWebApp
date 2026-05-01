@@ -15,6 +15,30 @@ type RawPredictionReport = Omit<PredictionReport, "matches"> & {
     matches: RawPredictionMatch[];
 };
 
+interface AccuracyHistoryModelStats {
+    correct: number;
+    incorrect: number;
+    total: number;
+}
+
+interface AccuracyHistoryDate {
+    date: string;
+    models: Record<string, AccuracyHistoryModelStats>;
+}
+
+interface AccuracyHistoryArtifact {
+    generated_at?: string;
+    dates: AccuracyHistoryDate[];
+}
+
+function repoPath(...segments: string[]): string {
+    return path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments);
+}
+
+function allowSourceFallback(): boolean {
+    return process.env.NODE_ENV !== "production";
+}
+
 function normalizePredictionMatch(match: RawPredictionMatch): PredictionMatch {
     const predictions = match.predictions as PredictionMatch["predictions"];
     if ("consensus" in predictions) {
@@ -45,12 +69,44 @@ function normalizePredictionReport(report: RawPredictionReport | null): Predicti
 function reportDirs(): string[] {
     const env = process.env.SOFASCORE_REPORTS_DIR;
     if (env) return [env];
-    const prebuilt = path.join(process.cwd(), ".data", "reports");
-    const source = path.join(process.cwd(), "SofascoreData", "reports");
+    const prebuilt = repoPath(".data", "reports");
     const dirs: string[] = [];
     if (fs.existsSync(prebuilt)) dirs.push(prebuilt);
-    if (fs.existsSync(source)) dirs.push(source);
+    if (allowSourceFallback()) {
+        const source = repoPath("SofascoreData", "reports");
+        if (fs.existsSync(source)) dirs.push(source);
+    }
     return dirs;
+}
+
+function collectReportDates(): string[] {
+    const dates = new Set<string>();
+    for (const dir of reportDirs()) {
+        if (!fs.existsSync(dir)) continue;
+        let entries: string[];
+        try {
+            entries = fs.readdirSync(dir);
+        } catch {
+            continue;
+        }
+        for (const d of entries) {
+            if (!isValidYmdDate(d)) continue;
+            try {
+                if (fs.statSync(path.join(dir, d)).isDirectory()) dates.add(d);
+            } catch {
+                // skip
+            }
+        }
+    }
+    return Array.from(dates).sort();
+}
+
+function accuracyHistoryPaths(): string[] {
+    const paths = [repoPath(".data", "models", "accuracy_history.json")];
+    if (allowSourceFallback()) {
+        paths.push(repoPath("SofascoreData", "data", "models", "accuracy_history.json"));
+    }
+    return paths;
 }
 
 function readPredictionReportInDateDir(dateDir: string): PredictionReport | null {
@@ -92,9 +148,11 @@ export const loadPredictionReport = cache((date: string): PredictionReport | nul
     if (env) {
         return readPredictionReportInDateDir(path.join(env, safeDate));
     }
-    const prebuiltDir = path.join(process.cwd(), ".data", "reports", safeDate);
-    const sourceDir = path.join(process.cwd(), "SofascoreData", "reports", safeDate);
-    const newestDir = newestExistingReportDir([prebuiltDir, sourceDir]);
+    const dateDirs = [repoPath(".data", "reports", safeDate)];
+    if (allowSourceFallback()) {
+        dateDirs.push(repoPath("SofascoreData", "reports", safeDate));
+    }
+    const newestDir = newestExistingReportDir(dateDirs);
     return newestDir ? readPredictionReportInDateDir(newestDir) : null;
 });
 
@@ -106,31 +164,29 @@ export const loadAnalysisReport = cache((date: string): AnalysisReport | null =>
     if (env) {
         return readJson<AnalysisReport>(path.join(env, safeDate, "analysis.json"));
     }
-    const prebuilt = path.join(process.cwd(), ".data", "reports", safeDate, "analysis.json");
-    const source = path.join(process.cwd(), "SofascoreData", "reports", safeDate, "analysis.json");
-    return readJson<AnalysisReport>(prebuilt) ?? readJson<AnalysisReport>(source);
+    const prebuilt = repoPath(".data", "reports", safeDate, "analysis.json");
+    if (!allowSourceFallback()) return readJson<AnalysisReport>(prebuilt);
+    return readJson<AnalysisReport>(prebuilt) ?? readJson<AnalysisReport>(repoPath("SofascoreData", "reports", safeDate, "analysis.json"));
 });
 
 export const listReportDates = cache((): string[] => {
-    const dates = new Set<string>();
-    for (const dir of reportDirs()) {
-        if (!fs.existsSync(dir)) continue;
-        let entries: string[];
-        try {
-            entries = fs.readdirSync(dir);
-        } catch {
-            continue;
-        }
-        for (const d of entries) {
-            if (!isValidYmdDate(d)) continue;
-            try {
-                if (fs.statSync(path.join(dir, d)).isDirectory()) dates.add(d);
-            } catch {
-                // skip
-            }
-        }
+    return filterReportDatesByWindow(collectReportDates());
+});
+
+export const listAllReportDates = cache((): string[] => collectReportDates());
+
+export const loadAccuracyHistory = cache((): AccuracyHistoryArtifact | null => {
+    for (const filePath of accuracyHistoryPaths()) {
+        const artifact = readJson<AccuracyHistoryArtifact>(filePath);
+        if (!artifact?.dates?.length) continue;
+        return {
+            ...artifact,
+            dates: artifact.dates
+                .filter((row) => isValidYmdDate(row.date) && row.models && typeof row.models === "object")
+                .sort((a, b) => a.date.localeCompare(b.date)),
+        };
     }
-    return filterReportDatesByWindow(Array.from(dates).sort());
+    return null;
 });
 
 export function getLatestReportDate(): string | null {
@@ -188,8 +244,8 @@ export interface ModelComparisonRow {
 }
 
 export function loadComparisonSummary(): ModelComparisonRow[] {
-    const prebuilt = path.join(process.cwd(), ".data", "models", "comparison_summary.csv");
-    const dev = path.join(process.cwd(), "SofascoreData", "data", "models", "comparison_summary.csv");
+    const prebuilt = repoPath(".data", "models", "comparison_summary.csv");
+    const dev = allowSourceFallback() ? repoPath("SofascoreData", "data", "models", "comparison_summary.csv") : "";
     const filePath = fs.existsSync(prebuilt) ? prebuilt : dev;
     if (!fs.existsSync(filePath)) return [];
 
@@ -257,25 +313,50 @@ export interface AccuracyOverTimePoint {
     [model: string]: number | string;
 }
 
-export function computeAccuracyOverTime(dates: string[]): AccuracyOverTimePoint[] {
+function addAccuracyStats(
+    running: Record<string, { correct: number; total: number }>,
+    model: string,
+    acc: AccuracyHistoryModelStats | ModelAccuracy
+): void {
+    if (!running[model]) running[model] = { correct: 0, total: 0 };
+    running[model].correct += Number.isFinite(acc.correct) ? acc.correct : 0;
+    running[model].total += Number.isFinite(acc.total) ? acc.total : 0;
+}
+
+function accuracyPoint(date: string, running: Record<string, { correct: number; total: number }>): AccuracyOverTimePoint {
+    const point: AccuracyOverTimePoint = { date };
+    for (const [model, stats] of Object.entries(running)) {
+        point[model] = stats.total > 0 ? Math.round((stats.correct / stats.total) * 1000) / 10 : 0;
+    }
+    return point;
+}
+
+export function computeAccuracyOverTime(dates?: string[]): AccuracyOverTimePoint[] {
     const points: AccuracyOverTimePoint[] = [];
     const running: Record<string, { correct: number; total: number }> = {};
 
-    for (const date of dates) {
+    if (!dates) {
+        const history = loadAccuracyHistory();
+        if (history?.dates?.length) {
+            for (const row of history.dates) {
+                for (const [model, acc] of Object.entries(row.models)) {
+                    addAccuracyStats(running, model, acc);
+                }
+                points.push(accuracyPoint(row.date, running));
+            }
+            return points;
+        }
+    }
+
+    for (const date of dates ?? listAllReportDates()) {
         const report = loadPredictionReport(date);
         if (!report) continue;
 
         for (const [model, acc] of Object.entries(report.summary.model_accuracy)) {
-            if (!running[model]) running[model] = { correct: 0, total: 0 };
-            running[model].correct += acc.correct;
-            running[model].total += acc.total;
+            addAccuracyStats(running, model, acc);
         }
 
-        const point: AccuracyOverTimePoint = { date };
-        for (const [model, stats] of Object.entries(running)) {
-            point[model] = stats.total > 0 ? Math.round((stats.correct / stats.total) * 1000) / 10 : 0;
-        }
-        points.push(point);
+        points.push(accuracyPoint(date, running));
     }
     return points;
 }
@@ -328,10 +409,26 @@ export function computeResultTypeAccuracy(dates: string[]): ResultTypeBreakdown[
     return result.sort((a, b) => a.model.localeCompare(b.model));
 }
 
-export function aggregateAccuracy(dates: string[]): Record<string, ModelAccuracy> {
+export function aggregateAccuracy(dates?: string[]): Record<string, ModelAccuracy> {
     const totals = new Map<string, ModelAccuracy>();
 
-    for (const date of dates) {
+    const history = dates ? null : loadAccuracyHistory();
+    if (history?.dates?.length) {
+        for (const row of history.dates) {
+            for (const [model, acc] of Object.entries(row.models)) {
+                const existing = totals.get(model);
+                if (existing) {
+                    existing.correct += acc.correct;
+                    existing.incorrect += acc.incorrect;
+                    existing.total += acc.total;
+                } else {
+                    totals.set(model, { ...acc, accuracy_pct: 0 });
+                }
+            }
+        }
+    }
+
+    for (const date of dates ?? (history?.dates?.length ? [] : listAllReportDates())) {
         const report = loadPredictionReport(date);
         if (!report) continue;
 

@@ -5,10 +5,19 @@ import { readJson } from "./fileUtils";
 import { Competition } from "../league/leagueRegistry";
 import { SofascoreMatch, SofascoreMatchFile, SofascoreUpcomingMatch, SofascoreUpcomingFile } from "@/types/sofascore";
 
+function repoPath(...segments: string[]): string {
+    return path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments);
+}
+
+function allowSourceFallback(): boolean {
+    return process.env.NODE_ENV !== "production";
+}
+
 function resolveDataDir(): string {
-    const prebuilt = path.join(process.cwd(), ".data");
+    const prebuilt = repoPath(".data");
     if (fs.existsSync(prebuilt)) return prebuilt;
-    return path.join(process.cwd(), "SofascoreData", "data");
+    if (!allowSourceFallback()) return prebuilt;
+    return repoPath("SofascoreData", "data");
 }
 
 const DATA_DIR = process.env.SOFASCORE_DATA_DIR || resolveDataDir();

@@ -164,8 +164,22 @@ function writeJsonFile(filePath, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
-function utcTodayYmd() {
-    return new Date().toISOString().slice(0, 10);
+function todayYmd(date = new Date()) {
+    try {
+        const parts = new Intl.DateTimeFormat("en-CA", {
+            timeZone: process.env.REPORT_TIME_ZONE || "Europe/Warsaw",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).formatToParts(date);
+        const year = parts.find((part) => part.type === "year")?.value;
+        const month = parts.find((part) => part.type === "month")?.value;
+        const day = parts.find((part) => part.type === "day")?.value;
+        if (year && month && day) return `${year}-${month}-${day}`;
+    } catch {
+        
+    }
+    return date.toISOString().slice(0, 10);
 }
 
 function addCalendarDaysYmd(ymd, deltaDays) {
@@ -190,7 +204,7 @@ function copyReportsWindowed(srcReports, destReports) {
 
     const past = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_PAST || "14", 10));
     const future = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_FUTURE || "14", 10));
-    const today = utcTodayYmd();
+    const today = todayYmd();
     const minYmd = addCalendarDaysYmd(today, -past);
     const maxYmd = addCalendarDaysYmd(today, future);
 
@@ -209,6 +223,68 @@ function copyReportsWindowed(srcReports, destReports) {
     }
     console.log("report date range: " + minYmd + " .. " + maxYmd + " (" + past + "d back, " + future + "d ahead)");
     return { copied, skipped, total: copied + skipped };
+}
+
+function readJsonIfExists(filePath) {
+    if (!fs.existsSync(filePath)) return null;
+    try {
+        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    } catch (err) {
+        console.warn("warning: could not read " + filePath + " (" + err.message + ")");
+        return null;
+    }
+}
+
+function readPredictionReportForHistory(dateDir) {
+    return (
+        readJsonIfExists(path.join(dateDir, "predictions_finished.json")) ||
+        readJsonIfExists(path.join(dateDir, "predictions_unfinished.json"))
+    );
+}
+
+function buildAccuracyHistory(srcReports) {
+    const rows = [];
+    if (!fs.existsSync(srcReports)) {
+        return { generated_at: new Date().toISOString(), dates: rows };
+    }
+
+    const entries = fs.readdirSync(srcReports, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+        const report = readPredictionReportForHistory(path.join(srcReports, entry.name));
+        const modelAccuracy = report?.summary?.model_accuracy;
+        if (!modelAccuracy || typeof modelAccuracy !== "object") continue;
+
+        const models = {};
+        for (const [model, stats] of Object.entries(modelAccuracy)) {
+            const correct = Number(stats?.correct ?? 0);
+            const total = Number(stats?.total ?? 0);
+            const incorrect = Number(stats?.incorrect ?? Math.max(0, total - correct));
+            if (!Number.isFinite(correct) || !Number.isFinite(incorrect) || !Number.isFinite(total) || total <= 0) {
+                continue;
+            }
+            models[model] = { correct, incorrect, total };
+        }
+
+        if (Object.keys(models).length > 0) {
+            rows.push({ date: entry.name, models });
+        }
+    }
+
+    return {
+        generated_at: new Date().toISOString(),
+        source_reports: srcReports,
+        dates: rows,
+    };
+}
+
+function writeAccuracyHistory(srcReports, outModelsDir) {
+    const history = buildAccuracyHistory(srcReports);
+    ensureDir(outModelsDir);
+    writeJsonFile(path.join(outModelsDir, "accuracy_history.json"), history);
+    console.log("accuracy_history.json written (" + history.dates.length + " dates)");
 }
 
 console.log("prebuild: writing trimmed data to " + OUT_DIR + "\n");
@@ -287,6 +363,9 @@ if (fs.existsSync(SOURCE_REPORTS)) {
 } else {
     console.log("no SofascoreData/reports");
 }
+
+console.log("\naccuracy history:");
+writeAccuracyHistory(SOURCE_REPORTS, path.join(OUT_DIR, "models"));
 
 console.log("\nmodel comparison csv:");
 const summaryCsv = path.join(SOURCE_MODELS, "comparison_summary.csv");
