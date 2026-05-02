@@ -1,4 +1,5 @@
 "use client";
+import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 
@@ -28,9 +29,11 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
         return { label: dayMonth, weekday };
     };
 
+    const visibleDateCount = 5;
     const selectedIdx = dates.indexOf(selectedDate);
-    const start = Math.max(0, selectedIdx - 2);
-    const end = Math.min(dates.length, start + 5);
+    const rawStart = Math.max(0, selectedIdx - 2);
+    const end = Math.min(dates.length, rawStart + visibleDateCount);
+    const start = Math.max(0, end - visibleDateCount);
     const visibleDates = dates.slice(start, end);
 
     return (
@@ -42,7 +45,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
                     className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 text-lg text-gray-500 transition-colors hover:border-emerald-400/50 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:text-gray-400 dark:hover:border-emerald-500/40 dark:hover:text-white"
                     aria-label={t("previous_dates")}
                 >
-                    <span aria-hidden="true">&lt;</span>
+                    <ChevronLeftIcon className="h-5 w-5" aria-hidden="true" />
                 </button>
             )}
             {visibleDates.map((date) => {
@@ -73,7 +76,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
                     className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 text-lg text-gray-500 transition-colors hover:border-emerald-400/50 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:text-gray-400 dark:hover:border-emerald-500/40 dark:hover:text-white"
                     aria-label={t("next_dates")}
                 >
-                    <span aria-hidden="true">&gt;</span>
+                    <ChevronRightIcon className="h-5 w-5" aria-hidden="true" />
                 </button>
             )}
             </div>
