@@ -99,6 +99,14 @@ const translations: Record<Locale, Record<string, string>> = {
         with_odds: "With odds",
         variant_partial_markets: "Some markets are unavailable for this variant.",
         market_unavailable: "Unavailable",
+        team_style_profile: "Team style profile",
+        matchup_radar: "Matchup radar",
+        xg_for: "xG for",
+        defensive_xg: "Defensive xG",
+        avg_shots_on_target: "Avg. shots on target",
+        avg_big_chances: "Avg. big chances",
+        avg_possession: "Avg. possession",
+        form_score: "Form score",
 
         // Team
         rank: "Rank",
@@ -259,6 +267,14 @@ const translations: Record<Locale, Record<string, string>> = {
         market_unavailable: "Niedostępne",
         variant_partial_markets: "Część rynków jest niedostępna dla tego wariantu.",
 
+        team_style_profile: "Profil stylu drużyn",
+        matchup_radar: "Radar meczu",
+        xg_for: "xG tworzone",
+        defensive_xg: "xG defensywne",
+        avg_shots_on_target: "Śr. strzały celne",
+        avg_big_chances: "Śr. duże okazje",
+        avg_possession: "Śr. posiadanie",
+        form_score: "Punkty formy",
         // Team
         rank: "Pozycja",
         played: "Rozegrane",

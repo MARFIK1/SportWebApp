@@ -13,6 +13,7 @@ import { getServerT } from "@/app/util/i18n/getLocale";
 import { normalizeReportDate } from "@/app/util/data/dateUtils";
 import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
+import TeamRadar from "./TeamRadar";
 
 interface StatDefinition {
     label: string;
@@ -234,6 +235,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                         );
                     })()}
 
+                            {analysis && <TeamRadar analysis={analysis} homeTeam={match.home_team} awayTeam={match.away_team} />}
                     {isFinished && matchStats.length > 0 && (
                         <MatchStatistics stats={matchStats} />
                     )}
