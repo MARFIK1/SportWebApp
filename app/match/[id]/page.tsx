@@ -13,6 +13,7 @@ import { getServerT } from "@/app/util/i18n/getLocale";
 import { normalizeReportDate } from "@/app/util/data/dateUtils";
 import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
+import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 
 interface StatDefinition {
@@ -67,6 +68,19 @@ function findPredictionMatch(report: PredictionReport, eventId: number, homeTeam
     return getMatchPrediction(report, eventId) ?? report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
 }
 
+function parseActualScore(score: string | null | undefined): { home: number; away: number } | null {
+    const match = score?.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/);
+    if (!match) return null;
+    return { home: Number(match[1]), away: Number(match[2]) };
+}
+
+function resultFromScore(home: number | null | undefined, away: number | null | undefined): "HOME" | "DRAW" | "AWAY" | null {
+    if (home == null || away == null) return null;
+    if (home > away) return "HOME";
+    if (away > home) return "AWAY";
+    return "DRAW";
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const eventId = parseInt(resolvedParams.id, 10);
@@ -108,7 +122,13 @@ export default async function Match({ params, searchParams }: PageProps) {
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const analysis = analysisReport?.matches?.[analysisKey] ?? null;
 
-    const isFinished = match.status === "finished";
+    const reportScore = parseActualScore(predMatch?.actual_score);
+    const reportFinished = predMatch?.status === "finished" && reportScore !== null;
+    const displayStatus = reportFinished ? "finished" : match.status;
+    const displayHomeScore = reportFinished && reportScore ? reportScore.home : match.home_score;
+    const displayAwayScore = reportFinished && reportScore ? reportScore.away : match.away_score;
+    const actualResult = predMatch?.actual_result ?? resultFromScore(displayHomeScore, displayAwayScore);
+    const isFinished = displayStatus === "finished" && actualResult !== null;
     const matchStats = isFinished ? buildMatchStats(match) : [];
 
     const h2hMatches: SofascoreMatch[] = [];
@@ -174,7 +194,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                                 {isFinished ? (
                                     <>
                                         <span className="text-5xl font-bold">
-                                            {match.home_score} - {match.away_score}
+                                            {displayHomeScore} - {displayAwayScore}
                                         </span>
                                         <span className="bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full">
                                             {t("full_time")}
@@ -235,7 +255,13 @@ export default async function Match({ params, searchParams }: PageProps) {
                         );
                     })()}
 
+                    {(predMatch || analysis) && (
+                        <div className="mb-6 space-y-6">
                             {analysis && <TeamRadar analysis={analysis} homeTeam={match.home_team} awayTeam={match.away_team} />}
+                            {predMatch && <PredictionTriangle homeTeam={match.home_team} awayTeam={match.away_team} actualResult={isFinished ? actualResult : null} />}
+                        </div>
+                    )}
+
                     {isFinished && matchStats.length > 0 && (
                         <MatchStatistics stats={matchStats} />
                     )}

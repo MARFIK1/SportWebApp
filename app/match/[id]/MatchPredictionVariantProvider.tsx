@@ -80,6 +80,10 @@ export function useMatchPredictionVariant() {
     return context;
 }
 
+export function useOptionalMatchPredictionVariant() {
+    return useContext(MatchPredictionVariantContext);
+}
+
 export default function MatchPredictionVariantProvider({
     children,
     match,
