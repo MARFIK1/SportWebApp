@@ -13,6 +13,7 @@ import { getServerT } from "@/app/util/i18n/getLocale";
 import { normalizeReportDate } from "@/app/util/data/dateUtils";
 import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
+import PostMatchInsights from "./PostMatchInsights";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 
@@ -130,6 +131,15 @@ export default async function Match({ params, searchParams }: PageProps) {
     const actualResult = predMatch?.actual_result ?? resultFromScore(displayHomeScore, displayAwayScore);
     const isFinished = displayStatus === "finished" && actualResult !== null;
     const matchStats = isFinished ? buildMatchStats(match) : [];
+    const rawMatch = match as unknown as Record<string, unknown>;
+    const actualXgHome = readStatValue(rawMatch, ["home_expectedgoals", "home_xg"]);
+    const actualXgAway = readStatValue(rawMatch, ["away_expectedgoals", "away_xg"]);
+    const displayXgHome = isFinished
+        ? actualXgHome ?? analysis?.goals?.expected_goals_home
+        : analysis?.goals?.expected_goals_home ?? actualXgHome;
+    const displayXgAway = isFinished
+        ? actualXgAway ?? analysis?.goals?.expected_goals_away
+        : analysis?.goals?.expected_goals_away ?? actualXgAway;
 
     const h2hMatches: SofascoreMatch[] = [];
     for (const comp of competitions) {
@@ -234,9 +244,9 @@ export default async function Match({ params, searchParams }: PageProps) {
                         </div>
                     </div>
 
-                    {analysis?.goals?.expected_goals_home != null && analysis?.goals?.expected_goals_away != null && (() => {
-                        const xgHome = analysis.goals.expected_goals_home;
-                        const xgAway = analysis.goals.expected_goals_away;
+                    {displayXgHome != null && displayXgAway != null && (() => {
+                        const xgHome = displayXgHome;
+                        const xgAway = displayXgAway;
                         const xgTotal = xgHome + xgAway;
                         const homePct = xgTotal > 0 ? (xgHome / xgTotal) * 100 : 50;
                         const awayPct = xgTotal > 0 ? (xgAway / xgTotal) * 100 : 50;
@@ -260,6 +270,19 @@ export default async function Match({ params, searchParams }: PageProps) {
                             {analysis && <TeamRadar analysis={analysis} homeTeam={match.home_team} awayTeam={match.away_team} />}
                             {predMatch && <PredictionTriangle homeTeam={match.home_team} awayTeam={match.away_team} actualResult={isFinished ? actualResult : null} />}
                         </div>
+                    )}
+
+                    {isFinished && actualResult && displayHomeScore != null && displayAwayScore != null && (
+                        <PostMatchInsights
+                            homeTeam={match.home_team}
+                            awayTeam={match.away_team}
+                            homeScore={displayHomeScore}
+                            awayScore={displayAwayScore}
+                            actualResult={actualResult}
+                            stats={matchStats}
+                            xgHome={displayXgHome ?? null}
+                            xgAway={displayXgAway ?? null}
+                        />
                     )}
 
                     {isFinished && matchStats.length > 0 && (
