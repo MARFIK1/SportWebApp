@@ -13,6 +13,7 @@ import { getServerT } from "@/app/util/i18n/getLocale";
 import { normalizeReportDate } from "@/app/util/data/dateUtils";
 import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
+import MatchHistoryTabs, { type MatchHistoryItem } from "./MatchHistoryTabs";
 import PostMatchInsights from "./PostMatchInsights";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
@@ -82,6 +83,19 @@ function resultFromScore(home: number | null | undefined, away: number | null | 
     return "DRAW";
 }
 
+function toHistoryItem(match: SofascoreMatch): MatchHistoryItem {
+    return {
+        eventId: match.event_id,
+        date: match.date,
+        homeTeamId: match.home_team_id,
+        homeTeam: match.home_team,
+        awayTeamId: match.away_team_id,
+        awayTeam: match.away_team,
+        homeScore: match.home_score,
+        awayScore: match.away_score,
+    };
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const eventId = parseInt(resolvedParams.id, 10);
@@ -141,20 +155,28 @@ export default async function Match({ params, searchParams }: PageProps) {
         ? actualXgAway ?? analysis?.goals?.expected_goals_away
         : analysis?.goals?.expected_goals_away ?? actualXgAway;
 
-    const h2hMatches: SofascoreMatch[] = [];
+    const finishedMatches: SofascoreMatch[] = [];
     for (const comp of competitions) {
         const allMatches = loadAllSeasons(comp);
-        const meetings = allMatches.filter((m) =>
-            m.status === "finished" && m.event_id !== eventId && (
-                (m.home_team_id === match.home_team_id && m.away_team_id === match.away_team_id) ||
-                (m.home_team_id === match.away_team_id && m.away_team_id === match.home_team_id)
-            )
-        );
-        h2hMatches.push(...meetings);
+        finishedMatches.push(...allMatches.filter((m) =>
+            m.status === "finished" &&
+            m.event_id !== eventId &&
+            m.date < match.date
+        ));
     }
-    const h2h = Array.from(
-        h2hMatches.reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values()
-    ).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
+    const uniqueFinishedMatches = Array.from(
+        finishedMatches.reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values()
+    ).sort((a, b) => b.date.localeCompare(a.date));
+    const h2h = uniqueFinishedMatches.filter((m) =>
+        (m.home_team_id === match.home_team_id && m.away_team_id === match.away_team_id) ||
+        (m.home_team_id === match.away_team_id && m.away_team_id === match.home_team_id)
+    ).slice(0, 10);
+    const homeRecent = uniqueFinishedMatches.filter((m) =>
+        m.home_team_id === match.home_team_id || m.away_team_id === match.home_team_id
+    ).slice(0, 10);
+    const awayRecent = uniqueFinishedMatches.filter((m) =>
+        m.home_team_id === match.away_team_id || m.away_team_id === match.away_team_id
+    ).slice(0, 10);
 
     const h2hStats = { homeWins: 0, draws: 0, awayWins: 0 };
     for (const m of h2h) {
@@ -289,40 +311,17 @@ export default async function Match({ params, searchParams }: PageProps) {
                         <MatchStatistics stats={matchStats} />
                     )}
 
-                    {h2h.length > 0 && (
-                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mt-6">
-                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("head_to_head")}</h3>
-                            <div className="flex items-center justify-center gap-6 mb-4">
-                                <div className="text-center">
-                                    <div className="text-2xl font-bold text-emerald-400">{h2hStats.homeWins}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400">{match.home_team}</div>
-                                </div>
-                                <div className="text-center">
-                                    <div className="text-2xl font-bold text-gray-500 dark:text-gray-400">{h2hStats.draws}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400">{t("draws")}</div>
-                                </div>
-                                <div className="text-center">
-                                    <div className="text-2xl font-bold text-blue-400">{h2hStats.awayWins}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400">{match.away_team}</div>
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                {h2h.map((m) => (
-                                    <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
-                                        <div className="flex items-center gap-2 flex-1">
-                                            <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={20} height={20} className="object-contain" style={{ width: "20px", height: "20px" }} />
-                                            <span className="text-sm truncate">{m.home_team}</span>
-                                        </div>
-                                        <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
-                                        <div className="flex items-center gap-2 flex-1 justify-end">
-                                            <span className="text-sm truncate text-right">{m.away_team}</span>
-                                            <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={20} height={20} className="object-contain" style={{ width: "20px", height: "20px" }} />
-                                        </div>
-                                        <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
-                                    </Link>
-                                ))}
-                            </div>
-                        </div>
+                    {(h2h.length > 0 || homeRecent.length > 0 || awayRecent.length > 0) && (
+                        <MatchHistoryTabs
+                            homeTeam={match.home_team}
+                            awayTeam={match.away_team}
+                            homeTeamId={match.home_team_id}
+                            awayTeamId={match.away_team_id}
+                            h2h={h2h.map(toHistoryItem)}
+                            homeRecent={homeRecent.map(toHistoryItem)}
+                            awayRecent={awayRecent.map(toHistoryItem)}
+                            h2hStats={h2hStats}
+                        />
                     )}
                 </div>
 

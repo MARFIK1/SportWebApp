@@ -129,6 +129,8 @@ const translations: Record<Locale, Record<string, string>> = {
         avg_big_chances: "Avg. big chances",
         avg_possession: "Avg. possession",
         form_score: "Form score",
+        match_history: "Match history",
+        direct_duels: "H2H",
 
         // Team
         rank: "Rank",
@@ -319,6 +321,9 @@ const translations: Record<Locale, Record<string, string>> = {
         avg_big_chances: "Śr. duże okazje",
         avg_possession: "Śr. posiadanie",
         form_score: "Punkty formy",
+        match_history: "Historia meczów",
+        direct_duels: "Bezpośrednie",
+
         // Team
         rank: "Pozycja",
         played: "Rozegrane",
