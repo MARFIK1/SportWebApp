@@ -184,6 +184,16 @@ Install Python dependencies for scraping / ML:
 
 ```bash
 pip install -r SofascoreData/requirements.txt
+python -m nbstripout --install
+```
+
+On Windows, if the repository path contains spaces, normalize the local Git filter to the project venv:
+
+```bash
+git config filter.nbstripout.clean ".venv/Scripts/python.exe -m nbstripout"
+git config filter.nbstripout.smudge cat
+git config filter.nbstripout.required true
+git config diff.ipynb.textconv ".venv/Scripts/python.exe -m nbstripout -t"
 ```
 
 The app reads from `.data/` first and falls back to `SofascoreData/data/` when needed.

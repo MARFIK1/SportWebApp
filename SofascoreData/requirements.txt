@@ -12,5 +12,6 @@ joblib
 psutil
 ipykernel
 ipywidgets
+nbstripout
 shap
 optuna
