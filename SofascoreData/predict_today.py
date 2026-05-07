@@ -164,6 +164,9 @@ def iter_competition_dirs(base_dir=None):
 
 
 def _validate_season_name(comp_name: str, season_name: str) -> bool:
+    if season_name.lower().startswith('scheduled '):
+        return True
+
     def _tokenize(s):
         return set(s.lower().replace('_', ' ').replace('-', ' ').replace('/', ' ').split())
 
@@ -328,7 +331,7 @@ def find_matches_for_date(target_date: str) -> list:
         
         upcoming_dir = comp_dir / 'raw' / 'upcoming'
         if upcoming_dir.exists():
-            for upcoming_file in upcoming_dir.glob('*.json'):
+            for upcoming_file in sorted(upcoming_dir.glob('*.json')):
                 try:
                     with open(upcoming_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
@@ -364,7 +367,7 @@ def find_matches_for_date(target_date: str) -> list:
                                     'referee_name': match.get('referee_name'),
                                 }
                                 for ok in ODDS_KEYS:
-                                    if match.get(ok):
+                                    if _is_positive_odds(match.get(ok)):
                                         match_entry[ok] = match[ok]
                                 seen_matches[match_key] = match_entry
                             else:
@@ -380,7 +383,7 @@ def find_matches_for_date(target_date: str) -> list:
                                 if match.get('referee_name') and not existing_match.get('referee_name'):
                                     existing_match['referee_name'] = match['referee_name']
                                 for ok in ODDS_KEYS:
-                                    if match.get(ok) and not existing_match.get(ok):
+                                    if _is_positive_odds(match.get(ok)) and not _is_positive_odds(existing_match.get(ok)):
                                         existing_match[ok] = match[ok]
                 except Exception:
                     pass
@@ -2010,7 +2013,15 @@ def _atomic_write_json(path: Path, data: Dict):
             f.write('\n')
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        for attempt in range(10):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                import time
+                time.sleep(min(0.1 * (attempt + 1), 1.0))
     finally:
         if tmp_path.exists():
             try:
