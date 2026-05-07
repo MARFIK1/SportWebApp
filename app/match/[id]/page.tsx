@@ -3,8 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
-import { loadPredictionReport, loadAnalysisReport, getMatchPrediction } from "@/app/util/data/predictionService";
-import { PredictionMatch, PredictionReport } from "@/types/predictions";
+import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { teamLogoUrl } from "@/app/util/urls";
 import MatchPredictions from "./MatchPredictions";
@@ -17,6 +16,7 @@ import MatchHistoryTabs, { type MatchHistoryItem } from "./MatchHistoryTabs";
 import PostMatchInsights from "./PostMatchInsights";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
+import { findPredictionMatch, resolveMatchDisplayState } from "./matchData";
 
 interface StatDefinition {
     label: string;
@@ -64,23 +64,6 @@ function buildMatchStats(m: SofascoreMatch): { type: string; homeValue: number; 
 interface PageProps {
     params: Promise<{ id: string }>;
     searchParams: Promise<{ date?: string }>;
-}
-
-function findPredictionMatch(report: PredictionReport, eventId: number, homeTeam: string, awayTeam: string): PredictionMatch | undefined {
-    return getMatchPrediction(report, eventId) ?? report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
-}
-
-function parseActualScore(score: string | null | undefined): { home: number; away: number } | null {
-    const match = score?.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/);
-    if (!match) return null;
-    return { home: Number(match[1]), away: Number(match[2]) };
-}
-
-function resultFromScore(home: number | null | undefined, away: number | null | undefined): "HOME" | "DRAW" | "AWAY" | null {
-    if (home == null || away == null) return null;
-    if (home > away) return "HOME";
-    if (away > home) return "AWAY";
-    return "DRAW";
 }
 
 function toHistoryItem(match: SofascoreMatch): MatchHistoryItem {
@@ -137,13 +120,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const analysis = analysisReport?.matches?.[analysisKey] ?? null;
 
-    const reportScore = parseActualScore(predMatch?.actual_score);
-    const reportFinished = predMatch?.status === "finished" && reportScore !== null;
-    const displayStatus = reportFinished ? "finished" : match.status;
-    const displayHomeScore = reportFinished && reportScore ? reportScore.home : match.home_score;
-    const displayAwayScore = reportFinished && reportScore ? reportScore.away : match.away_score;
-    const actualResult = predMatch?.actual_result ?? resultFromScore(displayHomeScore, displayAwayScore);
-    const isFinished = displayStatus === "finished" && actualResult !== null;
+    const { displayHomeScore, displayAwayScore, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
     const matchStats = isFinished ? buildMatchStats(match) : [];
     const rawMatch = match as unknown as Record<string, unknown>;
     const actualXgHome = readStatValue(rawMatch, ["home_expectedgoals", "home_xg"]);

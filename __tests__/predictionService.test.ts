@@ -229,6 +229,64 @@ describe("prediction report normalization", () => {
         });
     });
 
+    it("preserves with_odds prediction variants when loading a report", () => {
+        const r1 = report("2025-01-01", {}, [
+            { actual: "HOME", predictions: { LightGBM: "HOME" } },
+        ]);
+        const basePrediction = {
+            prediction: "HOME",
+            prediction_int: 0,
+            model: "LightGBM",
+            probabilities: { HOME: 70, DRAW: 20, AWAY: 10 },
+            confidence: 0.7,
+            correct: null,
+        };
+        const baseConsensus = {
+            prediction: "HOME",
+            agreement: "1/1",
+            agreement_pct: 100,
+            votes: { HOME: 1, DRAW: 0, AWAY: 0 },
+            avg_probabilities: { HOME: 70, DRAW: 20, AWAY: 10 },
+            correct: null,
+        };
+        Object.assign(r1.matches[0], {
+            default_prediction_variant: "with_odds",
+            prediction_variants: {
+                without_odds: {
+                    predictions: { LightGBM: basePrediction },
+                    consensus: baseConsensus,
+                    odds_used: false,
+                },
+                with_odds: {
+                    predictions: { LightGBM: basePrediction },
+                    consensus: baseConsensus,
+                    market_predictions: {
+                        btts: {
+                            models: {},
+                            consensus: {
+                                prediction: "yes",
+                                agreement: "1/1",
+                                agreement_pct: 100,
+                                avg_probabilities: { yes: 62, no: 38 },
+                            },
+                        },
+                    },
+                    odds_used: true,
+                },
+            },
+        });
+        mockedFs.readFileSync.mockReturnValue(JSON.stringify(r1));
+
+        const loaded = loadPredictionReport("2025-01-01");
+
+        expect(loaded?.matches[0].default_prediction_variant).toBe("with_odds");
+        expect(loaded?.matches[0].prediction_variants?.with_odds).toMatchObject({
+            odds_used: true,
+            consensus: { prediction: "HOME" },
+        });
+        expect(loaded?.matches[0].prediction_variants?.with_odds?.market_predictions?.btts?.consensus.prediction).toBe("yes");
+    });
+
     it("finds a match by event_id before falling back to the report id", () => {
         const r1 = report("2025-01-01", {}, [
             { actual: "HOME", predictions: { LightGBM: "HOME" } },
