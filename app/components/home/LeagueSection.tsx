@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import MatchCard from "./MatchCard";
+import LeagueSectionToggle from "./LeagueSectionToggle";
 import { getServerT } from "@/app/util/i18n/getLocale";
 
 interface LeagueSectionProps {
@@ -10,6 +10,7 @@ interface LeagueSectionProps {
     teamIds: Record<string, number>;
     eventIds: Record<string, number>;
     selectedDate: string;
+    defaultOpen: boolean;
 }
 
 function getLeagueAccuracy(matches: PredictionMatch[]): { correct: number; total: number } | null {
@@ -25,12 +26,26 @@ function getLeagueAccuracy(matches: PredictionMatch[]): { correct: number; total
     return { correct, total: finished.length };
 }
 
-export default async function LeagueSection({ leagueName, slug, matches, teamIds, eventIds, selectedDate }: LeagueSectionProps) {
+function startTimeRank(match: PredictionMatch): number {
+    const matchTime = match.start_time?.match(/^(\d{1,2}):(\d{2})/);
+    if (!matchTime) return Number.MAX_SAFE_INTEGER;
+    return Number(matchTime[1]) * 60 + Number(matchTime[2]);
+}
+
+function sortMatchesByKickoff(matches: PredictionMatch[]): PredictionMatch[] {
+    return [...matches].sort((a, b) => {
+        const timeDiff = startTimeRank(a) - startTimeRank(b);
+        if (timeDiff !== 0) return timeDiff;
+        return `${a.home_team} ${a.away_team}`.localeCompare(`${b.home_team} ${b.away_team}`);
+    });
+}
+
+export default async function LeagueSection({ leagueName, slug, matches, teamIds, eventIds, selectedDate, defaultOpen }: LeagueSectionProps) {
     const t = await getServerT();
     const accuracy = getLeagueAccuracy(matches);
 
-    const finished = matches.filter((m) => m.status === "finished");
-    const scheduled = matches.filter((m) => m.status !== "finished");
+    const finished = sortMatchesByKickoff(matches.filter((m) => m.status === "finished"));
+    const scheduled = sortMatchesByKickoff(matches.filter((m) => m.status !== "finished"));
 
     function renderMatchList(list: PredictionMatch[]) {
         return (
@@ -50,43 +65,21 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
     }
 
     return (
-        <section className="mb-10">
-            <div className="mb-4 flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white/70 p-4 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-white/10 dark:bg-gray-950/30 dark:shadow-black/10 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="h-12 w-1 rounded-full bg-gradient-to-b from-emerald-400 via-emerald-500 to-cyan-400" />
-                    <div className="space-y-1">
-                        <div className="flex items-center gap-3">
-                            <Link href={`/league/${slug}`} prefetch={false} className="text-xl font-bold text-gray-900 dark:text-white hover:text-emerald-400 transition-colors">{leagueName}</Link>
-                            <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                                {matches.length} {t("matches_count")}
-                            </span>
-                        </div>
-                        <p className="text-xs uppercase tracking-[0.24em] text-gray-400 dark:text-gray-500">
-                            {finished.length > 0
-                                ? `${finished.length} ${t("finished")}`
-                                : `${scheduled.length} ${t("scheduled")}`}
-                        </p>
-                    </div>
-                    {accuracy && (
-                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white/70 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40">
-                            <span className="text-xs text-gray-500 dark:text-gray-400">{t("accuracy")}:</span>
-                            <span className={`text-sm font-bold ${accuracy.correct / accuracy.total >= 0.5 ? "text-emerald-400" : "text-gray-700 dark:text-gray-300"}`}>
-                                {accuracy.correct}/{accuracy.total}
-                            </span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                                ({Math.round((accuracy.correct / accuracy.total) * 100)}%)
-                            </span>
-                        </div>
-                    )}
-                </div>
-                <Link
-                    href={`/league/${slug}`}
-                    prefetch={false}
-                    className="w-full rounded-xl border border-emerald-500/20 px-3 py-2 text-center text-sm font-semibold text-emerald-500 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400 sm:w-auto"
-                >
-                    {t("view_standings")} {"\u2197"}
-                </Link>
-            </div>
+        <LeagueSectionToggle
+            leagueName={leagueName}
+            slug={slug}
+            matchCount={matches.length}
+            statusText={finished.length > 0 ? `${finished.length} ${t("finished")}` : `${scheduled.length} ${t("scheduled")}`}
+            accuracy={accuracy}
+            defaultOpen={defaultOpen}
+            labels={{
+                matchesCount: t("matches_count"),
+                accuracy: t("accuracy"),
+                viewStandings: t("view_standings"),
+                expandLeague: t("expand_league"),
+                collapseLeague: t("collapse_league"),
+            }}
+        >
 
             {finished.length > 0 && renderMatchList(finished)}
 
@@ -99,6 +92,6 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
             )}
 
             {scheduled.length > 0 && renderMatchList(scheduled)}
-        </section>
+        </LeagueSectionToggle>
     );
 }

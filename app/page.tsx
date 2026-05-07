@@ -63,14 +63,29 @@ export default async function Home({ searchParams }: PageProps) {
 
     const leagueSections = Object.entries(matchesByLeague).map(([dataPath, matches]) => {
         const comp = resolveCompetitionByDataPath(dataPath);
+        const priority = comp?.priority ?? 999;
+        const sectionGroup = comp?.compType === "european"
+            ? 0
+            : comp?.compType === "league" && priority <= 5
+                ? 1
+                : 2;
+
         return {
             dataPath,
             leagueName: comp?.name ?? dataPath,
             slug: comp?.slug ?? dataPath,
-            priority: comp?.priority ?? 999,
+            priority,
+            sectionGroup,
+            defaultOpen: sectionGroup <= 1,
             matches,
         };
-    }).sort((a, b) => a.priority - b.priority);
+    }).sort((a, b) => {
+        const groupDiff = a.sectionGroup - b.sectionGroup;
+        if (groupDiff !== 0) return groupDiff;
+        const priorityDiff = a.priority - b.priority;
+        if (priorityDiff !== 0) return priorityDiff;
+        return a.leagueName.localeCompare(b.leagueName);
+    });
 
     const totalMatches = report.summary.total_matches;
     const finishedMatches = report.summary.finished_matches;
@@ -131,7 +146,7 @@ export default async function Home({ searchParams }: PageProps) {
             <DatePicker dates={dates} selectedDate={selectedDate} todayIso={todayIso} />
 
             <div className="mt-6">
-                {leagueSections.map(({ dataPath, leagueName, slug, matches }) => (
+                {leagueSections.map(({ dataPath, leagueName, slug, defaultOpen, matches }) => (
                     <LeagueSection
                         key={dataPath}
                         leagueName={leagueName}
@@ -140,6 +155,7 @@ export default async function Home({ searchParams }: PageProps) {
                         teamIds={teamIds}
                         eventIds={eventIds}
                         selectedDate={selectedDate}
+                        defaultOpen={defaultOpen}
                     />
                 ))}
             </div>

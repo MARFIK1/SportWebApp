@@ -27,6 +27,8 @@ const translations: Record<Locale, Record<string, string>> = {
         high_confidence: "high-confidence picks",
         accuracy: "Accuracy",
         view_standings: "VIEW STANDINGS",
+        expand_league: "Show matches",
+        collapse_league: "Hide matches",
         finished: "Finished",
         scheduled: "Scheduled / Postponed",
 
@@ -218,6 +220,8 @@ const translations: Record<Locale, Record<string, string>> = {
         high_confidence: "typów z wysoką pewnością",
         accuracy: "Skuteczność",
         view_standings: "TABELA",
+        expand_league: "Pokaż mecze",
+        collapse_league: "Ukryj mecze",
         finished: "Zakończone",
         scheduled: "Zaplanowane / Przełożone",
 
