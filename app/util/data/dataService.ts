@@ -28,6 +28,7 @@ function competitionsCacheKey(competitions: Competition[]): string {
 
 const matchIndexCache = new Map<string, Map<number, { match: SofascoreMatch; competition: Competition }>>();
 const searchDataCache = new Map<string, { teams: SearchTeam[]; players: SearchPlayer[] }>();
+const matchLookupCache = new Map<string, MatchLookupMaps>();
 
 function getMatchIndex(competitions: Competition[]): Map<number, { match: SofascoreMatch; competition: Competition }> {
     const key = competitionsCacheKey(competitions);
@@ -213,16 +214,45 @@ export function findMatchInCompetitions(eventId: number, competitions: Competiti
     return getMatchIndex(competitions).get(eventId) ?? null;
 }
 
-export function buildTeamIdMap(competitions: Competition[]): Map<string, number> {
-    const map = new Map<string, number>();
+export interface MatchLookupMaps {
+    teamIds: Record<string, number>;
+    eventIds: Record<string, number>;
+}
+
+function addMatchLookup(
+    maps: MatchLookupMaps,
+    match: Pick<SofascoreMatch | SofascoreUpcomingMatch, "event_id" | "date" | "home_team" | "home_team_id" | "away_team" | "away_team_id">
+) {
+    if (!(match.home_team in maps.teamIds)) maps.teamIds[match.home_team] = match.home_team_id;
+    if (!(match.away_team in maps.teamIds)) maps.teamIds[match.away_team] = match.away_team_id;
+
+    const dateKey = match.date.slice(0, 10);
+    if (dateKey) {
+        maps.eventIds[`${match.home_team}_vs_${match.away_team}_${dateKey}`] = match.event_id;
+    }
+}
+
+export function buildMatchLookupMaps(competitions: Competition[]): MatchLookupMaps {
+    const key = competitionsCacheKey(competitions);
+    const cached = matchLookupCache.get(key);
+    if (cached) return cached;
+
+    const maps: MatchLookupMaps = { teamIds: {}, eventIds: {} };
     for (const comp of competitions) {
-        const matches = loadAllSeasons(comp);
-        for (const m of matches) {
-            if (!map.has(m.home_team)) map.set(m.home_team, m.home_team_id);
-            if (!map.has(m.away_team)) map.set(m.away_team, m.away_team_id);
+        for (const match of loadAllSeasons(comp)) {
+            addMatchLookup(maps, match);
+        }
+        for (const match of loadUpcomingMatches(comp)) {
+            addMatchLookup(maps, match);
         }
     }
-    return map;
+
+    matchLookupCache.set(key, maps);
+    return maps;
+}
+
+export function buildTeamIdMap(competitions: Competition[]): Map<string, number> {
+    return new Map(Object.entries(buildMatchLookupMaps(competitions).teamIds));
 }
 
 export interface MatchLineup {

@@ -9,7 +9,7 @@ import {
     computeConsensusAccuracy,
 } from "../util/data/predictionService";
 import { resolveCompetitionByDataPath } from "../util/league/leagueRegistry";
-import { loadAllSeasons } from "../util/data/dataService";
+import { buildMatchLookupMaps } from "../util/data/dataService";
 import DatePicker from "../components/home/DatePicker";
 import PredictionsClient from "./PredictionsClient";
 import ModelComparisonCharts from "./ModelComparisonCharts";
@@ -23,20 +23,6 @@ export const metadata: Metadata = {
 
 interface PageProps {
     searchParams: Promise<{ date?: string }>;
-}
-
-function buildTeamIdsForReport(leagueDataPaths: string[]): Record<string, number> {
-    const teamIds: Record<string, number> = {};
-    for (const dataPath of leagueDataPaths) {
-        const comp = resolveCompetitionByDataPath(dataPath);
-        if (!comp) continue;
-        const matches = loadAllSeasons(comp);
-        for (const m of matches) {
-            if (!(m.home_team in teamIds)) teamIds[m.home_team] = m.home_team_id;
-            if (!(m.away_team in teamIds)) teamIds[m.away_team] = m.away_team_id;
-        }
-    }
-    return teamIds;
 }
 
 function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
@@ -69,7 +55,11 @@ export default async function Predictions({ searchParams }: PageProps) {
     const resultTypeBreakdown = computeResultTypeAccuracy(dates);
 
     const leagueDataPaths = Array.from(new Set(report.matches.map((m) => `${m.comp_type}/${m.league}`)));
-    const teamIds = buildTeamIdsForReport(leagueDataPaths);
+    const competitions = leagueDataPaths.flatMap((dataPath) => {
+        const comp = resolveCompetitionByDataPath(dataPath);
+        return comp ? [comp] : [];
+    });
+    const { teamIds } = buildMatchLookupMaps(competitions);
 
     const matchCountByLeague: Record<string, number> = {};
     for (const m of report.matches) {

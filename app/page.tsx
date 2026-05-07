@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { listReportDates, loadPredictionReport } from "./util/data/predictionService";
 import { resolveCompetitionByDataPath } from "./util/league/leagueRegistry";
-import { loadAllSeasons } from "./util/data/dataService";
+import { buildMatchLookupMaps } from "./util/data/dataService";
 import DatePicker from "./components/home/DatePicker";
 import LeagueSection from "./components/home/LeagueSection";
 import { getServerT } from "./util/i18n/getLocale";
@@ -15,23 +15,6 @@ export const metadata: Metadata = {
 
 interface PageProps {
     searchParams: Promise<{ date?: string }>;
-}
-
-function buildLookups(leagueDataPaths: string[]): { teamIds: Record<string, number>; eventIds: Record<string, number> } {
-    const teamIds: Record<string, number> = {};
-    const eventIds: Record<string, number> = {};
-    for (const dataPath of leagueDataPaths) {
-        const comp = resolveCompetitionByDataPath(dataPath);
-        if (!comp) continue;
-        const matches = loadAllSeasons(comp);
-        for (const m of matches) {
-            if (!(m.home_team in teamIds)) teamIds[m.home_team] = m.home_team_id;
-            if (!(m.away_team in teamIds)) teamIds[m.away_team] = m.away_team_id;
-            const key = `${m.home_team}_vs_${m.away_team}_${m.date.slice(0, 10)}`;
-            eventIds[key] = m.event_id;
-        }
-    }
-    return { teamIds, eventIds };
 }
 
 function getConsensusConfidence(match: PredictionMatch): number {
@@ -65,7 +48,11 @@ export default async function Home({ searchParams }: PageProps) {
     }
 
     const leagueDataPaths = Array.from(new Set(report.matches.map((m) => `${m.comp_type}/${m.league}`)));
-    const { teamIds, eventIds } = buildLookups(leagueDataPaths);
+    const competitions = leagueDataPaths.flatMap((dataPath) => {
+        const comp = resolveCompetitionByDataPath(dataPath);
+        return comp ? [comp] : [];
+    });
+    const { teamIds, eventIds } = buildMatchLookupMaps(competitions);
 
     const matchesByLeague: Record<string, typeof report.matches> = {};
     for (const match of report.matches) {
