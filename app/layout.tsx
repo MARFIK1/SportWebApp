@@ -1,7 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import Navbar from "./components/common/Navbar";
+import AppHeader from "./components/common/AppHeader";
 import ThemeProvider from "./components/common/ThemeProvider";
 import LanguageProvider from "./components/common/LanguageProvider";
 import { getServerLocale } from "@/app/util/i18n/getLocale";
@@ -37,16 +37,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     const theme = await getServerTheme();
 
     return (
-        <html lang={locale} className={theme === "dark" ? "dark" : ""}>
-            <body className={`${inter.className}`}>
+        <html lang={locale} className={`${theme === "dark" ? "dark" : ""} overflow-x-hidden`}>
+            <body className={`${inter.className} overflow-x-hidden`}>
                 <ThemeProvider initial={theme}>
                     <LanguageProvider initial={locale}>
-                        <div className="flex min-h-dvh">
-                            <div className="flex flex-col flex-1">
-                                <header className="sticky top-0 z-30 w-full border-b border-gray-200/80 bg-white/85 p-3 backdrop-blur-xl dark:border-white/10 dark:bg-[#0b1220]/85">
-                                    <Navbar />
-                                </header>
-                                <main className="flex-1 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.10),_transparent_30%),linear-gradient(180deg,_#f8fafc_0%,_#eef2f7_100%)] dark:bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.12),_transparent_32%),linear-gradient(180deg,_#0b1220_0%,_#111827_48%,_#0b1220_100%)]">
+                        <div className="flex min-h-dvh w-full min-w-0 overflow-x-hidden">
+                            <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
+                                <AppHeader />
+                                <main className="min-w-0 flex-1 overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.10),_transparent_30%),linear-gradient(180deg,_#f8fafc_0%,_#eef2f7_100%)] dark:bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.12),_transparent_32%),linear-gradient(180deg,_#0b1220_0%,_#111827_48%,_#0b1220_100%)]">
                                     {children}
                                 </main>
                             </div>

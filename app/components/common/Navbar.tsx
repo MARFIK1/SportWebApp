@@ -37,8 +37,8 @@ export default function Navbar() {
     );
 
     return (
-        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center justify-between gap-3 sm:justify-start">
+        <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center justify-between gap-3 sm:justify-start">
                 <Link href="/" prefetch={false} className="flex items-center" aria-label="SportWebApp home">
                     <Image
                         src="/logo.png"
@@ -48,7 +48,7 @@ export default function Navbar() {
                         className="h-12 w-12 object-contain"
                     />
                 </Link>
-                <div className="flex items-center gap-2 sm:hidden">
+                <div className="flex min-w-0 items-center gap-2 sm:hidden">
                     {actions}
                 </div>
             </div>
