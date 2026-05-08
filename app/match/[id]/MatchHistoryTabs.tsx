@@ -70,18 +70,33 @@ function resultClass(result: ResultMark): string {
 
 function TeamCell({ id, name, align = "left" }: { id: number; name: string; align?: "left" | "right" }) {
     return (
-        <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "justify-end" : ""}`}>
+        <div className={`grid min-w-0 items-center gap-2 ${align === "right" ? "grid-cols-[minmax(0,1fr)_22px] text-right" : "grid-cols-[22px_minmax(0,1fr)]"}`}>
             {align === "right" ? (
                 <>
-                    <span className="truncate text-sm font-bold text-gray-900 dark:text-white">{name}</span>
+                    <span className="min-w-0 break-words text-sm font-bold leading-tight text-gray-900 dark:text-white">{name}</span>
                     <Image src={teamLogoUrl(id)} alt={name} width={22} height={22} className="h-[22px] w-[22px] object-contain" />
                 </>
             ) : (
                 <>
                     <Image src={teamLogoUrl(id)} alt={name} width={22} height={22} className="h-[22px] w-[22px] object-contain" />
-                    <span className="truncate text-sm font-bold text-gray-900 dark:text-white">{name}</span>
+                    <span className="min-w-0 break-words text-sm font-bold leading-tight text-gray-900 dark:text-white">{name}</span>
                 </>
             )}
+        </div>
+    );
+}
+
+function SummaryCard({ value, label, tone }: { value: number; label: string; tone: "home" | "draw" | "away" | "loss" }) {
+    const valueClass =
+        tone === "home" ? "text-emerald-400" :
+        tone === "away" ? "text-blue-400" :
+        tone === "loss" ? "text-red-400" :
+        "text-gray-300";
+
+    return (
+        <div className="flex min-h-[78px] flex-col items-center justify-center rounded-2xl bg-gray-50 p-4 text-center dark:bg-gray-800/50">
+            <div className={`text-2xl font-black ${valueClass}`}>{value}</div>
+            <div className="mt-1 max-w-full break-words text-xs leading-tight text-gray-500 dark:text-gray-400">{label}</div>
         </div>
     );
 }
@@ -138,12 +153,12 @@ export default function MatchHistoryTabs({
 
     return (
         <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 dark:border-white/10 dark:bg-gray-900/50">
-            <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+            <div className="mb-5 space-y-4">
                 <div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-gray-500 dark:text-gray-400">{t("match_history")}</p>
                     <h3 className="mt-1 text-xl font-black text-gray-900 dark:text-white">{activeData.title}</h3>
                 </div>
-                <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-3">
+                <div className="grid w-full min-w-0 gap-2 sm:grid-cols-3">
                     {tabs.map((tab) => {
                         const active = activeTab === tab.key;
                         return (
@@ -151,7 +166,7 @@ export default function MatchHistoryTabs({
                                 key={tab.key}
                                 type="button"
                                 onClick={() => setActiveTab(tab.key)}
-                                className={`flex min-h-12 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-black transition-colors ${
+                                className={`flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-black transition-colors ${
                                     active
                                         ? "border-emerald-500/60 bg-emerald-500/15 text-gray-900 dark:text-white"
                                         : "border-gray-200 bg-gray-50 text-gray-600 hover:border-emerald-500/40 dark:border-white/10 dark:bg-gray-800/40 dark:text-gray-300"
@@ -163,7 +178,7 @@ export default function MatchHistoryTabs({
                                 ) : (
                                     <span className="rounded-full border border-emerald-400/60 px-2 py-1 text-[11px] font-black text-emerald-300">VS</span>
                                 )}
-                                <span className="truncate">{tab.label}</span>
+                                <span className="min-w-0 break-words text-center leading-tight">{tab.label}</span>
                             </button>
                         );
                     })}
@@ -173,33 +188,15 @@ export default function MatchHistoryTabs({
             <div className="mb-5 grid gap-3 sm:grid-cols-3">
                 {activeTab === "h2h" ? (
                     <>
-                        <div className="rounded-2xl bg-gray-50 p-4 text-center dark:bg-gray-800/50">
-                            <div className="text-2xl font-black text-emerald-400">{h2hStats.homeWins}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{homeTeam}</div>
-                        </div>
-                        <div className="rounded-2xl bg-gray-50 p-4 text-center dark:bg-gray-800/50">
-                            <div className="text-2xl font-black text-gray-500 dark:text-gray-300">{h2hStats.draws}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{t("draws")}</div>
-                        </div>
-                        <div className="rounded-2xl bg-gray-50 p-4 text-center dark:bg-gray-800/50">
-                            <div className="text-2xl font-black text-blue-400">{h2hStats.awayWins}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{awayTeam}</div>
-                        </div>
+                        <SummaryCard value={h2hStats.homeWins} label={homeTeam} tone="home" />
+                        <SummaryCard value={h2hStats.draws} label={t("draws")} tone="draw" />
+                        <SummaryCard value={h2hStats.awayWins} label={awayTeam} tone="away" />
                     </>
                 ) : (
                     <>
-                        <div className="rounded-2xl bg-gray-50 p-4 text-center dark:bg-gray-800/50">
-                            <div className="text-2xl font-black text-emerald-400">{activeData.record.wins}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{t("wins")}</div>
-                        </div>
-                        <div className="rounded-2xl bg-gray-50 p-4 text-center dark:bg-gray-800/50">
-                            <div className="text-2xl font-black text-gray-500 dark:text-gray-300">{activeData.record.draws}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{t("draws")}</div>
-                        </div>
-                        <div className="rounded-2xl bg-gray-50 p-4 text-center dark:bg-gray-800/50">
-                            <div className="text-2xl font-black text-red-400">{activeData.record.losses}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{t("losses")}</div>
-                        </div>
+                        <SummaryCard value={activeData.record.wins} label={t("wins")} tone="home" />
+                        <SummaryCard value={activeData.record.draws} label={t("draws")} tone="draw" />
+                        <SummaryCard value={activeData.record.losses} label={t("losses")} tone="loss" />
                     </>
                 )}
             </div>
@@ -212,7 +209,7 @@ export default function MatchHistoryTabs({
                             key={historyMatch.eventId}
                             href={`/match/${historyMatch.eventId}?date=${historyMatch.date.slice(0, 10)}`}
                             prefetch={false}
-                            className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_82px] items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/50"
+                            className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/50 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_82px]"
                         >
                             <TeamCell id={historyMatch.homeTeamId} name={historyMatch.homeTeam} />
                             <div className="flex items-center justify-center gap-2">
@@ -226,7 +223,7 @@ export default function MatchHistoryTabs({
                                 </span>
                             </div>
                             <TeamCell id={historyMatch.awayTeamId} name={historyMatch.awayTeam} align="right" />
-                            <span className="text-right text-xs text-gray-500 dark:text-gray-400">{historyMatch.date.slice(0, 10)}</span>
+                            <span className="col-span-3 text-center text-xs text-gray-500 dark:text-gray-400 sm:col-span-1 sm:text-right">{historyMatch.date.slice(0, 10)}</span>
                         </Link>
                     );
                 })}

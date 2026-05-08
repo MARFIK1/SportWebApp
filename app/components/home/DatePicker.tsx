@@ -21,11 +21,10 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
     const dateLocale = locale === "pl" ? "pl-PL" : "en-US";
 
     const formatDay = (dateStr: string) => {
-        if (dateStr === todayIso) return { label: t("today"), weekday: "" };
-
         const date = new Date(dateStr + "T12:00:00Z");
         const weekday = date.toLocaleDateString(dateLocale, { weekday: "short", timeZone: "UTC" }).toUpperCase();
         const dayMonth = date.toLocaleDateString(dateLocale, { month: "short", day: "numeric", timeZone: "UTC" }).toUpperCase();
+        if (dateStr === todayIso) return { label: dayMonth, weekday: t("today").toUpperCase() };
         return { label: dayMonth, weekday };
     };
 
@@ -57,7 +56,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
                         key={date}
                         onClick={() => handleDateClick(date)}
                         aria-pressed={isSelected}
-                        className={`flex min-w-[72px] flex-col items-center rounded-xl border px-3 py-3 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:min-w-[88px] sm:px-4 ${
+                        className={`flex h-14 w-[84px] flex-col items-center justify-center rounded-xl border px-3 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:w-[92px] ${
                             isSelected
                                 ? "border-emerald-500 bg-emerald-600 text-white shadow-lg shadow-emerald-950/20 dark:shadow-emerald-950/30"
                                 : isToday
@@ -65,7 +64,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
                                     : "border-transparent text-gray-500 hover:border-gray-200 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:border-gray-700 dark:hover:bg-gray-800 dark:hover:text-white"
                         }`}
                     >
-                        {weekday && <span className={`text-[11px] tracking-[0.18em] ${isSelected ? "text-white/80" : "text-gray-400 dark:text-gray-500"}`}>{weekday}</span>}
+                        <span className={`text-[11px] tracking-[0.18em] ${isSelected ? "text-white/80" : "text-gray-400 dark:text-gray-500"}`}>{weekday}</span>
                         <span className="text-sm font-bold">{label}</span>
                     </button>
                 );

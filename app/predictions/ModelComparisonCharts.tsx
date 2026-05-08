@@ -14,6 +14,8 @@ import {
     ResponsiveContainer,
     Rectangle,
     type BarShapeProps,
+    type TooltipContentProps,
+    type TooltipValueType,
 } from "recharts";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { useTheme } from "@/app/components/common/ThemeProvider";
@@ -38,8 +40,64 @@ const MODEL_COLORS: Record<string, string> = {
     "consensus": "#14b8a6",
 };
 
+const CHART_INITIAL_DIMENSION = { width: 800, height: 420 };
+
 function colorFor(model: string): string {
     return MODEL_COLORS[model] ?? "#9ca3af";
+}
+
+function pointValue(point: AccuracyOverTimePoint | undefined, model: string): number {
+    const value = point?.[model];
+    return typeof value === "number" ? value : Number.NEGATIVE_INFINITY;
+}
+
+function numericTooltipValue(value: TooltipValueType | undefined): number {
+    const rawValue = Array.isArray(value) ? value[0] : value;
+    if (typeof rawValue === "number") return rawValue;
+    if (typeof rawValue === "string") {
+        const parsed = Number(rawValue);
+        return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+    }
+    return Number.NEGATIVE_INFINITY;
+}
+
+function AccuracyOverTimeTooltip({
+    active,
+    label,
+    payload,
+}: TooltipContentProps<TooltipValueType, string | number>) {
+    if (!active || !payload?.length) return null;
+
+    const rows = [...payload].sort((a, b) => {
+        const byValue = numericTooltipValue(b.value) - numericTooltipValue(a.value);
+        return byValue !== 0 ? byValue : String(a.name ?? "").localeCompare(String(b.name ?? ""));
+    });
+
+    return (
+        <div className="min-w-[220px] rounded-lg border border-gray-200 bg-white/95 px-3 py-2 text-sm text-gray-950 shadow-xl shadow-slate-950/10 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 dark:text-white dark:shadow-black/30">
+            <div className="mb-2 font-semibold text-gray-700 dark:text-gray-100">{label}</div>
+            <div className="space-y-1.5">
+                {rows.map((item) => {
+                    const name = String(item.name ?? "");
+                    const value = numericTooltipValue(item.value);
+                    return (
+                        <div key={name} className="flex items-center justify-between gap-5">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <span
+                                    className="h-2 w-2 shrink-0 rounded-full"
+                                    style={{ backgroundColor: item.color ?? colorFor(name) }}
+                                />
+                                <span className="truncate font-semibold">{name}</span>
+                            </div>
+                            <span className="shrink-0 font-semibold">
+                                {Number.isFinite(value) ? value.toFixed(1) : "-"}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
 }
 
 function ChartViewport({ children }: { children: ReactNode }) {
@@ -83,19 +141,26 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
         [comparison]
     );
 
-    const models = useMemo(
-        () => Array.from(new Set(accuracyOverTime.flatMap((p) => Object.keys(p).filter((k) => k !== "date")))),
+    const overtimeModelOptions = useMemo(
+        () => {
+            const latestPoint = accuracyOverTime[accuracyOverTime.length - 1];
+            return Array.from(new Set(accuracyOverTime.flatMap((p) => Object.keys(p).filter((k) => k !== "date" && k !== "consensus"))))
+                .sort((a, b) => {
+                    const byAccuracy = pointValue(latestPoint, b) - pointValue(latestPoint, a);
+                    return byAccuracy !== 0 ? byAccuracy : a.localeCompare(b);
+                })
+                .slice(0, 9);
+        },
         [accuracyOverTime]
     );
 
-    const overtimeModelOptions = useMemo(
-        () => models.filter((m) => m !== "consensus").slice(0, 9),
-        [models]
-    );
-
     const visibleModels = useMemo(
-        () => (selectedOvertimeModels ?? overtimeModelOptions)
-            .filter((model) => overtimeModelOptions.includes(model)),
+        () => {
+            const selected = selectedOvertimeModels ? new Set(selectedOvertimeModels) : null;
+            return selected
+                ? overtimeModelOptions.filter((model) => selected.has(model))
+                : overtimeModelOptions;
+        },
         [overtimeModelOptions, selectedOvertimeModels]
     );
 
@@ -159,7 +224,7 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
                 >
                     {activeTab === "comparison" && sortedComparison.length > 0 && (
                         <ChartViewport>
-                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
                                 <BarChart data={sortedComparison.map((r) => ({
                                     model: r.model,
                                     [t("chart_test_acc")]: Math.round(r.testAccuracy * 1000) / 10,
@@ -180,12 +245,12 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
                     {activeTab === "overtime" && accuracyOverTime.length > 0 && (
                         visibleModels.length > 0 ? (
                             <ChartViewport>
-                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
                                     <LineChart data={accuracyOverTime}>
                                         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
                                         <XAxis dataKey="date" tick={{ fontSize: 10, fill: chartColors.axis }} />
                                         <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[30, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
-                                        <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                        <Tooltip content={(props) => <AccuracyOverTimeTooltip {...props} />} />
                                         <Legend wrapperStyle={{ fontSize: 11 }} />
                                         {visibleModels.map((m) => (
                                             <Line key={m} type="monotone" dataKey={m} stroke={colorFor(m)} strokeWidth={2} dot={false} />
@@ -202,7 +267,7 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
 
                     {activeTab === "resulttype" && resultTypeBreakdown.length > 0 && (
                         <ChartViewport>
-                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
                                 <BarChart data={resultTypeBreakdown}>
                                     <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
                                     <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
@@ -219,7 +284,7 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
 
                     {activeTab === "efficiency" && brierSorted.length > 0 && (
                         <ChartViewport>
-                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
                                 <BarChart
                                     data={brierSorted.map((r) => ({
                                         model: r.model,
