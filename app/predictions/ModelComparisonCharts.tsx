@@ -41,6 +41,8 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const CHART_INITIAL_DIMENSION = { width: 800, height: 420 };
+const MOBILE_CHART_INITIAL_DIMENSION = { width: 340, height: 340 };
+const MOBILE_QUERY = "(max-width: 639px)";
 
 function colorFor(model: string): string {
     return MODEL_COLORS[model] ?? "#9ca3af";
@@ -61,6 +63,13 @@ function numericTooltipValue(value: TooltipValueType | undefined): number {
     return Number.NEGATIVE_INFINITY;
 }
 
+function compactModelLabel(model: string): string {
+    return model
+        .replace("Logistic Regression", "Logistic")
+        .replace("Random Forest", "Random F.")
+        .replace("Ensemble", "Ens.");
+}
+
 function AccuracyOverTimeTooltip({
     active,
     label,
@@ -74,7 +83,7 @@ function AccuracyOverTimeTooltip({
     });
 
     return (
-        <div className="min-w-[220px] rounded-lg border border-gray-200 bg-white/95 px-3 py-2 text-sm text-gray-950 shadow-xl shadow-slate-950/10 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 dark:text-white dark:shadow-black/30">
+        <div className="min-w-[190px] max-w-[calc(100vw-3rem)] rounded-lg border border-gray-200 bg-white/95 px-3 py-2 text-xs text-gray-950 shadow-xl shadow-slate-950/10 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 dark:text-white dark:shadow-black/30 sm:min-w-[220px] sm:text-sm">
             <div className="mb-2 font-semibold text-gray-700 dark:text-gray-100">{label}</div>
             <div className="space-y-1.5">
                 {rows.map((item) => {
@@ -127,7 +136,23 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
     const { t } = useLanguage();
     const { theme } = useTheme();
     const [activeTab, setActiveTab] = useState<"comparison" | "overtime" | "resulttype" | "efficiency">("comparison");
+    const [isCompact, setIsCompact] = useState(false);
     const [selectedOvertimeModels, setSelectedOvertimeModels] = useState<string[] | null>(null);
+
+    useEffect(() => {
+        const mediaQuery = window.matchMedia(MOBILE_QUERY);
+
+        const syncCompactMode = () => {
+            setIsCompact(mediaQuery.matches);
+        };
+
+        syncCompactMode();
+        mediaQuery.addEventListener("change", syncCompactMode);
+
+        return () => {
+            mediaQuery.removeEventListener("change", syncCompactMode);
+        };
+    }, []);
 
     const chartColors = theme === "dark"
         ? { grid: "#374151", axis: "#9ca3af", tooltipBg: "rgba(31, 41, 55, 0.95)", tooltipBorder: "#374151", tooltipText: "#f3f4f6", tooltipLabel: "#d1d5db" }
@@ -179,6 +204,14 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
         [comparison]
     );
 
+    const chartInitialDimension = isCompact ? MOBILE_CHART_INITIAL_DIMENSION : CHART_INITIAL_DIMENSION;
+    const chartPanelClassName = isCompact
+        ? "h-[340px] min-w-0"
+        : "h-[360px] min-w-[640px] sm:h-[420px] lg:min-w-0";
+    const chartFrameClassName = isCompact
+        ? "min-w-0 pb-2"
+        : "scrollbar-app -mx-2 overflow-x-auto px-2 pb-2";
+
     if (comparison.length === 0 && accuracyOverTime.length === 0) return null;
 
     const tabs: { id: typeof activeTab; label: string }[] = [
@@ -189,12 +222,12 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
     ];
 
     return (
-        <div className="mt-6 min-w-0 overflow-hidden rounded-2xl bg-white p-5 dark:bg-gray-900/50">
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="mt-6 min-w-0 overflow-hidden rounded-2xl bg-white p-3 dark:bg-gray-900/50 sm:p-5">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     {t("ml_comparison")}
                 </h3>
-                <div className="flex gap-1 flex-wrap" role="tablist" aria-label={t("ml_comparison")}>
+                <div className="grid w-full grid-cols-2 gap-1 sm:flex sm:w-auto sm:max-w-full sm:overflow-x-auto sm:pb-1" role="tablist" aria-label={t("ml_comparison")}>
                     {tabs.map((tab) => (
                         <button
                             key={tab.id}
@@ -203,7 +236,7 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
                             id={`chart-tab-${tab.id}`}
                             aria-selected={activeTab === tab.id}
                             aria-controls={`chart-panel-${tab.id}`}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                            className={`min-h-9 rounded-lg px-2 py-1.5 text-[11px] font-semibold leading-tight transition-colors sm:shrink-0 sm:px-3 sm:text-xs ${
                                 activeTab === tab.id
                                     ? "bg-emerald-600 text-white"
                                     : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
@@ -216,101 +249,143 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
             </div>
 
             <div className={activeTab === "overtime" ? "grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_250px]" : "min-w-0"}>
-                <div
-                    id={`chart-panel-${activeTab}`}
-                    role="tabpanel"
-                    aria-labelledby={`chart-tab-${activeTab}`}
-                    className="h-[420px] min-w-0"
-                >
-                    {activeTab === "comparison" && sortedComparison.length > 0 && (
-                        <ChartViewport>
-                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
-                                <BarChart data={sortedComparison.map((r) => ({
-                                    model: r.model,
-                                    [t("chart_test_acc")]: Math.round(r.testAccuracy * 1000) / 10,
-                                    [t("chart_live_acc")]: Math.round(r.liveAccuracy * 1000) / 10,
-                                }))}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                                    <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
-                                    <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
-                                    <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
-                                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                                    <Bar dataKey={t("chart_test_acc")} fill="#3b82f6" />
-                                    <Bar dataKey={t("chart_live_acc")} fill="#10b981" />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </ChartViewport>
-                    )}
-
-                    {activeTab === "overtime" && accuracyOverTime.length > 0 && (
-                        visibleModels.length > 0 ? (
+                <div className={chartFrameClassName}>
+                    <div
+                        id={`chart-panel-${activeTab}`}
+                        role="tabpanel"
+                        aria-labelledby={`chart-tab-${activeTab}`}
+                        className={chartPanelClassName}
+                    >
+                        {activeTab === "comparison" && sortedComparison.length > 0 && (
                             <ChartViewport>
-                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
-                                    <LineChart data={accuracyOverTime}>
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={chartInitialDimension}>
+                                    <BarChart
+                                        data={sortedComparison.map((r) => ({
+                                        model: r.model,
+                                        [t("chart_test_acc")]: Math.round(r.testAccuracy * 1000) / 10,
+                                        [t("chart_live_acc")]: Math.round(r.liveAccuracy * 1000) / 10,
+                                        }))}
+                                        layout={isCompact ? "vertical" : "horizontal"}
+                                        margin={isCompact ? { top: 8, right: 8, bottom: 8, left: 0 } : { top: 5, right: 5, bottom: 5, left: 5 }}
+                                        barCategoryGap={isCompact ? 8 : undefined}
+                                    >
                                         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: chartColors.axis }} />
-                                        <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[30, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
-                                        <Tooltip content={(props) => <AccuracyOverTimeTooltip {...props} />} />
-                                        <Legend wrapperStyle={{ fontSize: 11 }} />
-                                        {visibleModels.map((m) => (
-                                            <Line key={m} type="monotone" dataKey={m} stroke={colorFor(m)} strokeWidth={2} dot={false} />
-                                        ))}
-                                    </LineChart>
+                                        {isCompact ? (
+                                            <>
+                                                <XAxis type="number" tick={{ fontSize: 10, fill: chartColors.axis }} domain={[0, 60]} />
+                                                <YAxis type="category" dataKey="model" width={82} tick={{ fontSize: 10, fill: chartColors.axis }} tickFormatter={compactModelLabel} />
+                                            </>
+                                        ) : (
+                                            <>
+                                                <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
+                                                <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
+                                            </>
+                                        )}
+                                        <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                        <Legend wrapperStyle={{ fontSize: isCompact ? 10 : 12 }} />
+                                        <Bar dataKey={t("chart_test_acc")} fill="#3b82f6" barSize={isCompact ? 7 : undefined} />
+                                        <Bar dataKey={t("chart_live_acc")} fill="#10b981" barSize={isCompact ? 7 : undefined} />
+                                    </BarChart>
                                 </ResponsiveContainer>
                             </ChartViewport>
-                        ) : (
-                            <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-gray-200 text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
-                                {t("chart_no_models")}
-                            </div>
-                        )
-                    )}
+                        )}
 
-                    {activeTab === "resulttype" && resultTypeBreakdown.length > 0 && (
-                        <ChartViewport>
-                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
-                                <BarChart data={resultTypeBreakdown}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                                    <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
-                                    <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 100]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
-                                    <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
-                                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                                    <Bar dataKey="HOME" fill="#10b981" />
-                                    <Bar dataKey="DRAW" fill="#f59e0b" />
-                                    <Bar dataKey="AWAY" fill="#3b82f6" />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </ChartViewport>
-                    )}
+                        {activeTab === "overtime" && accuracyOverTime.length > 0 && (
+                            visibleModels.length > 0 ? (
+                                <ChartViewport>
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={chartInitialDimension}>
+                                        <LineChart data={accuracyOverTime} margin={isCompact ? { top: 8, right: 8, bottom: 8, left: -10 } : { top: 5, right: 5, bottom: 5, left: 5 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
+                                            <XAxis dataKey="date" tick={{ fontSize: isCompact ? 9 : 10, fill: chartColors.axis }} minTickGap={isCompact ? 22 : 5} />
+                                            <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[30, 60]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
+                                            <Tooltip content={(props) => <AccuracyOverTimeTooltip {...props} />} />
+                                            {!isCompact && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                                            {visibleModels.map((m) => (
+                                                <Line key={m} type="monotone" dataKey={m} stroke={colorFor(m)} strokeWidth={2} dot={false} />
+                                            ))}
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </ChartViewport>
+                            ) : (
+                                <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-gray-200 text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                                    {t("chart_no_models")}
+                                </div>
+                            )
+                        )}
 
-                    {activeTab === "efficiency" && brierSorted.length > 0 && (
-                        <ChartViewport>
-                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={CHART_INITIAL_DIMENSION}>
-                                <BarChart
-                                    data={brierSorted.map((r) => ({
-                                        model: r.model,
-                                        [t("chart_brier")]: r.brierScore,
-                                    }))}
-                                >
-                                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
-                                    <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
-                                    <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={["auto", "auto"]} />
-                                    <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
-                                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                                    <Bar
-                                        dataKey={t("chart_brier")}
-                                        shape={(props: BarShapeProps) => {
-                                            const payload = props.payload as { model?: string } | undefined;
-                                            const model = typeof payload?.model === "string" ? payload.model : "";
-                                            const { isActive, option, ...rectProps } = props;
-                                            void isActive;
-                                            void option;
-                                            return <Rectangle {...rectProps} fill={colorFor(model)} />;
-                                        }}
-                                    />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </ChartViewport>
-                    )}
+                        {activeTab === "resulttype" && resultTypeBreakdown.length > 0 && (
+                            <ChartViewport>
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={chartInitialDimension}>
+                                    <BarChart
+                                        data={resultTypeBreakdown}
+                                        layout={isCompact ? "vertical" : "horizontal"}
+                                        margin={isCompact ? { top: 8, right: 8, bottom: 8, left: 0 } : { top: 5, right: 5, bottom: 5, left: 5 }}
+                                        barCategoryGap={isCompact ? 8 : undefined}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
+                                        {isCompact ? (
+                                            <>
+                                                <XAxis type="number" tick={{ fontSize: 10, fill: chartColors.axis }} domain={[0, 100]} />
+                                                <YAxis type="category" dataKey="model" width={82} tick={{ fontSize: 10, fill: chartColors.axis }} tickFormatter={compactModelLabel} />
+                                            </>
+                                        ) : (
+                                            <>
+                                                <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
+                                                <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={[0, 100]} label={{ value: "%", angle: -90, position: "insideLeft", fill: chartColors.axis }} />
+                                            </>
+                                        )}
+                                        <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                        <Legend wrapperStyle={{ fontSize: isCompact ? 10 : 12 }} />
+                                        <Bar dataKey="HOME" fill="#10b981" barSize={isCompact ? 6 : undefined} />
+                                        <Bar dataKey="DRAW" fill="#f59e0b" barSize={isCompact ? 6 : undefined} />
+                                        <Bar dataKey="AWAY" fill="#3b82f6" barSize={isCompact ? 6 : undefined} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </ChartViewport>
+                        )}
+
+                        {activeTab === "efficiency" && brierSorted.length > 0 && (
+                            <ChartViewport>
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320} initialDimension={chartInitialDimension}>
+                                    <BarChart
+                                        data={brierSorted.map((r) => ({
+                                            model: r.model,
+                                            [t("chart_brier")]: r.brierScore,
+                                        }))}
+                                        layout={isCompact ? "vertical" : "horizontal"}
+                                        margin={isCompact ? { top: 8, right: 8, bottom: 8, left: 0 } : { top: 5, right: 5, bottom: 5, left: 5 }}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} opacity={0.4} />
+                                        {isCompact ? (
+                                            <>
+                                                <XAxis type="number" tick={{ fontSize: 10, fill: chartColors.axis }} domain={["auto", "auto"]} />
+                                                <YAxis type="category" dataKey="model" width={82} tick={{ fontSize: 10, fill: chartColors.axis }} tickFormatter={compactModelLabel} />
+                                            </>
+                                        ) : (
+                                            <>
+                                                <XAxis dataKey="model" tick={{ fontSize: 11, fill: chartColors.axis }} angle={-20} textAnchor="end" height={70} />
+                                                <YAxis tick={{ fontSize: 11, fill: chartColors.axis }} domain={["auto", "auto"]} />
+                                            </>
+                                        )}
+                                        <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} />
+                                        <Legend wrapperStyle={{ fontSize: isCompact ? 10 : 12 }} />
+                                        <Bar
+                                            dataKey={t("chart_brier")}
+                                            barSize={isCompact ? 12 : undefined}
+                                            shape={(props: BarShapeProps) => {
+                                                const payload = props.payload as { model?: string } | undefined;
+                                                const model = typeof payload?.model === "string" ? payload.model : "";
+                                                const { isActive, option, ...rectProps } = props;
+                                                void isActive;
+                                                void option;
+                                                return <Rectangle {...rectProps} fill={colorFor(model)} />;
+                                            }}
+                                        />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </ChartViewport>
+                        )}
+                    </div>
                 </div>
 
                 {activeTab === "overtime" && overtimeModelOptions.length > 0 && (

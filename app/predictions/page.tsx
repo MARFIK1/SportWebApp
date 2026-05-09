@@ -93,19 +93,19 @@ export default async function Predictions({ searchParams }: PageProps) {
         .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct);
 
     return (
-        <div className="flex w-full min-w-0 max-w-[1600px] flex-col overflow-x-hidden px-4 py-6 sm:px-6 lg:mx-auto">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10">
+        <div className="flex w-full min-w-0 max-w-[1600px] flex-col overflow-x-hidden px-3 py-5 sm:px-6 lg:mx-auto">
+            <div className="mb-5 grid grid-cols-1 gap-3 sm:mb-6 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10 sm:p-5">
                     <div className="absolute inset-y-0 left-0 w-1 bg-emerald-400" />
                     <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-[0.22em] mb-2">{t("total_matches_today")}</div>
                     <div className="text-4xl font-bold text-gray-900 dark:text-white">{report.summary.total_matches}</div>
                 </div>
-                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10">
+                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10 sm:p-5">
                     <div className="absolute inset-y-0 left-0 w-1 bg-cyan-400" />
                     <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-[0.22em] mb-2">{t("consensus_accuracy")}</div>
                     <div className="text-4xl font-bold text-emerald-400">{consensusAcc?.accuracy_pct ?? 0}%</div>
                 </div>
-                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10">
+                <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10 sm:p-5">
                     <div className="absolute inset-y-0 left-0 w-1 bg-emerald-400" />
                     <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-[0.22em] mb-2">{t("best_model_day")}</div>
                     <div className="text-2xl font-bold text-gray-900 dark:text-white">{bestModel?.[0] ?? t("empty_placeholder")}</div>
@@ -131,8 +131,8 @@ export default async function Predictions({ searchParams }: PageProps) {
                 </div>
 
                 <div className="min-w-0">
-                    <div className="sticky top-4 space-y-4">
-                        <div className="rounded-2xl bg-white p-5 dark:bg-gray-900/50">
+                    <div className="space-y-4 lg:sticky lg:top-4">
+                        <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-5">
                             <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                                 {t("model_performance")}
                                 <span className="ml-2 text-[10px] text-gray-400 dark:text-gray-600">({t("day")})</span>
@@ -157,7 +157,7 @@ export default async function Predictions({ searchParams }: PageProps) {
                             </div>
                         </div>
 
-                        <div className="rounded-2xl bg-white p-5 dark:bg-gray-900/50">
+                        <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-5">
                             <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                                 {t("model_performance")}
                                 <span className="ml-2 text-[10px] text-gray-400 dark:text-gray-600">({t("all_time")})</span>
