@@ -595,7 +595,7 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
     time.sleep(3)
     
     try:
-        if target_date and not force:
+        if target_date:
             if _scrape_scheduled_upcoming(scraper, target_date, COMPETITIONS, Path(BASE_DIR)):
                 print("\n[OK] Fetching complete")
                 return
