@@ -97,8 +97,8 @@ export default async function Home({ searchParams }: PageProps) {
     const highConfidenceCount = predictedMatches.filter((match) => getConsensusConfidence(match) >= 60).length;
 
     return (
-        <div className="flex flex-col w-full max-w-[1600px] mx-auto px-4 py-5 sm:px-6 lg:px-8">
-            <div className="relative mb-6 overflow-hidden rounded-[2rem] border border-emerald-500/10 bg-white/90 p-6 shadow-xl shadow-slate-900/5 dark:border-emerald-400/10 dark:bg-[#0b1220] dark:shadow-black/20 sm:p-8">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col px-3 py-5 sm:px-6 lg:px-8">
+            <div className="relative mb-6 overflow-hidden rounded-[2rem] border border-emerald-500/10 bg-white/90 p-5 shadow-xl shadow-slate-900/5 dark:border-emerald-400/10 dark:bg-[#0b1220] dark:shadow-black/20 sm:p-8">
                 <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-emerald-400/20 blur-3xl" />
                 <div className="pointer-events-none absolute -bottom-28 left-10 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
 
@@ -107,7 +107,7 @@ export default async function Home({ searchParams }: PageProps) {
                         <p className="text-xs font-bold uppercase tracking-[0.32em] text-emerald-500 dark:text-emerald-400">
                             {selectedDate}
                         </p>
-                        <h1 className="mt-3 max-w-3xl text-4xl font-black tracking-tight text-gray-950 dark:text-white sm:text-5xl">
+                        <h1 className="mt-3 max-w-3xl text-3xl font-black tracking-tight text-gray-950 dark:text-white sm:text-5xl">
                             {totalMatches} {t("matches_analyzed")}
                         </h1>
                         <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-500 dark:text-gray-400 sm:text-base">

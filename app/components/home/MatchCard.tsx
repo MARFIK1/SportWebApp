@@ -149,9 +149,9 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
 
             {prediction && (
                 <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50/80 p-3 dark:border-white/10 dark:bg-black/20">
-                    <div className="mb-2 flex items-center justify-between">
-                        <span className="text-[10px] uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">{t("ml_prediction")}</span>
-                        <span className={`text-xs font-semibold ${prediction.color}`}>
+                    <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+                        <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">{t("ml_prediction")}</span>
+                        <span className={`min-w-0 break-words text-right text-xs font-semibold leading-tight ${prediction.color}`}>
                             {prediction.text}
                         </span>
                     </div>

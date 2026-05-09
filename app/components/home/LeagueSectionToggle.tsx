@@ -41,7 +41,7 @@ export default function LeagueSectionToggle({
     const toggleLabel = open ? labels.collapseLeague : labels.expandLeague;
 
     return (
-        <section className="mb-10 rounded-3xl border border-gray-200 bg-white/40 p-3 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-white/10 dark:bg-gray-950/20 dark:shadow-black/10">
+        <section className="mb-6 rounded-3xl border border-gray-200 bg-white/40 p-3 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-white/10 dark:bg-gray-950/20 dark:shadow-black/10 sm:mb-10">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <button
                     type="button"
@@ -53,7 +53,7 @@ export default function LeagueSectionToggle({
                     <div className="h-12 w-1 shrink-0 rounded-full bg-gradient-to-b from-emerald-400 via-emerald-500 to-cyan-400" />
                     <div className="min-w-0 space-y-1">
                         <div className="flex min-w-0 flex-wrap items-center gap-3">
-                            <span className="truncate text-xl font-bold text-gray-900 transition-colors group-hover:text-emerald-500 dark:text-white dark:group-hover:text-emerald-400">
+                            <span className="min-w-0 max-w-full truncate text-lg font-bold text-gray-900 transition-colors group-hover:text-emerald-500 dark:text-white dark:group-hover:text-emerald-400 sm:text-xl">
                                 {leagueName}
                             </span>
                             <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-500 dark:border-gray-700 dark:text-gray-400">
