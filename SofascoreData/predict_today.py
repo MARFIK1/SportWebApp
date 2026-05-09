@@ -952,12 +952,28 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
     return features
 
 
-def _team_last_n_matches(historical: list, team: str, n: int = 8, before_date: str = None) -> list:
+def _same_team_id(left, right) -> bool:
+    return left is not None and right is not None and str(left) == str(right)
+
+
+def _match_has_team(match: dict, team: str, team_id=None) -> bool:
+    if team_id is not None:
+        return _same_team_id(match.get('home_team_id'), team_id) or _same_team_id(match.get('away_team_id'), team_id)
+    return match.get('home_team') == team or match.get('away_team') == team
+
+
+def _is_team_home(match: dict, team: str, team_id=None) -> bool:
+    if team_id is not None:
+        return _same_team_id(match.get('home_team_id'), team_id)
+    return match.get('home_team') == team
+
+
+def _team_last_n_matches(historical: list, team: str, n: int = 8, before_date: str = None, team_id=None) -> list:
     team_matches = []
     for m in historical:
         if m.get('home_score') is None or m.get('away_score') is None:
             continue
-        if m.get('home_team') == team or m.get('away_team') == team:
+        if _match_has_team(m, team, team_id):
             if before_date and m.get('date', '') >= before_date:
                 continue
             team_matches.append(m)
@@ -989,18 +1005,20 @@ def _poisson_over(expected: float, threshold: float) -> float:
 def compute_match_analysis(match: dict, historical: list) -> dict:
     home = match.get('home', '')
     away = match.get('away', '')
+    home_id = match.get('home_team_id')
+    away_id = match.get('away_team_id')
     match_date = match.get('date', datetime.now().strftime('%Y-%m-%d'))
     
     N = 8
-    home_matches = _team_last_n_matches(historical, home, N, match_date)
-    away_matches = _team_last_n_matches(historical, away, N, match_date)
+    home_matches = _team_last_n_matches(historical, home, N, match_date, home_id)
+    away_matches = _team_last_n_matches(historical, away, N, match_date, away_id)
     
     if not home_matches and not away_matches:
         return {}
     
     analysis = {}
     
-    def _goals_stats(matches, team):
+    def _goals_stats(matches, team, team_id=None):
         scored = []
         conceded = []
         xg_for = []
@@ -1009,7 +1027,7 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
         for m in matches:
             hs = m.get('home_score', 0) or 0
             as_ = m.get('away_score', 0) or 0
-            is_home = m.get('home_team') == team
+            is_home = _is_team_home(m, team, team_id)
             
             gf = hs if is_home else as_
             ga = as_ if is_home else hs
@@ -1035,8 +1053,8 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
             'n': n,
         }
     
-    home_goals = _goals_stats(home_matches, home)
-    away_goals = _goals_stats(away_matches, away)
+    home_goals = _goals_stats(home_matches, home, home_id)
+    away_goals = _goals_stats(away_matches, away, away_id)
     
     expected_home = home_goals['avg_xg_for'] if home_goals['avg_xg_for'] > 0 else home_goals['avg_scored']
     expected_away = away_goals['avg_xg_for'] if away_goals['avg_xg_for'] > 0 else away_goals['avg_scored']
@@ -1058,7 +1076,7 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
         'over_3_5_pct': _poisson_over(expected_total, 3.5),
     }
     
-    def _corners_stats(matches, team):
+    def _corners_stats(matches, team, team_id=None):
         corners_for = []
         corners_against = []
         for m in matches:
@@ -1066,7 +1084,7 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
             ac = m.get('away_cornerkicks')
             if hc is None or ac is None:
                 continue
-            is_home = m.get('home_team') == team
+            is_home = _is_team_home(m, team, team_id)
             corners_for.append(hc if is_home else ac)
             corners_against.append(ac if is_home else hc)
         return {
@@ -1075,8 +1093,8 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
             'n': len(corners_for),
         }
     
-    home_corners = _corners_stats(home_matches, home)
-    away_corners = _corners_stats(away_matches, away)
+    home_corners = _corners_stats(home_matches, home, home_id)
+    away_corners = _corners_stats(away_matches, away, away_id)
     
     expected_corners = round(home_corners['avg_for'] + away_corners['avg_for'], 1)
     
@@ -1088,22 +1106,22 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
         'over_10_5_pct': _poisson_over(expected_corners, 10.5),
     }
     
-    def _cards_stats(matches, team):
+    def _cards_stats(matches, team, team_id=None):
         yellows = []
         for m in matches:
             hy = m.get('home_yellow_cards_calc') or m.get('home_yellowcards')
             ay = m.get('away_yellow_cards_calc') or m.get('away_yellowcards')
             if hy is None or ay is None:
                 continue
-            is_home = m.get('home_team') == team
+            is_home = _is_team_home(m, team, team_id)
             yellows.append(hy if is_home else ay)
         return {
             'avg_team': round(_safe_avg(yellows), 1),
             'n': len(yellows),
         }
     
-    home_cards = _cards_stats(home_matches, home)
-    away_cards = _cards_stats(away_matches, away)
+    home_cards = _cards_stats(home_matches, home, home_id)
+    away_cards = _cards_stats(away_matches, away, away_id)
     
     expected_cards = round(home_cards['avg_team'] + away_cards['avg_team'], 1)
     
@@ -1115,13 +1133,13 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
         'over_4_5_pct': _poisson_over(expected_cards, 4.5),
     }
     
-    def _shots_stats(matches, team):
+    def _shots_stats(matches, team, team_id=None):
         shots_for = []
         shots_on_target = []
         big_chances = []
         possession = []
         for m in matches:
-            is_home = m.get('home_team') == team
+            is_home = _is_team_home(m, team, team_id)
             prefix = 'home_' if is_home else 'away_'
             
             st = m.get(f'{prefix}totalshotsongoal') or m.get(f'{prefix}shotsongoal')
@@ -1145,20 +1163,20 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
             'n': len(shots_for),
         }
     
-    home_shots = _shots_stats(home_matches, home)
-    away_shots = _shots_stats(away_matches, away)
+    home_shots = _shots_stats(home_matches, home, home_id)
+    away_shots = _shots_stats(away_matches, away, away_id)
     
     analysis['shots'] = {
         'home': home_shots,
         'away': away_shots,
     }
     
-    def _form_string(matches, team, n=5):
+    def _form_string(matches, team, team_id=None, n=5):
         form = []
         for m in matches[:n]:
             hs = m.get('home_score', 0) or 0
             as_ = m.get('away_score', 0) or 0
-            is_home = m.get('home_team') == team
+            is_home = _is_team_home(m, team, team_id)
             gf = hs if is_home else as_
             ga = as_ if is_home else hs
             if gf > ga:
@@ -1170,8 +1188,8 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
         return ''.join(form)
     
     analysis['form'] = {
-        'home': _form_string(home_matches, home),
-        'away': _form_string(away_matches, away),
+        'home': _form_string(home_matches, home, home_id),
+        'away': _form_string(away_matches, away, away_id),
         'home_n': len(home_matches),
         'away_n': len(away_matches),
     }

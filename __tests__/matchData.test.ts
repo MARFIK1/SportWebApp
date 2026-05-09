@@ -1,5 +1,5 @@
-import { findPredictionMatch, resolveMatchDisplayState } from "@/app/match/[id]/matchData";
-import type { ConsensusPrediction, ModelPrediction, PredictionMatch, PredictionReport } from "@/types/predictions";
+import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "@/app/match/[id]/matchData";
+import type { AnalysisMatch, ConsensusPrediction, ModelPrediction, PredictionMatch, PredictionReport } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 
 function modelPrediction(prediction: "HOME" | "DRAW" | "AWAY"): ModelPrediction {
@@ -86,6 +86,64 @@ function predictionReport(matches: PredictionMatch[]): PredictionReport {
     };
 }
 
+function sparseAnalysis(): AnalysisMatch {
+    return {
+        goals: {
+            home: {
+                avg_scored: 2,
+                avg_conceded: 3,
+                clean_sheets: 0,
+                failed_to_score: 0,
+                score_pct: 100,
+                avg_xg_for: 0,
+                avg_xg_against: 0,
+                n: 1,
+            },
+            away: {
+                avg_scored: 0.75,
+                avg_conceded: 2.12,
+                clean_sheets: 0,
+                failed_to_score: 5,
+                score_pct: 37.5,
+                avg_xg_for: 1.44,
+                avg_xg_against: 1.31,
+                n: 8,
+            },
+            expected_goals_home: 2,
+            expected_goals_away: 1.44,
+            expected_total: 3.44,
+            btts_pct: 37.5,
+            over_1_5_pct: 85.8,
+            over_2_5_pct: 66.8,
+            over_3_5_pct: 45,
+        },
+        corners: {
+            home: { avg_for: 0, avg_against: 0, n: 0 },
+            away: { avg_for: 7.3, avg_against: 4.4, n: 7 },
+            expected_total: 7.3,
+            over_8_5_pct: 29.6,
+            over_10_5_pct: 12.7,
+        },
+        cards: {
+            home: { avg_team: 0, n: 0 },
+            away: { avg_team: 2.1, n: 7 },
+            expected_total: 2.1,
+            over_3_5_pct: 16.0,
+            over_4_5_pct: 6.2,
+        },
+        shots: {
+            home: { avg_shots: 0, avg_shots_on_target: 0, avg_big_chances: 0, avg_possession: 0, n: 0 },
+            away: { avg_shots: 11.3, avg_shots_on_target: 3.4, avg_big_chances: 1.9, avg_possession: 56, n: 7 },
+        },
+        form: {
+            home: "L",
+            away: "LLLLL",
+            home_n: 1,
+            away_n: 8,
+        },
+    };
+}
+
 describe("match page data contracts", () => {
     it("uses the prediction report result for a finished match when the source dataset is stale", () => {
         const sourceMatch = sofascoreMatch({
@@ -136,5 +194,72 @@ describe("match page data contracts", () => {
         const found = findPredictionMatch(predictionReport([byTeams, byEvent]), 1001, "Home FC", "Away FC");
 
         expect(found?.id).toBe("event-match");
+    });
+
+    it("repairs sparse analysis from recent matches matched by team id", () => {
+        const match = sofascoreMatch({
+            event_id: 14024024,
+            home_team_id: 44,
+            home_team: "Liverpool FC",
+            away_team_id: 38,
+            away_team: "Chelsea",
+        });
+        const homeRecent = [
+            sofascoreMatch({
+                event_id: 1,
+                date: "2026-04-25",
+                status: "finished",
+                home_team_id: 44,
+                home_team: "Liverpool",
+                away_team_id: 77,
+                away_team: "Crystal Palace",
+                home_score: 3,
+                away_score: 1,
+                home_expectedgoals: 1.2,
+                away_expectedgoals: 0.8,
+                home_cornerkicks: 6,
+                away_cornerkicks: 4,
+                home_yellowcards: 1,
+                away_yellowcards: 2,
+                home_totalshotsongoal: 10,
+                home_shotsongoal: 5,
+                home_bigchancecreated: 3,
+                home_ballpossession: 60,
+            }),
+            sofascoreMatch({
+                event_id: 2,
+                date: "2026-04-19",
+                status: "finished",
+                home_team_id: 88,
+                home_team: "Everton",
+                away_team_id: 44,
+                away_team: "Liverpool",
+                home_score: 1,
+                away_score: 2,
+                home_expectedgoals: 0.7,
+                away_expectedgoals: 1.8,
+                home_cornerkicks: 1,
+                away_cornerkicks: 5,
+                home_yellowcards: 2,
+                away_yellowcards: 0,
+                away_totalshotsongoal: 11,
+                away_shotsongoal: 6,
+                away_bigchancecreated: 2,
+                away_ballpossession: 54,
+            }),
+        ];
+
+        const repaired = repairMatchAnalysis(sparseAnalysis(), match, homeRecent, []);
+
+        expect(repaired?.goals.home.n).toBe(2);
+        expect(repaired?.goals.home.avg_xg_for).toBeCloseTo(1.5);
+        expect(repaired?.goals.home.avg_xg_against).toBeCloseTo(0.75);
+        expect(repaired?.goals.expected_goals_home).toBeCloseTo(1.5);
+        expect(repaired?.corners.home.avg_for).toBeCloseTo(5.5);
+        expect(repaired?.corners.expected_total).toBeCloseTo(12.8);
+        expect(repaired?.cards.home.avg_team).toBeCloseTo(0.5);
+        expect(repaired?.shots.home.avg_shots_on_target).toBeCloseTo(5.5);
+        expect(repaired?.shots.home.avg_possession).toBeCloseTo(57);
+        expect(repaired?.form.home).toBe("WW");
     });
 });
