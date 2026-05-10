@@ -253,21 +253,21 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                                         {outcomeLabel(pred.prediction)}
                                                     </span>
                                                 </div>
-                                                <div className="grid grid-cols-4 gap-2 text-center">
-                                                    <div className="rounded-lg bg-white/70 p-2 dark:bg-gray-900/40">
-                                                        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">{t("home_pct")}</div>
+                                                <div className="grid grid-cols-2 gap-2 text-center min-[390px]:grid-cols-4">
+                                                    <div className="min-w-0 rounded-lg bg-white/70 px-1.5 py-2 dark:bg-gray-900/40">
+                                                        <div className="break-words text-[9px] font-bold uppercase leading-tight tracking-[0.08em] text-gray-500 dark:text-gray-400 min-[390px]:tracking-[0.1em]">{t("home_pct")}</div>
                                                         <div className="mt-1 text-sm font-bold text-gray-900 dark:text-white">{pred.probabilities.HOME?.toFixed(1)}%</div>
                                                     </div>
-                                                    <div className="rounded-lg bg-white/70 p-2 dark:bg-gray-900/40">
-                                                        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">{t("draw_pct")}</div>
+                                                    <div className="min-w-0 rounded-lg bg-white/70 px-1.5 py-2 dark:bg-gray-900/40">
+                                                        <div className="break-words text-[9px] font-bold uppercase leading-tight tracking-[0.08em] text-gray-500 dark:text-gray-400 min-[390px]:tracking-[0.1em]">{t("draw_pct")}</div>
                                                         <div className="mt-1 text-sm font-bold text-gray-900 dark:text-white">{pred.probabilities.DRAW?.toFixed(1)}%</div>
                                                     </div>
-                                                    <div className="rounded-lg bg-white/70 p-2 dark:bg-gray-900/40">
-                                                        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">{t("away_pct")}</div>
+                                                    <div className="min-w-0 rounded-lg bg-white/70 px-1.5 py-2 dark:bg-gray-900/40">
+                                                        <div className="break-words text-[9px] font-bold uppercase leading-tight tracking-[0.08em] text-gray-500 dark:text-gray-400 min-[390px]:tracking-[0.1em]">{t("away_pct")}</div>
                                                         <div className="mt-1 text-sm font-bold text-gray-900 dark:text-white">{pred.probabilities.AWAY?.toFixed(1)}%</div>
                                                     </div>
-                                                    <div className="rounded-lg bg-white/70 p-2 dark:bg-gray-900/40">
-                                                        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">{t("confidence")}</div>
+                                                    <div className="min-w-0 rounded-lg bg-white/70 px-1.5 py-2 dark:bg-gray-900/40">
+                                                        <div className="break-words text-[9px] font-bold uppercase leading-tight tracking-[0.08em] text-gray-500 dark:text-gray-400 min-[390px]:tracking-[0.1em]">{t("confidence")}</div>
                                                         <div className={`mt-1 text-sm font-bold ${(pred.confidence ?? 0) >= 60 ? "text-emerald-400" : (pred.confidence ?? 0) >= 45 ? "text-yellow-400" : "text-gray-500 dark:text-gray-400"}`}>
                                                             {pred.confidence !== null ? `${pred.confidence.toFixed(1)}%` : "-"}
                                                         </div>

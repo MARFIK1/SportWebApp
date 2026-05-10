@@ -41,7 +41,7 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const CHART_INITIAL_DIMENSION = { width: 800, height: 420 };
-const MOBILE_CHART_INITIAL_DIMENSION = { width: 340, height: 340 };
+const MOBILE_CHART_INITIAL_DIMENSION = { width: 360, height: 390 };
 const MOBILE_QUERY = "(max-width: 639px)";
 
 function colorFor(model: string): string {
@@ -206,8 +206,8 @@ export default function ModelComparisonCharts({ comparison, accuracyOverTime, re
 
     const chartInitialDimension = isCompact ? MOBILE_CHART_INITIAL_DIMENSION : CHART_INITIAL_DIMENSION;
     const chartPanelClassName = isCompact
-        ? "h-[340px] min-w-0"
-        : "h-[360px] min-w-[640px] sm:h-[420px] lg:min-w-0";
+        ? "h-[390px] min-w-0"
+        : "h-[360px] min-w-[660px] sm:h-[420px]";
     const chartFrameClassName = isCompact
         ? "min-w-0 pb-2"
         : "scrollbar-app -mx-2 overflow-x-auto px-2 pb-2";
