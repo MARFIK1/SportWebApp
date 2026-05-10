@@ -13,6 +13,7 @@ Usage:
     python scrape_all.py --seasons 3                  # Override number of seasons
     python scrape_all.py --no-players                 # Skip player data
     python scrape_all.py --backfill-odds              # Backfill missing betting odds
+    python scrape_all.py --backfill-odds --force --upcoming-days 5  # Refresh near-future betting odds
     python scrape_all.py --backfill-odds --limit 100  # Backfill max 100 matches
     python scrape_all.py --show-seasons la_liga       # Show available season IDs
 
@@ -22,6 +23,7 @@ Requires Chrome/Brave browser for scraping (Selenium).
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta
@@ -44,6 +46,11 @@ from sofascore.utils import extract_odds, random_delay
 COMP_TYPES = ['league', 'cups', 'european', 'international']
 DEFAULT_SEASONS = 1
 FULL_HISTORY_SEASONS = 5
+ODDS_FIELDS = [
+    'odds_home_win', 'odds_draw', 'odds_away_win',
+    'odds_over_2_5', 'odds_under_2_5',
+    'odds_btts_yes', 'odds_btts_no',
+]
 
 
 def scrape_all(scraper, comp_types=None, country_filter=None, league_filter=None,
@@ -94,20 +101,19 @@ def scrape_all(scraper, comp_types=None, country_filter=None, league_filter=None
     return results
 
 
-def backfill_odds(scraper, limit=0, recent_days=0):
-    print("\n" + "=" * 60)
-    print("BACKFILL ODDS")
-    print("=" * 60)
+def _season_sort_key(raw_file: Path, file_data: dict):
+    season = str(file_data.get('metadata', {}).get('season') or raw_file.stem)
+    match = re.search(r'(\d{2})[\/_](\d{2})', season)
+    if match:
+        return (int(match.group(1)), int(match.group(2)), raw_file.name)
+    return (0, 0, raw_file.name)
 
-    data_dir = Path(BASE_DIR)
-    cutoff_date = None
-    if recent_days > 0:
-        cutoff_date = (datetime.now() - timedelta(days=recent_days)).strftime('%Y-%m-%d')
-        print(f"Only matches from: {cutoff_date}")
 
-    matches_to_update = []
+def _load_backfill_raw_files(data_dir: Path, season_count: int):
+    files_by_competition = {}
+
     for raw_file in sorted(data_dir.rglob('*.json')):
-        if 'upcoming' in str(raw_file) or 'all_seasons' in raw_file.name:
+        if 'upcoming' in str(raw_file) or raw_file.name == 'all_seasons.json':
             continue
         if raw_file.parent.name != 'raw':
             continue
@@ -117,8 +123,43 @@ def backfill_odds(scraper, limit=0, recent_days=0):
         except Exception:
             continue
 
+        files_by_competition.setdefault(raw_file.parent, []).append(
+            (_season_sort_key(raw_file, file_data), raw_file, file_data)
+        )
+
+    selected = []
+    for entries in files_by_competition.values():
+        entries.sort(key=lambda item: item[0], reverse=True)
+        selected.extend(entries[:season_count])
+
+    selected.sort(key=lambda item: str(item[1]))
+    return [(raw_file, file_data) for _key, raw_file, file_data in selected]
+
+
+def backfill_odds(scraper, limit=0, recent_days=0, upcoming_days=0, force=False, season_count=DEFAULT_SEASONS):
+    print("\n" + "=" * 60)
+    print("BACKFILL ODDS")
+    print("=" * 60)
+    print(f"Mode: {'refresh existing odds' if force else 'fill missing odds'}")
+    print(f"Season files per competition: {season_count}")
+
+    data_dir = Path(BASE_DIR)
+    cutoff_date = None
+    max_date = None
+    today = datetime.now().date()
+    if recent_days > 0:
+        cutoff_date = (today - timedelta(days=recent_days)).strftime('%Y-%m-%d')
+        print(f"Only matches from: {cutoff_date}")
+    if upcoming_days > 0:
+        if cutoff_date is None:
+            cutoff_date = today.strftime('%Y-%m-%d')
+        max_date = (today + timedelta(days=upcoming_days)).strftime('%Y-%m-%d')
+        print(f"Only matches until: {max_date}")
+
+    matches_to_update = []
+    for raw_file, file_data in _load_backfill_raw_files(data_dir, season_count):
         for idx, match in enumerate(file_data.get('matches', [])):
-            if match.get('odds_home_win'):
+            if match.get('odds_home_win') and not force:
                 continue
             event_id = match.get('event_id')
             if not event_id:
@@ -126,9 +167,14 @@ def backfill_odds(scraper, limit=0, recent_days=0):
             match_date = match.get('date', '')
             if cutoff_date and match_date < cutoff_date:
                 continue
+            if max_date and match_date > max_date:
+                continue
             matches_to_update.append((str(raw_file), idx, event_id, match_date))
 
-    print(f"Found {len(matches_to_update)} matches without odds")
+    if force:
+        print(f"Found {len(matches_to_update)} matches to refresh")
+    else:
+        print(f"Found {len(matches_to_update)} matches without odds")
 
     if limit > 0:
         matches_to_update = matches_to_update[:limit]
@@ -164,22 +210,25 @@ def backfill_odds(scraper, limit=0, recent_days=0):
         time.sleep(random_delay(0.5, 0.3))
 
         if (i + 1) % 50 == 0 and file_updates:
-            _save_odds_updates(file_updates)
+            _save_odds_updates(file_updates, overwrite_odds=force)
             file_updates.clear()
             print(f"  [CHECKPOINT] Saved {updated} matches so far")
 
     if file_updates:
-        _save_odds_updates(file_updates)
+        _save_odds_updates(file_updates, overwrite_odds=force)
 
     print(f"\n[OK] Updated: {updated}, No odds: {no_odds}")
 
 
-def _save_odds_updates(file_updates):
+def _save_odds_updates(file_updates, overwrite_odds=False):
     for fp, idx_odds in file_updates.items():
         with open(fp, 'r', encoding='utf-8') as f:
             data = json.load(f)
         for midx, modds in idx_odds.items():
             if midx < len(data.get('matches', [])):
+                if overwrite_odds:
+                    for odds_field in ODDS_FIELDS:
+                        data['matches'][midx].pop(odds_field, None)
                 data['matches'][midx].update(modds)
         if data.get('metadata'):
             data['metadata']['last_update'] = datetime.now().isoformat()
@@ -232,6 +281,7 @@ Examples:
   python scrape_all.py --country england        # All English competitions
   python scrape_all.py --seasons 3              # Custom season count
   python scrape_all.py --backfill-odds          # Add missing betting odds
+  python scrape_all.py --backfill-odds --force --upcoming-days 5  # Refresh near-future betting odds
   python scrape_all.py --show-seasons la_liga   # Check season IDs
 """
     )
@@ -252,10 +302,14 @@ Examples:
 
     parser.add_argument('--backfill-odds', action='store_true',
                         help='Backfill missing betting odds')
+    parser.add_argument('--force', action='store_true',
+                        help='Refresh existing odds during odds backfill')
     parser.add_argument('--limit', type=int, default=0,
                         help='Max matches for odds backfill (0 = all)')
     parser.add_argument('--recent-days', type=int, default=0,
                         help='Only backfill odds for last N days (0 = all)')
+    parser.add_argument('--upcoming-days', type=int, default=0,
+                        help='Only backfill odds from today through N days ahead (0 = all future dates)')
 
     parser.add_argument('--show-seasons', type=str, metavar='LEAGUE',
                         help='Show available season IDs for a competition')
@@ -278,10 +332,6 @@ Examples:
             show_seasons(scraper, args.show_seasons)
             return
 
-        if args.backfill_odds:
-            backfill_odds(scraper, limit=args.limit, recent_days=args.recent_days)
-            return
-
         if args.all and args.seasons is not None:
             parser.error('--all cannot be combined with --seasons')
 
@@ -297,6 +347,18 @@ Examples:
         else:
             season_count = DEFAULT_SEASONS
             mode = "current/latest"
+
+        if args.backfill_odds:
+            print(f"Season count: {season_count} ({mode})")
+            backfill_odds(
+                scraper,
+                limit=args.limit,
+                recent_days=args.recent_days,
+                upcoming_days=args.upcoming_days,
+                force=args.force,
+                season_count=season_count,
+            )
+            return
 
         print(f"Season count: {season_count} ({mode})")
 
