@@ -86,6 +86,19 @@ function TeamCell({ id, name, align = "left" }: { id: number; name: string; alig
     );
 }
 
+function MobileTeamBlock({ id, name }: { id: number; name: string }) {
+    return (
+        <div className="flex min-w-0 flex-col items-center text-center">
+            <div className="flex h-8 items-center justify-center">
+                <Image src={teamLogoUrl(id)} alt={name} width={28} height={28} className="h-7 w-7 object-contain" />
+            </div>
+            <span className="mt-2 block min-h-10 min-w-0 max-w-full line-clamp-2 break-words text-sm font-black leading-tight text-gray-900 dark:text-white">
+                {name}
+            </span>
+        </div>
+    );
+}
+
 function SummaryCard({ value, label, tone }: { value: number; label: string; tone: "home" | "draw" | "away" | "loss" }) {
     const valueClass =
         tone === "home" ? "text-emerald-400" :
@@ -98,6 +111,39 @@ function SummaryCard({ value, label, tone }: { value: number; label: string; ton
             <div className={`text-2xl font-black ${valueClass}`}>{value}</div>
             <div className="mt-1 max-w-full break-words text-xs leading-tight text-gray-500 dark:text-gray-400">{label}</div>
         </div>
+    );
+}
+
+function MobileHistoryCard({
+    historyMatch,
+    result,
+}: {
+    historyMatch: MatchHistoryItem;
+    result: ResultMark | null;
+}) {
+    return (
+        <Link
+            href={`/match/${historyMatch.eventId}?date=${historyMatch.date.slice(0, 10)}`}
+            prefetch={false}
+            className="block rounded-xl bg-gray-50 px-3 py-3 transition-colors hover:bg-gray-100 dark:bg-gray-800/40 dark:hover:bg-gray-800/70 sm:hidden"
+        >
+            <div className="mb-3 flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">{historyMatch.date.slice(0, 10)}</span>
+                {result && (
+                    <span className={`flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full px-2 text-[11px] font-black ${resultClass(result)}`}>
+                        {result}
+                    </span>
+                )}
+            </div>
+
+            <div className="grid grid-cols-[minmax(0,1fr)_4.25rem_minmax(0,1fr)] items-center gap-2">
+                <MobileTeamBlock id={historyMatch.homeTeamId} name={historyMatch.homeTeam} />
+                <span className="rounded-lg bg-white px-2 py-1.5 text-center text-base font-black text-gray-900 shadow-sm dark:bg-gray-950/70 dark:text-white">
+                    {scoreLabel(historyMatch)}
+                </span>
+                <MobileTeamBlock id={historyMatch.awayTeamId} name={historyMatch.awayTeam} />
+            </div>
+        </Link>
     );
 }
 
@@ -152,11 +198,11 @@ export default function MatchHistoryTabs({
     if (h2h.length === 0 && homeRecent.length === 0 && awayRecent.length === 0) return null;
 
     return (
-        <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 dark:border-white/10 dark:bg-gray-900/50">
+        <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-gray-900/50 sm:p-6">
             <div className="mb-5 space-y-4">
-                <div>
+                <div className="min-w-0">
                     <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-gray-500 dark:text-gray-400">{t("match_history")}</p>
-                    <h3 className="mt-1 text-xl font-black text-gray-900 dark:text-white">{activeData.title}</h3>
+                    <h3 className="mt-1 break-words text-lg font-black text-gray-900 dark:text-white sm:text-xl">{activeData.title}</h3>
                 </div>
                 <div className="grid w-full min-w-0 gap-2 sm:grid-cols-3">
                     {tabs.map((tab) => {
@@ -205,26 +251,28 @@ export default function MatchHistoryTabs({
                 {activeData.matches.map((historyMatch) => {
                     const result = activeData.teamId == null ? null : resultForTeam(historyMatch, activeData.teamId);
                     return (
-                        <Link
-                            key={historyMatch.eventId}
-                            href={`/match/${historyMatch.eventId}?date=${historyMatch.date.slice(0, 10)}`}
-                            prefetch={false}
-                            className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/50 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_82px]"
-                        >
-                            <TeamCell id={historyMatch.homeTeamId} name={historyMatch.homeTeam} />
-                            <div className="flex items-center justify-center gap-2">
-                                {result && (
-                                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black ${resultClass(result)}`}>
-                                        {result}
+                        <div key={historyMatch.eventId}>
+                            <MobileHistoryCard historyMatch={historyMatch} result={result} />
+                            <Link
+                                href={`/match/${historyMatch.eventId}?date=${historyMatch.date.slice(0, 10)}`}
+                                prefetch={false}
+                                className="hidden grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_82px] items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/50 sm:grid"
+                            >
+                                <TeamCell id={historyMatch.homeTeamId} name={historyMatch.homeTeam} />
+                                <div className="flex items-center justify-center gap-2">
+                                    {result && (
+                                        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black ${resultClass(result)}`}>
+                                            {result}
+                                        </span>
+                                    )}
+                                    <span className="rounded-lg bg-gray-100 px-3 py-1 text-base font-black text-gray-900 dark:bg-gray-950/70 dark:text-white">
+                                        {scoreLabel(historyMatch)}
                                     </span>
-                                )}
-                                <span className="rounded-lg bg-gray-100 px-3 py-1 text-base font-black text-gray-900 dark:bg-gray-950/70 dark:text-white">
-                                    {scoreLabel(historyMatch)}
-                                </span>
-                            </div>
-                            <TeamCell id={historyMatch.awayTeamId} name={historyMatch.awayTeam} align="right" />
-                            <span className="col-span-3 text-center text-xs text-gray-500 dark:text-gray-400 sm:col-span-1 sm:text-right">{historyMatch.date.slice(0, 10)}</span>
-                        </Link>
+                                </div>
+                                <TeamCell id={historyMatch.awayTeamId} name={historyMatch.awayTeam} align="right" />
+                                <span className="text-right text-xs text-gray-500 dark:text-gray-400">{historyMatch.date.slice(0, 10)}</span>
+                            </Link>
+                        </div>
                     );
                 })}
             </div>

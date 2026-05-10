@@ -78,22 +78,22 @@ export default function PredictionTriangle({ homeTeam, awayTeam, actualResult }:
     const actualPoint = actualResult ? VERTICES[actualResult] : null;
 
     return (
-        <section className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-white/10 dark:bg-gray-900/50">
+        <section className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-gray-900/50 sm:p-6">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                     <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-400">{t("model_probability_map")}</p>
-                    <h3 className="mt-1 text-xl font-black text-gray-900 dark:text-white">{t("prediction_triangle")}</h3>
+                    <h3 className="mt-1 text-lg font-black text-gray-900 dark:text-white sm:text-xl">{t("prediction_triangle")}</h3>
                 </div>
                 {consensusPrediction && (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-right">
+                    <div className="min-w-0 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-left sm:text-right">
                         <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-400">{t("consensus")}</div>
-                        <div className="text-sm font-black text-gray-900 dark:text-white">{outcomeLabel(consensusPrediction, homeTeam, awayTeam, t)}</div>
+                        <div className="line-clamp-2 text-sm font-black text-gray-900 dark:text-white">{outcomeLabel(consensusPrediction, homeTeam, awayTeam, t)}</div>
                     </div>
                 )}
             </div>
 
-            <div className="grid items-center gap-6 lg:grid-cols-[minmax(300px,440px)_minmax(0,1fr)]">
-                <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={t("prediction_triangle")} className="mx-auto h-auto w-full max-w-[440px]">
+            <div className="grid items-center gap-6 2xl:grid-cols-[minmax(300px,440px)_minmax(0,1fr)]">
+                <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={t("prediction_triangle")} className="mx-auto h-auto w-full max-w-[320px] sm:max-w-[440px]">
                     <defs>
                         <linearGradient id="prediction-triangle-surface" x1="0" y1="0" x2="1" y2="1">
                             <stop offset="0%" stopColor="#10b981" stopOpacity="0.28" />
@@ -134,11 +134,11 @@ export default function PredictionTriangle({ homeTeam, awayTeam, actualResult }:
 
                 <div className="min-w-0 space-y-4">
                     {consensusProbabilities && (
-                        <div className="grid gap-2 sm:grid-cols-3">
+                        <div className="grid grid-cols-3 gap-2">
                             {(["HOME", "DRAW", "AWAY"] as MatchResult[]).map((outcome) => (
-                                <div key={outcome} className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50">
-                                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">{outcomeLabel(outcome, homeTeam, awayTeam, t)}</div>
-                                    <div className={`mt-1 text-2xl font-black ${outcome === "HOME" ? "text-emerald-400" : outcome === "AWAY" ? "text-blue-400" : "text-amber-300"}`}>
+                                <div key={outcome} className="min-w-0 rounded-xl bg-gray-50 p-2.5 dark:bg-gray-800/50 sm:p-3">
+                                    <div className="truncate text-[9px] font-bold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 sm:text-[10px] sm:tracking-[0.16em]">{outcomeLabel(outcome, homeTeam, awayTeam, t)}</div>
+                                    <div className={`mt-1 text-xl font-black sm:text-2xl ${outcome === "HOME" ? "text-emerald-400" : outcome === "AWAY" ? "text-blue-400" : "text-amber-300"}`}>
                                         {(consensusProbabilities[outcome] ?? 0).toFixed(0)}%
                                     </div>
                                 </div>

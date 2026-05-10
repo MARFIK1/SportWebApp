@@ -16,7 +16,7 @@ import MatchHistoryTabs, { type MatchHistoryItem } from "./MatchHistoryTabs";
 import PostMatchInsights from "./PostMatchInsights";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
-import { findPredictionMatch, resolveMatchDisplayState } from "./matchData";
+import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
 
 interface StatDefinition {
     label: string;
@@ -118,19 +118,13 @@ export default async function Match({ params, searchParams }: PageProps) {
     const predMatch = predReport ? findPredictionMatch(predReport, eventId, match.home_team, match.away_team) : null;
 
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
-    const analysis = analysisReport?.matches?.[analysisKey] ?? null;
+    const rawAnalysis = analysisReport?.matches?.[analysisKey] ?? null;
 
     const { displayHomeScore, displayAwayScore, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
     const matchStats = isFinished ? buildMatchStats(match) : [];
     const rawMatch = match as unknown as Record<string, unknown>;
     const actualXgHome = readStatValue(rawMatch, ["home_expectedgoals", "home_xg"]);
     const actualXgAway = readStatValue(rawMatch, ["away_expectedgoals", "away_xg"]);
-    const displayXgHome = isFinished
-        ? actualXgHome ?? analysis?.goals?.expected_goals_home
-        : analysis?.goals?.expected_goals_home ?? actualXgHome;
-    const displayXgAway = isFinished
-        ? actualXgAway ?? analysis?.goals?.expected_goals_away
-        : analysis?.goals?.expected_goals_away ?? actualXgAway;
 
     const finishedMatches: SofascoreMatch[] = [];
     for (const comp of competitions) {
@@ -154,6 +148,13 @@ export default async function Match({ params, searchParams }: PageProps) {
     const awayRecent = uniqueFinishedMatches.filter((m) =>
         m.home_team_id === match.away_team_id || m.away_team_id === match.away_team_id
     ).slice(0, 10);
+    const analysis = repairMatchAnalysis(rawAnalysis, match, homeRecent, awayRecent);
+    const displayXgHome = isFinished
+        ? actualXgHome ?? analysis?.goals?.expected_goals_home
+        : analysis?.goals?.expected_goals_home ?? actualXgHome;
+    const displayXgAway = isFinished
+        ? actualXgAway ?? analysis?.goals?.expected_goals_away
+        : analysis?.goals?.expected_goals_away ?? actualXgAway;
 
     const h2hStats = { homeWins: 0, draws: 0, awayWins: 0 };
     for (const m of h2h) {
@@ -171,7 +172,7 @@ export default async function Match({ params, searchParams }: PageProps) {
 
     const content = (
         <>
-            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
+            <div className="scrollbar-app mb-5 flex items-center gap-2 overflow-x-auto whitespace-nowrap pb-1 text-sm text-gray-500 dark:text-gray-400 sm:mb-8">
                 <Link href="/" prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
                 <span>/</span>
                 <Link href={`/?date=${date}`} prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{competition.name}</Link>
@@ -179,33 +180,34 @@ export default async function Match({ params, searchParams }: PageProps) {
                 <span className="text-gray-700 dark:text-gray-300">{t("round_label")} {match.round}</span>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
                 <div className="flex-1">
-                    <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-8 mb-6">
+                    <div className="mb-6 rounded-2xl bg-white p-5 dark:bg-gray-900/50 sm:p-8">
                         <div className="text-center text-xs text-gray-500 dark:text-gray-400 mb-6">
                             {competition.country.toUpperCase()} {"\u2022"} {competition.name} {"\u2022"} {match.date.slice(0, 10)}
                         </div>
 
-                        <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8">
-                            <div className="flex w-[140px] flex-col items-center gap-3 sm:w-[200px]">
-                                <Image
-                                    src={teamLogoUrl(match.home_team_id)}
-                                    alt={match.home_team}
-                                    width={80}
-                                    height={80}
-                                    className="object-contain"
-                                    style={{ width: "80px", height: "80px" }}
-                                />
-                                <span className="text-lg font-semibold text-center">{match.home_team}</span>
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-8">
+                            <div className="flex min-w-0 flex-col items-center">
+                                <div className="flex h-16 w-full items-center justify-center sm:h-24">
+                                    <Image
+                                        src={teamLogoUrl(match.home_team_id)}
+                                        alt={match.home_team}
+                                        width={80}
+                                        height={80}
+                                        className="h-14 w-14 object-contain sm:h-20 sm:w-20"
+                                    />
+                                </div>
+                                <span className="mt-2 block min-h-10 min-w-0 line-clamp-2 break-words text-center text-sm font-semibold leading-tight sm:mt-3 sm:min-h-12 sm:text-lg">{match.home_team}</span>
                             </div>
 
-                            <div className="flex flex-col items-center gap-2">
+                            <div className="flex min-w-[74px] flex-col items-center gap-2 sm:min-w-[120px]">
                                 {isFinished ? (
                                     <>
-                                        <span className="text-5xl font-bold">
+                                        <span className="text-3xl font-bold sm:text-5xl">
                                             {displayHomeScore} - {displayAwayScore}
                                         </span>
-                                        <span className="bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+                                        <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white sm:px-3 sm:text-xs">
                                             {t("full_time")}
                                         </span>
                                         {match.home_score_pen != null && match.away_score_pen != null && (
@@ -221,24 +223,25 @@ export default async function Match({ params, searchParams }: PageProps) {
                                     </>
                                 ) : (
                                     <>
-                                        <span className="text-3xl font-semibold text-emerald-400">vs</span>
-                                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                                        <span className="text-2xl font-semibold text-emerald-400 sm:text-3xl">vs</span>
+                                        <span className="text-center text-xs text-gray-500 dark:text-gray-400 sm:text-sm">
                                             {match.status === "postponed" ? t("postponed") : t("not_started")}
                                         </span>
                                     </>
                                 )}
                             </div>
 
-                            <div className="flex w-[140px] flex-col items-center gap-3 sm:w-[200px]">
-                                <Image
-                                    src={teamLogoUrl(match.away_team_id)}
-                                    alt={match.away_team}
-                                    width={80}
-                                    height={80}
-                                    className="object-contain"
-                                    style={{ width: "80px", height: "80px" }}
-                                />
-                                <span className="text-lg font-semibold text-center">{match.away_team}</span>
+                            <div className="flex min-w-0 flex-col items-center">
+                                <div className="flex h-16 w-full items-center justify-center sm:h-24">
+                                    <Image
+                                        src={teamLogoUrl(match.away_team_id)}
+                                        alt={match.away_team}
+                                        width={80}
+                                        height={80}
+                                        className="h-14 w-14 object-contain sm:h-20 sm:w-20"
+                                    />
+                                </div>
+                                <span className="mt-2 block min-h-10 min-w-0 line-clamp-2 break-words text-center text-sm font-semibold leading-tight sm:mt-3 sm:min-h-12 sm:text-lg">{match.away_team}</span>
                             </div>
                         </div>
                     </div>
@@ -250,15 +253,15 @@ export default async function Match({ params, searchParams }: PageProps) {
                         const homePct = xgTotal > 0 ? (xgHome / xgTotal) * 100 : 50;
                         const awayPct = xgTotal > 0 ? (xgAway / xgTotal) * 100 : 50;
                         return (
-                            <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6 mb-6">
+                            <div className="mb-6 rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
                                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("expected_goals")}</h3>
-                                <div className="flex items-center gap-4">
-                                    <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{xgHome.toFixed(2)}</span>
-                                    <div className="flex-1 flex h-6 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700">
+                                <div className="flex items-center gap-2 sm:gap-4">
+                                    <span className="w-12 text-center text-xl font-bold text-gray-900 dark:text-white sm:w-16 sm:text-2xl">{xgHome.toFixed(2)}</span>
+                                    <div className="flex h-4 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700 sm:h-6">
                                         <div className="bg-emerald-500 h-full" style={{ width: `${homePct}%` }} />
                                         <div className="bg-blue-500 h-full" style={{ width: `${awayPct}%` }} />
                                     </div>
-                                    <span className="text-2xl font-bold text-gray-900 dark:text-white w-16 text-center">{xgAway.toFixed(2)}</span>
+                                    <span className="w-12 text-center text-xl font-bold text-gray-900 dark:text-white sm:w-16 sm:text-2xl">{xgAway.toFixed(2)}</span>
                                 </div>
                             </div>
                         );
@@ -305,37 +308,37 @@ export default async function Match({ params, searchParams }: PageProps) {
                 <div className="w-full lg:w-[400px] space-y-6">
                     {predMatch && <MatchPredictionSidebar />}
                     {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
-                        <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
+                        <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
                             <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("pre_match_analysis")}</h3>
                             <div className="space-y-3 text-sm">
                                 {analysis.goals?.btts_pct != null && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500 dark:text-gray-400">{t("btts_probability")}</span>
-                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.goals.btts_pct.toFixed(0)}%</span>
+                                    <div className="flex justify-between gap-3">
+                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("btts_probability")}</span>
+                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.goals.btts_pct.toFixed(0)}%</span>
                                     </div>
                                 )}
                                 {analysis.goals?.over_2_5_pct != null && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500 dark:text-gray-400">{t("over_25")}</span>
-                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.goals.over_2_5_pct.toFixed(0)}%</span>
+                                    <div className="flex justify-between gap-3">
+                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("over_25")}</span>
+                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.goals.over_2_5_pct.toFixed(0)}%</span>
                                     </div>
                                 )}
                                 {analysis.corners?.expected_total != null && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500 dark:text-gray-400">{t("expected_corners")}</span>
-                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.corners.expected_total.toFixed(1)}</span>
+                                    <div className="flex justify-between gap-3">
+                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("expected_corners")}</span>
+                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.corners.expected_total.toFixed(1)}</span>
                                     </div>
                                 )}
                                 {analysis.cards?.expected_total != null && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500 dark:text-gray-400">{t("expected_cards")}</span>
-                                        <span className="text-gray-900 dark:text-white font-semibold">{analysis.cards.expected_total.toFixed(1)}</span>
+                                    <div className="flex justify-between gap-3">
+                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("expected_cards")}</span>
+                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.cards.expected_total.toFixed(1)}</span>
                                     </div>
                                 )}
                                 {analysis.form?.home && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500 dark:text-gray-400">{t("home_form")}</span>
-                                        <div className="flex gap-1">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("home_form")}</span>
+                                        <div className="flex shrink-0 gap-1">
                                             {analysis.form.home.split("").map((c, i) => (
                                                 <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
                                                     c === "W" ? "bg-emerald-600" : c === "D" ? "bg-gray-600" : "bg-red-600"
@@ -345,9 +348,9 @@ export default async function Match({ params, searchParams }: PageProps) {
                                     </div>
                                 )}
                                 {analysis.form?.away && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500 dark:text-gray-400">{t("away_form")}</span>
-                                        <div className="flex gap-1">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("away_form")}</span>
+                                        <div className="flex shrink-0 gap-1">
                                             {analysis.form.away.split("").map((c, i) => (
                                                 <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
                                                     c === "W" ? "bg-emerald-600" : c === "D" ? "bg-gray-600" : "bg-red-600"
@@ -367,7 +370,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     );
 
     return (
-        <div className="flex flex-col w-full max-w-[1400px] mx-auto px-6 py-8 text-gray-900 dark:text-white">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-col px-3 py-5 text-gray-900 dark:text-white sm:px-6 sm:py-8">
             {predMatch ? (
                 <MatchPredictionVariantProvider key={predMatch.id} match={predMatch} matchFinished={isFinished}>
                     {content}

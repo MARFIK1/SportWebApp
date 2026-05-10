@@ -135,11 +135,11 @@ export default function PostMatchInsights({ homeTeam, awayTeam, homeScore, awayS
     ].filter((card) => card.home !== "-" || card.away !== "-");
 
     return (
-        <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-6 dark:border-white/10 dark:bg-gray-900/50">
+        <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-gray-900/50 sm:p-6">
             <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-400">{t("post_match_review")}</p>
-                    <h3 className="mt-1 text-xl font-black text-gray-900 dark:text-white">{t("match_verdict")}</h3>
+                    <h3 className="mt-1 text-lg font-black text-gray-900 dark:text-white sm:text-xl">{t("match_verdict")}</h3>
                 </div>
                 <div className="rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-600 dark:bg-gray-800 dark:text-gray-300">{homeScore} - {awayScore}</div>
             </div>

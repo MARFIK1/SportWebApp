@@ -61,7 +61,7 @@ export default function MatchPredictionSidebar() {
     return (
         <>
             {canSwitchVariants && (
-                <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-4">
+                <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50">
                     <div className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
                         {t("prediction_variant")}
                     </div>
@@ -71,7 +71,7 @@ export default function MatchPredictionSidebar() {
                                 key={variant}
                                 type="button"
                                 onClick={() => setActiveVariant(variant)}
-                                className={`rounded-xl px-4 py-3 text-sm font-semibold transition-colors ${
+                                className={`min-w-0 rounded-xl px-3 py-3 text-sm font-semibold transition-colors sm:px-4 ${
                                     activeVariant === variant
                                         ? "bg-emerald-600 text-white"
                                         : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -90,23 +90,23 @@ export default function MatchPredictionSidebar() {
             )}
 
             {bundle.consensus && (
-                <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
-                    <div className="flex items-center justify-between mb-4">
+                <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
+                    <div className="mb-4 flex items-center justify-between">
                         <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t("match_insight")}</h3>
                         <span className="text-xs text-emerald-400 font-semibold">{t("consensus")}</span>
                     </div>
-                    <div className="flex justify-between gap-3 mb-4">
+                    <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
                         {(["HOME", "DRAW", "AWAY"] as const).map((outcome) => (
                             <div
                                 key={outcome}
-                                className={`flex-1 text-center p-3 rounded-xl ${
+                                className={`min-w-0 rounded-xl p-2.5 text-center sm:p-3 ${
                                     bundle.consensus?.prediction === outcome ? "bg-emerald-600/30 border border-emerald-500" : "bg-gray-100 dark:bg-gray-800"
                                 }`}
                             >
-                                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                <div className="mb-1 truncate text-[11px] text-gray-500 dark:text-gray-400 sm:text-xs">
                                     {getOutcomeLabel(outcome, t)}
                                 </div>
-                                <div className="text-xl font-bold">
+                                <div className="text-lg font-bold sm:text-xl">
                                     {(bundle.consensus?.avg_probabilities?.[outcome] ?? 0).toFixed(0)}%
                                 </div>
                             </div>
@@ -136,7 +136,7 @@ export default function MatchPredictionSidebar() {
             )}
 
             {showMarketPanel && (
-                <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
+                <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
                     <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("advanced_markets")}</h3>
                     <div className="grid grid-cols-2 gap-3">
                         {PRIMARY_MARKETS.map((key) => {
@@ -147,7 +147,7 @@ export default function MatchPredictionSidebar() {
                                         key={key}
                                         className="min-h-[84px] rounded-xl border border-dashed border-gray-300 bg-gray-100/70 p-3 opacity-80 dark:border-gray-700 dark:bg-gray-800/40"
                                     >
-                                        <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{getMarketLabel(key, t)}</div>
+                                        <div className="break-words text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">{getMarketLabel(key, t)}</div>
                                         <div className="text-xl font-bold text-gray-400 dark:text-gray-500">-</div>
                                         <div className="text-xs text-gray-500 dark:text-gray-500">{t("market_unavailable")}</div>
                                     </div>
@@ -155,8 +155,8 @@ export default function MatchPredictionSidebar() {
                             }
                             const prob = maxProbability(market.consensus.avg_probabilities);
                             return (
-                                <div key={key} className="min-h-[84px] bg-gray-100 dark:bg-gray-800 rounded-xl p-3">
-                                    <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{getMarketLabel(key, t)}</div>
+                                <div key={key} className="min-h-[84px] rounded-xl bg-gray-100 p-3 dark:bg-gray-800">
+                                    <div className="break-words text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">{getMarketLabel(key, t)}</div>
                                     <div className="text-xl font-bold text-emerald-400">{prob.toFixed(0)}%</div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400">{getMarketPredictionLabel(market.consensus.prediction, t)}</div>
                                 </div>

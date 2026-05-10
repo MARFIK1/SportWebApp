@@ -140,14 +140,14 @@ export default function TeamRadar({ analysis, homeTeam, awayTeam }: TeamRadarPro
     if (metrics.length < 3) return null;
 
     return (
-        <section className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-white/10 dark:bg-gray-900/50">
+        <section className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-gray-900/50 sm:p-6">
             <div className="mb-4">
                 <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-cyan-400">{t("team_style_profile")}</p>
-                <h3 className="mt-1 text-xl font-black text-gray-900 dark:text-white">{t("matchup_radar")}</h3>
+                <h3 className="mt-1 text-lg font-black text-gray-900 dark:text-white sm:text-xl">{t("matchup_radar")}</h3>
             </div>
-            <div className="grid items-center gap-6 lg:grid-cols-[minmax(300px,400px)_minmax(0,1fr)]">
+            <div className="grid items-center gap-6 2xl:grid-cols-[minmax(300px,400px)_minmax(0,1fr)]">
                 <div className="min-w-0">
-                    <svg viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label={t("matchup_radar")} className="mx-auto h-auto w-full max-w-[400px]">
+                    <svg viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label={t("matchup_radar")} className="mx-auto h-auto w-full max-w-[320px] sm:max-w-[400px]">
                         {[0.25, 0.5, 0.75, 1].map((level) => (
                             <polygon key={level} points={metrics.map((_, index) => {
                                 const point = pointFor(level * 100, index, metrics.length);
@@ -180,18 +180,24 @@ export default function TeamRadar({ analysis, homeTeam, awayTeam }: TeamRadarPro
                             );
                         })}
                     </svg>
-                    <div className="mt-3 flex flex-wrap justify-center gap-4 text-sm font-semibold text-gray-600 dark:text-gray-300">
-                        <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-400" />{homeTeam}</div>
-                        <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-blue-400" />{awayTeam}</div>
+                    <div className="mt-3 grid gap-2 text-xs font-semibold text-gray-600 dark:text-gray-300 sm:flex sm:flex-wrap sm:justify-center sm:gap-4 sm:text-sm">
+                        <div className="flex min-w-0 items-center justify-center gap-2">
+                            <span className="h-3 w-3 shrink-0 rounded-full bg-emerald-400" />
+                            <span className="truncate">{homeTeam}</span>
+                        </div>
+                        <div className="flex min-w-0 items-center justify-center gap-2">
+                            <span className="h-3 w-3 shrink-0 rounded-full bg-blue-400" />
+                            <span className="truncate">{awayTeam}</span>
+                        </div>
                     </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 min-[720px]:grid-cols-2">
                     {metrics.map((metric, index) => (
                         <div key={metric.key} className="rounded-xl bg-gray-50 px-3 py-2.5 dark:bg-gray-800/50">
                             <div className="mb-2 flex items-center gap-2">
                                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gray-200 text-[10px] font-black text-gray-600 dark:bg-gray-700 dark:text-gray-200">{index + 1}</span>
-                                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">{metric.label}</span>
+                                <span className="min-w-0 break-words text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">{metric.label}</span>
                             </div>
                             <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2 text-xs">
                                 <div className="min-w-0">
