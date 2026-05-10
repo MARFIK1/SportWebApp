@@ -74,6 +74,17 @@ def _is_positive_odds(value) -> bool:
         return False
 
 
+def _copy_positive_odds(target: Dict, source: Dict, overwrite: bool = False):
+    for ok in ODDS_KEYS:
+        if _is_positive_odds(source.get(ok)) and (overwrite or not _is_positive_odds(target.get(ok))):
+            target[ok] = source[ok]
+
+
+def _upcoming_file_sort_key(path: Path, target_date: str):
+    exact_daily_file = path.name == f"upcoming_scheduled_{target_date}.json"
+    return (1 if exact_daily_file else 0, path.name)
+
+
 def safe_print(text):
     try:
         print(text)
@@ -106,14 +117,18 @@ def _load_predictor_artifact(predictor_class, data_dir: Path, models_path: Path)
     return predictor
 
 
-def load_models():
+def load_models(variant_names: Optional[List[str]] = None):
     predictor_module = _load_predictor_module()
     UniversalPredictor = predictor_module.UniversalPredictor
 
     data_dir = Path(__file__).parent / "data"
     predictors = {}
+    selected_variants = set(variant_names) if variant_names else None
 
     for variant_name, variant_config in MODEL_VARIANT_CONFIG.items():
+        if selected_variants is not None and variant_name not in selected_variants:
+            continue
+
         models_path = data_dir / 'models' / variant_config['filename']
 
         if models_path.exists():
@@ -331,7 +346,7 @@ def find_matches_for_date(target_date: str) -> list:
         
         upcoming_dir = comp_dir / 'raw' / 'upcoming'
         if upcoming_dir.exists():
-            for upcoming_file in sorted(upcoming_dir.glob('*.json')):
+            for upcoming_file in sorted(upcoming_dir.glob('*.json'), key=lambda p: _upcoming_file_sort_key(p, target_date)):
                 try:
                     with open(upcoming_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
@@ -366,12 +381,11 @@ def find_matches_for_date(target_date: str) -> list:
                                     'total_corners': None,
                                     'referee_name': match.get('referee_name'),
                                 }
-                                for ok in ODDS_KEYS:
-                                    if _is_positive_odds(match.get(ok)):
-                                        match_entry[ok] = match[ok]
+                                _copy_positive_odds(match_entry, match, overwrite=True)
                                 seen_matches[match_key] = match_entry
                             else:
                                 existing_match = seen_matches[match_key]
+                                prefer_file_odds = upcoming_file.name == f"upcoming_scheduled_{target_date}.json"
                                 if match.get('event_id') and not existing_match.get('event_id'):
                                     existing_match['event_id'] = match.get('event_id')
                                 if match.get('time') and not existing_match.get('start_time'):
@@ -382,9 +396,7 @@ def find_matches_for_date(target_date: str) -> list:
                                     existing_match['away_team_id'] = match.get('away_team_id')
                                 if match.get('referee_name') and not existing_match.get('referee_name'):
                                     existing_match['referee_name'] = match['referee_name']
-                                for ok in ODDS_KEYS:
-                                    if _is_positive_odds(match.get(ok)) and not _is_positive_odds(existing_match.get(ok)):
-                                        existing_match[ok] = match[ok]
+                                _copy_positive_odds(existing_match, match, overwrite=prefer_file_odds)
                 except Exception:
                     pass
     
@@ -1336,6 +1348,8 @@ def _serialize_result_prediction_data(result: Dict, actual_result: Optional[str]
             actual_result,
         )
         serialized_variant['odds_used'] = bool(variant_data.get('odds_used'))
+        if variant_data.get('source_odds'):
+            serialized_variant['source_odds'] = dict(variant_data['source_odds'])
         if variant_data.get('missing_odds_by_target'):
             serialized_variant['missing_odds_by_target'] = {
                 target_name: list(missing_cols)
@@ -1367,6 +1381,206 @@ def _mark_match_prediction_correctness(match_entry: Dict, actual_result: str):
         variant_consensus = variant_data.get('consensus', {})
         if variant_consensus.get('prediction'):
             variant_consensus['correct'] = (variant_consensus['prediction'] == actual_result)
+
+
+def _source_match_has_base_odds(match: Dict) -> bool:
+    return all(_is_positive_odds(match.get(ok)) for ok in BASE_ODDS_KEYS)
+
+
+def _source_match_odds_snapshot(match: Dict) -> Dict[str, float]:
+    return {
+        ok: float(match[ok])
+        for ok in ODDS_KEYS
+        if _is_positive_odds(match.get(ok))
+    }
+
+
+def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predictor) -> Dict[str, Dict]:
+    variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
+    historical_cache = {}
+    lineups_cache = {}
+    club_stats_index = None
+    variant_by_key = {}
+
+    has_intl = any(m.get('comp_type') in ('european', 'international') for m in matches)
+    if has_intl:
+        from regenerate_all_features import load_all_league_player_stats, load_lineups
+        print("Loading club player stats for squad features...")
+        club_stats_index = load_all_league_player_stats()
+        print(f"Loaded stats for {len(club_stats_index)} players")
+
+    total = len(matches)
+    for i, match in enumerate(matches, 1):
+        safe_print(f"[{i}/{total}] Refreshing {variant_name}: {match.get('home', '?')} vs {match.get('away', '?')}...")
+
+        comp_type = match.get('comp_type', 'league')
+        cache_key = f"{comp_type}/{match['country']}/{match['league']}"
+        if cache_key not in historical_cache:
+            historical_cache[cache_key] = load_historical_matches(
+                comp_type, match['country'], match['league']
+            )
+
+        match_lineups = None
+        if comp_type in ('european', 'international') and club_stats_index:
+            if cache_key not in lineups_cache:
+                from regenerate_all_features import load_lineups
+                from sofascore.config import get_competition_path
+                comp_path = get_competition_path(comp_type, match['country'], match['league'])
+                lineups_cache[cache_key] = load_lineups(comp_path)
+            match_lineups = lineups_cache[cache_key]
+
+        if match.get('status') == 'upcoming' or match.get('features') is None:
+            features = compute_features_for_upcoming(
+                match,
+                historical_cache[cache_key],
+                lineups=match_lineups,
+                club_stats_index=club_stats_index)
+        else:
+            features = match['features']
+
+        if features is None:
+            print("[SKIP] No features")
+            continue
+
+        all_target_preds = {}
+        missing_odds_by_target = {}
+        skipped_targets = []
+
+        for target_name in predictor.models.keys():
+            if variant_uses_odds:
+                missing_odds = _get_missing_odds_features(features, predictor, target_name)
+                if missing_odds:
+                    missing_odds_by_target[target_name] = missing_odds
+                    skipped_targets.append(target_name)
+                    continue
+
+            feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
+            target_features = {col: features.get(col, 0) for col in feat_cols}
+            target_features['home_team'] = features.get('home_team', match.get('home', ''))
+            target_features['away_team'] = features.get('away_team', match.get('away', ''))
+            target_features['date'] = features.get('date', match.get('date', ''))
+
+            try:
+                all_target_preds[target_name] = predictor.predict_match_all_models(target_features, target_name)
+            except Exception as exc:
+                skipped_targets.append(target_name)
+                safe_print(f"[WARN] {variant_name}/{target_name} prediction failed: {exc}")
+
+        if 'result' not in all_target_preds:
+            print("[SKIP] Result prediction unavailable")
+            continue
+
+        variant_payload = _split_target_predictions(all_target_preds)
+        variant_payload['odds_used'] = variant_uses_odds
+        if missing_odds_by_target:
+            variant_payload['missing_odds_by_target'] = missing_odds_by_target
+        if skipped_targets:
+            variant_payload['skipped_targets'] = skipped_targets
+
+        for key in _source_match_keys(match):
+            variant_by_key.setdefault(key, variant_payload)
+
+    return variant_by_key
+
+
+def refresh_report_odds_variants(
+    report: Dict,
+    source_matches: List[Dict],
+    predictor,
+    refresh_existing: bool = False,
+) -> int:
+    variant_name = 'with_odds'
+    source_by_key = {}
+    for source_match in source_matches:
+        for key in _source_match_keys(source_match):
+            source_by_key.setdefault(key, source_match)
+
+    pending = []
+    for match_entry in report.get('matches', []):
+        variants = match_entry.get('prediction_variants') or {}
+        source_match = _find_by_keys(source_by_key, _report_match_keys(match_entry))
+        if not source_match or not _source_match_has_base_odds(source_match):
+            continue
+
+        source_odds = _source_match_odds_snapshot(source_match)
+        existing_variant = variants.get(variant_name)
+        if existing_variant:
+            if not refresh_existing:
+                continue
+            if existing_variant.get('source_odds') == source_odds:
+                continue
+
+        pending.append((match_entry, source_match))
+
+    if not pending:
+        print("No with-odds variants to refresh.")
+        return 0
+
+    print(f"Refreshing with-odds variants for {len(pending)} matches...")
+    variant_by_key = _predict_variant_for_matches(
+        [source_match for _match_entry, source_match in pending],
+        variant_name,
+        predictor,
+    )
+
+    updated = 0
+    for match_entry, source_match in pending:
+        variant_payload = _find_by_keys(variant_by_key, _source_match_keys(source_match))
+        if not variant_payload:
+            continue
+
+        serialized_variant = _serialize_prediction_bundle(
+            variant_payload.get('predictions', {}),
+            variant_payload.get('market_predictions', {}),
+            match_entry.get('actual_result'),
+        )
+        serialized_variant['odds_used'] = bool(variant_payload.get('odds_used'))
+        serialized_variant['source_odds'] = _source_match_odds_snapshot(source_match)
+        if variant_payload.get('missing_odds_by_target'):
+            serialized_variant['missing_odds_by_target'] = {
+                target_name: list(missing_cols)
+                for target_name, missing_cols in variant_payload['missing_odds_by_target'].items()
+            }
+        if variant_payload.get('skipped_targets'):
+            serialized_variant['skipped_targets'] = list(variant_payload['skipped_targets'])
+
+        match_entry.setdefault('prediction_variants', {})[variant_name] = serialized_variant
+        updated += 1
+
+    if updated:
+        report['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    print(f"Refreshed with-odds variants: {updated}/{len(pending)}")
+    return updated
+
+
+def refresh_existing_report_odds(target_date: str, refresh_existing: bool = False) -> int:
+    existing_report = load_existing_report(target_date)
+    if not existing_report:
+        print(f"No existing report for {target_date}.")
+        return 0
+
+    source_matches = find_matches_for_date(target_date)
+    if not source_matches:
+        print(f"No match data found for {target_date}.")
+        return 0
+
+    predictors = load_models(['with_odds'])
+    predictor = predictors.get('with_odds')
+    if not predictor:
+        print("No with-odds predictor available.")
+        return 0
+
+    updated = refresh_report_odds_variants(
+        existing_report,
+        source_matches,
+        predictor,
+        refresh_existing=refresh_existing,
+    )
+    if updated:
+        report_path = save_report(existing_report, target_date)
+        print(f"Report updated with odds variants: {report_path}")
+    return updated
 
 
 def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
@@ -1445,6 +1659,8 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
 
             variant_payload = _split_target_predictions(all_target_preds)
             variant_payload['odds_used'] = variant_uses_odds
+            if variant_uses_odds:
+                variant_payload['source_odds'] = _source_match_odds_snapshot(match)
             if missing_odds_by_target:
                 variant_payload['missing_odds_by_target'] = missing_odds_by_target
             if skipped_targets:
@@ -2234,6 +2450,8 @@ def main():
                         help='Force re-scraping (ignore cache)')
     parser.add_argument('--repredict', action='store_true',
                         help='Re-run predictions on existing report (no scraping)')
+    parser.add_argument('--refresh-odds', action='store_true',
+                        help='Add or refresh with-odds prediction variants on an existing report')
     parser.add_argument('--no-report', action='store_true',
                         help='Do not save report to file')
     
@@ -2351,6 +2569,16 @@ def main():
 
     if args.scrape:
         scrape_upcoming(target_date, force=args.force)
+
+        existing_report = load_existing_report(target_date)
+        if existing_report:
+            refreshed = refresh_existing_report_odds(target_date, refresh_existing=True)
+            if refreshed:
+                return
+
+    if args.refresh_odds:
+        refresh_existing_report_odds(target_date, refresh_existing=args.force)
+        return
     
     print("\nSearching for matches in saved data...")
     matches = find_matches_for_date(target_date)
