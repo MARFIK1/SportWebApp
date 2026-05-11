@@ -13,7 +13,7 @@ Usage:
     python scrape_all.py --seasons 3                  # Override number of seasons
     python scrape_all.py --no-players                 # Skip player data
     python scrape_all.py --backfill-odds              # Backfill missing betting odds
-    python scrape_all.py --backfill-odds --force --upcoming-days 5  # Refresh near-future betting odds
+    python scrape_all.py --backfill-odds --force      # Refresh betting odds through the next 2 days
     python scrape_all.py --backfill-odds --limit 100  # Backfill max 100 matches
     python scrape_all.py --show-seasons la_liga       # Show available season IDs
 
@@ -51,6 +51,10 @@ ODDS_FIELDS = [
     'odds_over_2_5', 'odds_under_2_5',
     'odds_btts_yes', 'odds_btts_no',
 ]
+ODDS_REQUEST_DELAY = 1.5
+ODDS_BATCH_SIZE = 25
+ODDS_BATCH_PAUSE = 8.0
+ODDS_NULL_ABORT_THRESHOLD = 20
 
 
 def scrape_all(scraper, comp_types=None, country_filter=None, league_filter=None,
@@ -136,12 +140,28 @@ def _load_backfill_raw_files(data_dir: Path, season_count: int):
     return [(raw_file, file_data) for _key, raw_file, file_data in selected]
 
 
-def backfill_odds(scraper, limit=0, recent_days=0, upcoming_days=0, force=False, season_count=DEFAULT_SEASONS):
+def backfill_odds(
+    scraper,
+    limit=0,
+    recent_days=0,
+    upcoming_days=2,
+    force=False,
+    season_count=DEFAULT_SEASONS,
+    request_delay=ODDS_REQUEST_DELAY,
+    batch_size=ODDS_BATCH_SIZE,
+    batch_pause=ODDS_BATCH_PAUSE,
+    null_abort_threshold=ODDS_NULL_ABORT_THRESHOLD,
+):
     print("\n" + "=" * 60)
     print("BACKFILL ODDS")
     print("=" * 60)
     print(f"Mode: {'refresh existing odds' if force else 'fill missing odds'}")
     print(f"Season files per competition: {season_count}")
+    print(f"Request delay: ~{request_delay:.1f}s")
+    if batch_size > 0 and batch_pause > 0:
+        print(f"Batch pause: ~{batch_pause:.1f}s every {batch_size} matches")
+    if null_abort_threshold > 0:
+        print(f"Null-safety stop: {null_abort_threshold} consecutive API nulls")
 
     data_dir = Path(BASE_DIR)
     cutoff_date = None
@@ -187,12 +207,14 @@ def backfill_odds(scraper, limit=0, recent_days=0, upcoming_days=0, force=False,
     file_updates = {}
     updated = 0
     no_odds = 0
+    consecutive_nulls = 0
 
     for i, (filepath, idx, event_id, match_date) in enumerate(matches_to_update):
         print(f"  [{i+1}/{len(matches_to_update)}] event_id={event_id} ({match_date})...", end=' ')
 
         odds_markets = scraper.get_match_odds(event_id)
         if odds_markets:
+            consecutive_nulls = 0
             odds = extract_odds(odds_markets)
             if odds:
                 if filepath not in file_updates:
@@ -205,14 +227,36 @@ def backfill_odds(scraper, limit=0, recent_days=0, upcoming_days=0, force=False,
                 print("no odds data")
         else:
             no_odds += 1
+            consecutive_nulls += 1
             print("API returned null")
 
-        time.sleep(random_delay(0.5, 0.3))
+        if null_abort_threshold > 0 and consecutive_nulls >= null_abort_threshold:
+            print(
+                f"\n[WARN] {consecutive_nulls} consecutive odds requests returned null. "
+                "Sofascore may be rate-limiting/captcha-blocking this browser session. "
+                "Stopping early to avoid hammering the endpoint."
+            )
+            break
+
+        time.sleep(max(0.1, random_delay(request_delay, min(0.6, request_delay * 0.35))))
 
         if (i + 1) % 50 == 0 and file_updates:
             _save_odds_updates(file_updates, overwrite_odds=force)
             file_updates.clear()
             print(f"  [CHECKPOINT] Saved {updated} matches so far")
+
+        if (
+            batch_size > 0
+            and batch_pause > 0
+            and (i + 1) % batch_size == 0
+            and (i + 1) < len(matches_to_update)
+        ):
+            if file_updates:
+                _save_odds_updates(file_updates, overwrite_odds=force)
+                file_updates.clear()
+                print(f"[CHECKPOINT] Saved {updated} matches so far")
+            print(f"[PAUSE] Sleeping before next odds batch")
+            time.sleep(max(1.0, random_delay(batch_pause, min(2.0, batch_pause * 0.25))))
 
     if file_updates:
         _save_odds_updates(file_updates, overwrite_odds=force)
@@ -281,7 +325,7 @@ Examples:
   python scrape_all.py --country england        # All English competitions
   python scrape_all.py --seasons 3              # Custom season count
   python scrape_all.py --backfill-odds          # Add missing betting odds
-  python scrape_all.py --backfill-odds --force --upcoming-days 5  # Refresh near-future betting odds
+  python scrape_all.py --backfill-odds --force  # Refresh betting odds through the next 2 days
   python scrape_all.py --show-seasons la_liga   # Check season IDs
 """
     )
@@ -308,8 +352,16 @@ Examples:
                         help='Max matches for odds backfill (0 = all)')
     parser.add_argument('--recent-days', type=int, default=0,
                         help='Only backfill odds for last N days (0 = all)')
-    parser.add_argument('--upcoming-days', type=int, default=0,
-                        help='Only backfill odds from today through N days ahead (0 = all future dates)')
+    parser.add_argument('--upcoming-days', type=int, default=2,
+                        help='Only backfill odds from today through N days ahead (default: 2; 0 = all future dates)')
+    parser.add_argument('--odds-delay', type=float, default=ODDS_REQUEST_DELAY,
+                        help=f'Base delay between odds requests in seconds (default: {ODDS_REQUEST_DELAY})')
+    parser.add_argument('--odds-batch-size', type=int, default=ODDS_BATCH_SIZE,
+                        help=f'Pause after this many odds requests (default: {ODDS_BATCH_SIZE}; 0 = no batch pause)')
+    parser.add_argument('--odds-batch-pause', type=float, default=ODDS_BATCH_PAUSE,
+                        help=f'Batch pause in seconds during odds backfill (default: {ODDS_BATCH_PAUSE})')
+    parser.add_argument('--odds-null-abort', type=int, default=ODDS_NULL_ABORT_THRESHOLD,
+                        help=f'Stop after N consecutive null odds responses (default: {ODDS_NULL_ABORT_THRESHOLD}; 0 = disabled)')
 
     parser.add_argument('--show-seasons', type=str, metavar='LEAGUE',
                         help='Show available season IDs for a competition')
@@ -357,6 +409,10 @@ Examples:
                 upcoming_days=args.upcoming_days,
                 force=args.force,
                 season_count=season_count,
+                request_delay=args.odds_delay,
+                batch_size=args.odds_batch_size,
+                batch_pause=args.odds_batch_pause,
+                null_abort_threshold=args.odds_null_abort,
             )
             return
 
