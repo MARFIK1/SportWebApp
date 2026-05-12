@@ -214,6 +214,8 @@ Deploy with local data snapshot:
 npm run deploy:vercel
 ```
 
+This deploy command is pinned to Vercel scope `sportwebapp-project`, project `sport-web-app`, and verifies production alias `https://sport-web-app-eight.vercel.app`.
+
 Important: pushing Git commits alone does **not** deploy the local `.data/` snapshot. The production deploy flow for this project is the local Vercel deploy command above.
 
 ## Testing
