@@ -1,7 +1,5 @@
-// Deploy to Vercel with local .data (the CLI respects .gitignore so .data would be skipped otherwise).
-// Copies the tree to a temp folder outside the repo (fs.cpSync cannot copy into a subfolder of the source),
-// patches /.data/ out of .gitignore in the copy, runs npx --yes vercel deploy --prod --yes.
-// Run npm run build:prod first. One-time: npx vercel login, npx vercel link.
+// Deploys production to the fixed Vercel project/domain using a temp staging copy with local .data.
+// Run npm run build:prod first.
 
 import crypto from "crypto";
 import fs from "fs";
@@ -17,6 +15,14 @@ const DATA_BUILD_SOURCE = process.env.SOFASCORE_DATA_BUILD_DIR ||
 const DATA_SOURCE = fs.existsSync(DATA_BUILD_SOURCE)
     ? DATA_BUILD_SOURCE
     : path.join(ROOT, ".data");
+const VERCEL_PROJECT = "sport-web-app";
+const VERCEL_SCOPE = "sportwebapp-project";
+const VERCEL_PROD_DOMAIN = "sport-web-app-eight.vercel.app";
+const STAGING = path.join(os.tmpdir(), "sportwebapp-vercel-" + crypto.randomBytes(16).toString("hex"));
+
+function fail(message) {
+    throw new Error(message);
+}
 
 function shouldSkipSrc(src) {
     const rel = path.relative(ROOT, src);
@@ -52,14 +58,71 @@ function patchGitignore(stagingRoot) {
     fs.writeFileSync(p, lines.join("\n").replace(/\n*$/, "\n"));
 }
 
-console.log("staging copy for Vercel (.data included, no node_modules / full SofascoreData)\n");
+function redactToken(value) {
+    if (!process.env.VERCEL_TOKEN) return value;
+    return value.replaceAll(process.env.VERCEL_TOKEN, "[redacted]");
+}
 
-const STAGING = path.join(os.tmpdir(), "sportwebapp-vercel-" + crypto.randomBytes(16).toString("hex"));
+function runVercel(args) {
+    const tokenArg = process.env.VERCEL_TOKEN
+        ? ` --token "${process.env.VERCEL_TOKEN.replaceAll('"', '\\"')}"`
+        : "";
+    const command = `npx --yes vercel ${args.join(" ")}${tokenArg}`;
+
+    console.log(redactToken(command) + "\n");
+
+    execSync(command, {
+        cwd: STAGING,
+        stdio: "inherit",
+        env: { ...process.env, FORCE_COLOR: "1" },
+    });
+}
+
+function ensureProjectLink() {
+    const linkPath = path.join(STAGING, ".vercel", "project.json");
+    if (!fs.existsSync(linkPath)) {
+        fail(`Vercel link missing in staging: ${linkPath}`);
+    }
+
+    let link;
+    try {
+        link = JSON.parse(fs.readFileSync(linkPath, "utf-8"));
+    } catch {
+        fail(`invalid Vercel project link file: ${linkPath}`);
+    }
+
+    if (!link || typeof link !== "object" || !link.projectId || !link.orgId) {
+        fail(`invalid Vercel project link content in: ${linkPath}`);
+    }
+}
+
+function cleanupStaging() {
+    if (!fs.existsSync(STAGING)) return;
+
+    try {
+        fs.rmSync(STAGING, {
+            recursive: true,
+            force: true,
+            maxRetries: 12,
+            retryDelay: 250,
+        });
+    } catch (error) {
+        const code = error && typeof error === "object" && "code" in error
+            ? error.code
+            : undefined;
+        if (code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY") {
+            console.warn(`warning: could not remove temporary staging dir (${code}): ${STAGING}`);
+            return;
+        }
+        throw error;
+    }
+}
+
+console.log("staging copy for Vercel (.data included, no node_modules / full SofascoreData)\n");
 
 try {
     if (!fs.existsSync(DATA_SOURCE)) {
-        console.error("missing data snapshot - run npm run build:prod first\n");
-        process.exit(1);
+        fail("missing data snapshot - run npm run build:prod first");
     }
 
     fs.cpSync(ROOT, STAGING, {
@@ -72,44 +135,25 @@ try {
 
     const dataPath = path.join(STAGING, ".data");
     if (!fs.existsSync(dataPath)) {
-        console.error("missing .data - run npm run build:prod first\n");
-        try {
-            fs.rmSync(STAGING, { recursive: true, force: true });
-        } catch {
-            // ignore
-        }
-        process.exit(1);
+        fail("missing .data - run npm run build:prod first");
     }
 
     const manifestPath = path.join(dataPath, ".prebuild-manifest.json");
     if (!fs.existsSync(manifestPath)) {
-        console.error("missing .data prebuild manifest - run npm run build:prod with local SofascoreData/data first\n");
-        try {
-            fs.rmSync(STAGING, { recursive: true, force: true });
-        } catch {
-            // ignore
-        }
-        process.exit(1);
+        fail("missing .data prebuild manifest - run npm run build:prod with local SofascoreData/data first");
     }
 
-    const tokenArg = process.env.VERCEL_TOKEN
-        ? ` --token "${process.env.VERCEL_TOKEN.replaceAll('"', '\\"')}"`
-        : "";
-    const command = `npx --yes vercel deploy --prod --yes${tokenArg}`;
+    runVercel(["link", "--yes", "--project", VERCEL_PROJECT, "--scope", VERCEL_SCOPE]);
+    ensureProjectLink();
 
-    console.log("npx --yes vercel deploy --prod --yes" + (process.env.VERCEL_TOKEN ? " --token [redacted]" : "") + "\n");
+    runVercel(["deploy", "--prod", "--yes", "--scope", VERCEL_SCOPE]);
+    runVercel(["inspect", VERCEL_PROD_DOMAIN, "--scope", VERCEL_SCOPE]);
 
-    execSync(command, {
-        cwd: STAGING,
-        stdio: "inherit",
-        env: { ...process.env, FORCE_COLOR: "1" },
-    });
-
-    console.log("\ndone.\n");
+    console.log(`\ndone. production: https://${VERCEL_PROD_DOMAIN}\n`);
+} catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`${message}\n`);
+    process.exitCode = 1;
 } finally {
-    try {
-        fs.rmSync(STAGING, { recursive: true, force: true });
-    } catch {
-        // ignore
-    }
+    cleanupStaging();
 }
