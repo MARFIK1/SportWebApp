@@ -296,11 +296,16 @@ def find_matches_for_date(target_date: str) -> list:
                             'total_corners': total_corners,
                             'referee_name': match.get('referee_name'),
                         }
+                        _copy_positive_odds(match_data, match, overwrite=True)
                         
-                        if match_key not in seen_matches:
+                        existing_match = seen_matches.get(match_key)
+                        if existing_match is None:
                             seen_matches[match_key] = match_data
-                        elif status == 'finished' and seen_matches[match_key]['status'] != 'finished':
+                        elif status == 'finished' and existing_match['status'] != 'finished':
+                            _copy_positive_odds(match_data, existing_match, overwrite=False)
                             seen_matches[match_key] = match_data
+                        else:
+                            _copy_positive_odds(existing_match, match_data, overwrite=True)
                 except Exception:
                     pass
         
@@ -584,6 +589,42 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
     return updated_count
 
 
+def _collect_competitions_requiring_update(base_dir: Path, target_date: str):
+    comps_to_check = set()
+
+    for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
+        raw_dir = comp_dir / 'raw'
+        if not raw_dir.exists():
+            continue
+
+        needs_update = False
+        all_raw_files = list(raw_dir.glob('*.json'))
+        upcoming_dir = raw_dir / 'upcoming'
+        if upcoming_dir.exists():
+            all_raw_files.extend(upcoming_dir.glob('*.json'))
+
+        for raw_file in all_raw_files:
+            try:
+                with open(raw_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for match in data.get('matches', []):
+                    if match.get('date', '').startswith(target_date):
+                        status = match.get('status', '')
+                        has_score = match.get('home_score') is not None and match.get('away_score') is not None
+                        if status in ('inprogress', 'upcoming', 'notstarted') or not has_score:
+                            needs_update = True
+                            break
+                if needs_update:
+                    break
+            except Exception:
+                continue
+
+        if needs_update:
+            comps_to_check.add((comp_type, country, comp_name))
+
+    return comps_to_check
+
+
 def scrape_upcoming(target_date: str = None, force: bool = False):
     from sofascore import (
         create_stealth_driver,
@@ -696,36 +737,7 @@ def update_match_results(target_date: str):
     
     base_dir = Path(__file__).parent / 'data'
     
-    comps_to_check = set()
-    
-    for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
-        raw_dir = comp_dir / 'raw'
-        if not raw_dir.exists():
-            continue
-        
-        needs_update = False
-        all_raw_files = list(raw_dir.glob('*.json'))
-        upcoming_dir = raw_dir / 'upcoming'
-        if upcoming_dir.exists():
-            all_raw_files.extend(upcoming_dir.glob('*.json'))
-        for raw_file in all_raw_files:
-            try:
-                with open(raw_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                for match in data.get('matches', []):
-                    if match.get('date', '').startswith(target_date):
-                        status = match.get('status', '')
-                        has_score = match.get('home_score') is not None
-                        if status in ('inprogress', 'upcoming', 'notstarted') or not has_score:
-                            needs_update = True
-                            break
-                if needs_update:
-                    break
-            except Exception:
-                continue
-
-        if needs_update:
-            comps_to_check.add((comp_type, country, comp_name))
+    comps_to_check = _collect_competitions_requiring_update(base_dir, target_date)
     
     if not comps_to_check:
         print("No matches requiring update found.")
@@ -747,7 +759,13 @@ def update_match_results(target_date: str):
     try:
         scheduled_updated_count = _update_results_from_scheduled_events(scraper, target_date, base_dir)
         if scheduled_updated_count is not None:
-            return
+            remaining = _collect_competitions_requiring_update(base_dir, target_date)
+            if not remaining:
+                return
+            comps_to_check = remaining
+            print(f"Remaining competitions after scheduled update: {len(comps_to_check)}")
+            for ct, c, l in sorted(comps_to_check):
+                print(f"  - [{ct}] {c}/{l}")
 
         for comp_type, country, comp_name in sorted(comps_to_check):
             comp_config = COMPETITIONS.get(comp_type, {}).get(country, {}).get(comp_name, {})
