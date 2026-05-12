@@ -37,22 +37,22 @@ Current `without_odds` summary from `SofascoreData/data/models/comparison_summar
 
 | Model | Test Accuracy | Test F1 | Live Accuracy | Live Matches | Brier Score |
 |-------|:-------------:|:-------:|:-------------:|:------------:|:-----------:|
-| LightGBM | 49.8% | 43.3% | 51.7% | 1407 | 0.605 |
-| MLP | 50.0% | 43.8% | 51.5% | 1407 | 0.608 |
-| Random Forest | 48.3% | 46.6% | 49.1% | 1407 | 0.615 |
-| Logistic Regression | 46.2% | 46.9% | 47.9% | 1407 | 0.615 |
-| XGBoost | 46.4% | 46.6% | 47.5% | 1407 | 0.620 |
-| Stacking | 45.7% | 46.5% | 47.6% | 1407 | 0.624 |
-| KNN | 46.0% | 43.8% | 44.7% | 1407 | 0.652 |
-| Ensemble | 46.3% | 46.5% | 44.4% | 1407 | 0.628 |
-| LSTM | 46.2% | 44.4% | 43.1% | 1407 | 0.642 |
+| LightGBM | 50.6% | 43.2% | 51.9% | 1376 | 0.604 |
+| MLP | 50.3% | 43.8% | 51.7% | 1376 | 0.607 |
+| Random Forest | 48.8% | 46.9% | 49.3% | 1376 | 0.614 |
+| Logistic Regression | 46.2% | 46.7% | 47.8% | 1376 | 0.615 |
+| XGBoost | 46.0% | 46.4% | 47.6% | 1376 | 0.619 |
+| Stacking | 45.3% | 46.2% | 47.7% | 1376 | 0.624 |
+| KNN | 45.7% | 43.8% | 45.1% | 1376 | 0.651 |
+| Ensemble | 45.3% | 46.1% | 44.6% | 1376 | 0.627 |
+| LSTM | 46.1% | 45.6% | 43.1% | 1376 | 0.641 |
 
-Current comparison summary was generated on `2026-04-30` after retraining with the safer pre-match feature set.
-Compared with the previous `2026-04-23` summary, the top live accuracy increased from about `50.4%` to `51.7%`.
+Current comparison summary was generated on `2026-05-07` after retraining with the updated pre-match feature set.
+Compared with the previous `2026-04-30` summary, the top live accuracy increased from `51.7%` to `51.9%`.
 The currently used model artifacts were last refreshed on:
 
-- `without_odds`: `2026-04-30`
-- `with_odds`: `2026-04-30`
+- `without_odds`: `2026-05-07`
+- `with_odds`: `2026-05-07`
 
 The current training pipeline separates feature sets by availability:
 
