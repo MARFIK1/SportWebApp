@@ -353,7 +353,7 @@ Examples:
     parser.add_argument('--recent-days', type=int, default=0,
                         help='Only backfill odds for last N days (0 = all)')
     parser.add_argument('--upcoming-days', type=int, default=2,
-                        help='Only backfill odds from today through N days ahead (default: 2; 0 = all future dates)')
+                        help='Only backfill odds from today through N days ahead (default: 2; 0 = no upper date limit)')
     parser.add_argument('--odds-delay', type=float, default=ODDS_REQUEST_DELAY,
                         help=f'Base delay between odds requests in seconds (default: {ODDS_REQUEST_DELAY})')
     parser.add_argument('--odds-batch-size', type=int, default=ODDS_BATCH_SIZE,

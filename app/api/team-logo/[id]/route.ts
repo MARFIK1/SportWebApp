@@ -70,12 +70,15 @@ export async function GET(_request: Request, context: RouteContext) {
                 continue;
             }
 
+            const contentType = response.headers.get("content-type") || "";
+            if (!contentType.toLowerCase().startsWith("image/")) {
+                continue;
+            }
+
             const image = await response.arrayBuffer();
             if (image.byteLength === 0) {
                 continue;
             }
-
-            const contentType = response.headers.get("content-type") || "image/png";
 
             return new Response(image, {
                 status: 200,
