@@ -18,6 +18,7 @@ const DATA_SOURCE = fs.existsSync(DATA_BUILD_SOURCE)
 const VERCEL_PROJECT = "sport-web-app";
 const VERCEL_SCOPE = "sportwebapp-project";
 const VERCEL_PROD_DOMAIN = "sport-web-app-eight.vercel.app";
+const LOCAL_VERCEL_LINK = path.join(ROOT, ".vercel", "project.json");
 const STAGING = path.join(os.tmpdir(), "sportwebapp-vercel-" + crypto.randomBytes(16).toString("hex"));
 
 function fail(message) {
@@ -63,6 +64,25 @@ function redactToken(value) {
     return value.replaceAll(process.env.VERCEL_TOKEN, "[redacted]");
 }
 
+function readProjectLink(linkPath) {
+    if (!fs.existsSync(linkPath)) {
+        fail(`Vercel link missing: ${linkPath}`);
+    }
+
+    let link;
+    try {
+        link = JSON.parse(fs.readFileSync(linkPath, "utf-8"));
+    } catch {
+        fail(`invalid Vercel project link file: ${linkPath}`);
+    }
+
+    if (!link || typeof link !== "object" || !link.projectId || !link.orgId) {
+        fail(`invalid Vercel project link content in: ${linkPath}`);
+    }
+
+    return link;
+}
+
 function runVercel(args) {
     const tokenArg = process.env.VERCEL_TOKEN
         ? ` --token "${process.env.VERCEL_TOKEN.replaceAll('"', '\\"')}"`
@@ -80,19 +100,14 @@ function runVercel(args) {
 
 function ensureProjectLink() {
     const linkPath = path.join(STAGING, ".vercel", "project.json");
-    if (!fs.existsSync(linkPath)) {
-        fail(`Vercel link missing in staging: ${linkPath}`);
-    }
+    const expected = readProjectLink(LOCAL_VERCEL_LINK);
+    const link = readProjectLink(linkPath);
 
-    let link;
-    try {
-        link = JSON.parse(fs.readFileSync(linkPath, "utf-8"));
-    } catch {
-        fail(`invalid Vercel project link file: ${linkPath}`);
-    }
-
-    if (!link || typeof link !== "object" || !link.projectId || !link.orgId) {
-        fail(`invalid Vercel project link content in: ${linkPath}`);
+    if (link.projectId !== expected.projectId || link.orgId !== expected.orgId) {
+        fail(
+            `refusing to deploy to unexpected Vercel project: ` +
+            `projectId=${link.projectId}, orgId=${link.orgId}`
+        );
     }
 }
 
