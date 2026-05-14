@@ -1,7 +1,7 @@
 "use client";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 
 interface DatePickerProps {
@@ -15,6 +15,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
     const router = useRouter();
     const { locale, t } = useLanguage();
     const [isCompact, setIsCompact] = useState(false);
+    const [isPending, startTransition] = useTransition();
 
     useEffect(() => {
         const mediaQuery = window.matchMedia("(max-width: 639px)");
@@ -32,7 +33,11 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
     }, []);
 
     const handleDateClick = (date: string) => {
-        router.push(`${basePath}?date=${date}`);
+        if (date === selectedDate || isPending) return;
+
+        startTransition(() => {
+            router.push(`${basePath}?date=${date}`, { scroll: false });
+        });
     };
 
     const dateLocale = locale === "pl" ? "pl-PL" : "en-US";
@@ -63,7 +68,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
             <div className="grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-2 rounded-2xl border border-gray-200 bg-white/85 px-3 py-3 shadow-sm shadow-slate-900/5 backdrop-blur dark:border-gray-700/70 dark:bg-gray-900/65 dark:shadow-black/10">
                 <button
                     onClick={() => canGoBack && handleDateClick(dates[start - 1])}
-                    disabled={!canGoBack}
+                    disabled={!canGoBack || isPending}
                     className={`${arrowButtonClassName} ${canGoBack ? "" : "invisible pointer-events-none"}`}
                     aria-label={t("previous_dates")}
                 >
@@ -83,6 +88,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
                                 key={date}
                                 onClick={() => handleDateClick(date)}
                                 aria-pressed={isSelected}
+                                disabled={isPending || isSelected}
                                 className={`flex h-14 min-w-0 flex-col items-center justify-center rounded-xl border px-1 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:px-3 ${
                                     isSelected
                                         ? "border-emerald-500 bg-emerald-600 text-white shadow-lg shadow-emerald-950/20 dark:shadow-emerald-950/30"
@@ -100,7 +106,7 @@ export default function DatePicker({ dates, selectedDate, todayIso, basePath = "
 
                 <button
                     onClick={() => canGoForward && handleDateClick(dates[end])}
-                    disabled={!canGoForward}
+                    disabled={!canGoForward || isPending}
                     className={`${arrowButtonClassName} ${canGoForward ? "" : "invisible pointer-events-none"}`}
                     aria-label={t("next_dates")}
                 >
