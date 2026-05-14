@@ -38,10 +38,14 @@ function shouldSkipSrc(src) {
         ".data",
         ".data-build",
         ".vercel-deploy-staging",
+        ".venv",
+        ".vscode",
         "SofascoreData",
+        "logs",
         "coverage",
     ]);
     if (skipRoots.has(first)) return true;
+    if (norm.split("/").includes("node_modules")) return true;
     if (first.startsWith(".data.stale-")) return true;
     if (first === ".env" || norm.startsWith(".env.")) return true;
     return false;
