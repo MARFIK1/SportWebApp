@@ -240,22 +240,79 @@ def get_existing_event_ids(dm, season_name):
 
 
 def _match_key(m):
-    """Composite key: postponed/canceled entries use separate key so both versions coexist."""
+    """Canonical match key.
+
+    Sofascore keeps the same event_id when a fixture is moved. Use that id as the
+    source of truth so an old postponed/notstarted row is replaced by the current
+    row instead of coexisting with it. Matches without event_id keep a strict
+    date-aware fallback key to avoid merging legitimate rematches by team names.
+    """
     eid = m.get('event_id')
-    if m.get('status') in ('postponed', 'canceled'):
-        return f"{eid}__{m['status']}"
-    return eid
+    if eid not in (None, ''):
+        return f"event:{eid}"
+    return "|".join(str(m.get(k) or '') for k in (
+        'date', 'round', 'home_team_id', 'away_team_id', 'home_team', 'away_team'
+    ))
+
+
+def _has_score(m):
+    return m.get('home_score') is not None and m.get('away_score') is not None
+
+
+def _status_rank(m):
+    if _has_score(m) or m.get('status') == 'finished':
+        return 50
+    status = m.get('status')
+    if status == 'inprogress':
+        return 40
+    if status in ('upcoming', 'notstarted'):
+        return 30
+    if status in ('postponed', 'canceled'):
+        return 20
+    return 10
+
+
+def _merge_missing_fields(target, source):
+    merged = dict(target)
+    for key, value in source.items():
+        if value in (None, ''):
+            continue
+        if merged.get(key) in (None, ''):
+            merged[key] = value
+    return merged
+
+
+def _prefer_canonical_match(existing, candidate):
+    if existing is None:
+        return candidate
+
+    existing_has_score = _has_score(existing)
+    candidate_has_score = _has_score(candidate)
+
+    if existing_has_score and not candidate_has_score:
+        return _merge_missing_fields(existing, candidate)
+    if candidate_has_score and not existing_has_score:
+        return _merge_missing_fields(candidate, existing)
+
+    if _status_rank(candidate) > _status_rank(existing):
+        return _merge_missing_fields(candidate, existing)
+    if _status_rank(candidate) < _status_rank(existing):
+        return _merge_missing_fields(existing, candidate)
+
+    # Same status quality: the newly scraped API row is fresher, but keep any
+    # historical stats/odds that are absent from it.
+    return _merge_missing_fields(candidate, existing)
 
 
 def merge_and_sort_matches(existing_matches, new_matches):
-    all_matches = {_match_key(m): m for m in existing_matches}
+    all_matches = {}
+    for m in existing_matches:
+        key = _match_key(m)
+        all_matches[key] = _prefer_canonical_match(all_matches.get(key), m)
 
     for m in new_matches:
         key = _match_key(m)
-        existing = all_matches.get(key)
-        if existing and existing.get('home_score') is not None and m.get('home_score') is None:
-            continue
-        all_matches[key] = m
+        all_matches[key] = _prefer_canonical_match(all_matches.get(key), m)
 
     sorted_matches = sorted(
         all_matches.values(),

@@ -216,11 +216,174 @@ def _is_scraped_today(comp_dir: Path) -> bool:
     return False
 
 
+def _raw_has_score(match: Dict) -> bool:
+    return match.get('home_score') is not None and match.get('away_score') is not None
+
+
+def _result_from_scores(home_score, away_score) -> Optional[str]:
+    if home_score is None or away_score is None:
+        return None
+    try:
+        home_val = float(home_score)
+        away_val = float(away_score)
+    except (TypeError, ValueError):
+        return None
+    if home_val > away_val:
+        return 'H'
+    if home_val < away_val:
+        return 'A'
+    return 'D'
+
+
+def _source_status_rank(match: Dict) -> int:
+    if match.get('result') is not None or _raw_has_score(match):
+        return 50
+    status = match.get('status')
+    if status == 'finished':
+        return 45
+    if status == 'inprogress':
+        return 40
+    if status in ('upcoming', 'notstarted'):
+        return 30
+    if status in ('postponed', 'canceled'):
+        return 20
+    return 10
+
+
+def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
+    if existing is None:
+        return candidate
+
+    existing_rank = (_source_status_rank(existing), existing.get('_source_rank', 0))
+    candidate_rank = (_source_status_rank(candidate), candidate.get('_source_rank', 0))
+    if candidate_rank >= existing_rank:
+        winner, loser = dict(candidate), existing
+    else:
+        winner, loser = dict(existing), candidate
+
+    if winner.get('features') is None and loser.get('features') is not None:
+        winner['features'] = loser['features']
+    for key in ('total_cards', 'total_corners', 'referee_name', 'start_time', 'date'):
+        if winner.get(key) in (None, '') and loser.get(key) not in (None, ''):
+            winner[key] = loser[key]
+    _copy_positive_odds(winner, loser, overwrite=False)
+    return winner
+
+
+def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_name: str,
+                             source_rank: int = 0, source_path: Optional[Path] = None) -> Dict:
+    home_score = match.get('home_score')
+    away_score = match.get('away_score')
+    result = _result_from_scores(home_score, away_score)
+    raw_status = match.get('status', '')
+
+    if result is not None:
+        status = 'finished'
+    elif raw_status in ('postponed', 'canceled'):
+        status = raw_status
+    elif raw_status == 'inprogress':
+        status = 'inprogress'
+    else:
+        status = 'upcoming'
+
+    total_cards = None
+    total_corners = None
+    hy = match.get('home_yellow_cards_calc')
+    ay = match.get('away_yellow_cards_calc')
+    if hy is not None and ay is not None:
+        total_cards = int(hy) + int(ay)
+    hc = match.get('home_cornerkicks')
+    ac = match.get('away_cornerkicks')
+    if hc is not None and ac is not None:
+        total_corners = int(hc) + int(ac)
+
+    match_data = {
+        'event_id': match.get('event_id'),
+        'comp_type': comp_type,
+        'country': country,
+        'league': comp_name,
+        'home': match.get('home_team'),
+        'away': match.get('away_team'),
+        'home_team_id': match.get('home_team_id'),
+        'away_team_id': match.get('away_team_id'),
+        'result': result,
+        'score': f"{home_score}-{away_score}" if result is not None else None,
+        'status': status,
+        'date': match.get('date', ''),
+        'start_time': match.get('time', ''),
+        'features': None,
+        'total_cards': total_cards,
+        'total_corners': total_corners,
+        'referee_name': match.get('referee_name'),
+        '_source_rank': source_rank,
+    }
+    if source_path is not None:
+        match_data['_source_path'] = str(source_path)
+    _copy_positive_odds(match_data, match, overwrite=True)
+    return match_data
+
+
+def _source_event_key(event_id) -> Optional[str]:
+    if event_id is None or event_id == '':
+        return None
+    return f"event:{event_id}"
+
+
+def _build_canonical_raw_event_index(base_dir: Path) -> Dict[str, Dict]:
+    canonical = {}
+    for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
+        raw_dir = comp_dir / 'raw'
+        if not raw_dir.exists():
+            continue
+
+        raw_files = [(p, 1 if p.name == 'all_seasons.json' else 2) for p in sorted(raw_dir.glob('*.json'))]
+        upcoming_dir = raw_dir / 'upcoming'
+        if upcoming_dir.exists():
+            raw_files.extend((p, 1) for p in sorted(upcoming_dir.glob('*.json')))
+
+        for raw_file, source_rank in raw_files:
+            try:
+                with open(raw_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            for match in data.get('matches', []):
+                key = _source_event_key(match.get('event_id'))
+                if not key:
+                    continue
+                candidate = _raw_match_to_match_data(
+                    match, comp_type, country, comp_name,
+                    source_rank=source_rank,
+                    source_path=raw_file,
+                )
+                canonical[key] = _merge_source_match(canonical.get(key), candidate)
+
+    return canonical
+
+
+def _is_stale_rescheduled_entry(match: Dict, canonical_events: Dict[str, Dict]) -> bool:
+    key = _source_event_key(match.get('event_id'))
+    if not key:
+        return False
+    canonical = canonical_events.get(key)
+    if not canonical:
+        return False
+    match_date = (match.get('date') or '')[:10]
+    canonical_date = (canonical.get('date') or '')[:10]
+    return bool(match_date and canonical_date and match_date != canonical_date)
+
+
+def _strip_internal_match_fields(match: Dict) -> Dict:
+    return {k: v for k, v in match.items() if not k.startswith('_')}
+
+
 
 
 def find_matches_for_date(target_date: str) -> list:
     base_dir = Path(__file__).parent / 'data'
     seen_matches = {}  # match_key -> match data
+    canonical_events = _build_canonical_raw_event_index(base_dir)
     
     for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
         
@@ -236,76 +399,29 @@ def find_matches_for_date(target_date: str) -> list:
                         match_date = match.get('date', '')
                         if not match_date.startswith(target_date):
                             continue
-                        
-                        home = match.get('home_team')
-                        away = match.get('away_team')
-                        event_id = match.get('event_id')
-                        match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{home}_{away}"
 
+                        if _is_stale_rescheduled_entry(match, canonical_events):
+                            continue
+
+                        raw_status = match.get('status', '')
                         home_score = match.get('home_score')
                         away_score = match.get('away_score')
-                        raw_status = match.get('status', '')
 
                         if raw_status == 'notstarted' and home_score is None and away_score is None:
                             continue
-                        
-                        if home_score is not None and away_score is not None:
-                            if home_score > away_score:
-                                result = 'H'
-                            elif home_score < away_score:
-                                result = 'A'
-                            else:
-                                result = 'D'
-                            status = 'finished'
-                        elif raw_status == 'postponed':
-                            result = None
-                            status = 'postponed'
-                        elif raw_status == 'inprogress':
-                            result = None
-                            status = 'inprogress'
-                        else:
-                            result = None
-                            status = 'upcoming'
-                        
-                        total_cards = None
-                        total_corners = None
-                        hy = match.get('home_yellow_cards_calc')
-                        ay = match.get('away_yellow_cards_calc')
-                        if hy is not None and ay is not None:
-                            total_cards = int(hy) + int(ay)
-                        hc = match.get('home_cornerkicks')
-                        ac = match.get('away_cornerkicks')
-                        if hc is not None and ac is not None:
-                            total_corners = int(hc) + int(ac)
 
-                        match_data = {
-                            'event_id': event_id,
-                            'comp_type': comp_type,
-                            'country': country,
-                            'league': comp_name,
-                            'home': home,
-                            'away': away,
-                            'home_team_id': match.get('home_team_id'),
-                            'away_team_id': match.get('away_team_id'),
-                            'result': result,
-                            'score': f"{home_score}-{away_score}" if home_score is not None else None,
-                            'status': status,
-                            'start_time': match.get('time', ''),
-                            'features': None,
-                            'total_cards': total_cards,
-                            'total_corners': total_corners,
-                            'referee_name': match.get('referee_name'),
-                        }
-                        _copy_positive_odds(match_data, match, overwrite=True)
+                        match_data = _raw_match_to_match_data(
+                            match, comp_type, country, comp_name,
+                            source_rank=1 if raw_file.name == 'all_seasons.json' else 2,
+                            source_path=raw_file,
+                        )
+                        event_id = match_data.get('event_id')
+                        match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{match_data['home']}_{match_data['away']}"
                         
-                        existing_match = seen_matches.get(match_key)
-                        if existing_match is None:
-                            seen_matches[match_key] = match_data
-                        elif status == 'finished' and existing_match['status'] != 'finished':
-                            _copy_positive_odds(match_data, existing_match, overwrite=False)
-                            seen_matches[match_key] = match_data
-                        else:
-                            _copy_positive_odds(existing_match, match_data, overwrite=True)
+                        seen_matches[match_key] = _merge_source_match(
+                            seen_matches.get(match_key),
+                            match_data,
+                        )
                 except Exception:
                     pass
         
@@ -317,6 +433,9 @@ def find_matches_for_date(target_date: str) -> list:
                 
                 for match in data.get('samples', []):
                     if match.get('date', '').startswith(target_date):
+                        if _is_stale_rescheduled_entry(match, canonical_events):
+                            continue
+
                         home = match.get('home_team')
                         away = match.get('away_team')
                         event_id = match.get('event_id')
@@ -330,8 +449,10 @@ def find_matches_for_date(target_date: str) -> list:
                             home_goals = match.get('label_home_goals')
                             away_goals = match.get('label_away_goals')
                             score = f"{home_goals}-{away_goals}" if home_goals is not None and away_goals is not None else None
+                            result = match.get('label_result')
+                            status = 'finished' if result else ('upcoming' if match.get('status') in ('upcoming', 'notstarted', 'postponed', 'canceled') else 'finished')
                             
-                            seen_matches[match_key] = {
+                            candidate = {
                                 'event_id': event_id,
                                 'comp_type': comp_type,
                                 'country': country,
@@ -340,12 +461,18 @@ def find_matches_for_date(target_date: str) -> list:
                                 'away': match.get('away_team'),
                                 'home_team_id': match.get('home_team_id'),
                                 'away_team_id': match.get('away_team_id'),
-                                'result': match.get('label_result'),
+                                'result': result,
                                 'score': score,
-                                'status': 'upcoming' if match.get('status') in ('upcoming', 'postponed', 'canceled') else 'finished',
+                                'status': status,
+                                'date': match.get('date', ''),
                                 'start_time': match.get('time', ''),
-                                'features': match
+                                'features': match,
+                                '_source_rank': 0,
                             }
+                            seen_matches[match_key] = _merge_source_match(
+                                seen_matches.get(match_key),
+                                candidate,
+                            )
             except Exception:
                 pass
         
@@ -362,50 +489,27 @@ def find_matches_for_date(target_date: str) -> list:
 
                     for match in data.get('matches', []):
                         if match.get('date', '').startswith(target_date):
-                            home = match.get('home_team')
-                            away = match.get('away_team')
-                            event_id = match.get('event_id')
-                            match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{home}_{away}"
+                            if _is_stale_rescheduled_entry(match, canonical_events):
+                                continue
 
-                            if match_key not in seen_matches:
-                                match_entry = {
-                                    'event_id': event_id,
-                                    'comp_type': comp_type,
-                                    'country': country,
-                                    'league': comp_name,
-                                    'home': home,
-                                    'away': away,
-                                    'home_team_id': match.get('home_team_id'),
-                                    'away_team_id': match.get('away_team_id'),
-                                    'result': None,
-                                    'score': None,
-                                    'status': 'upcoming',
-                                    'start_time': match.get('time', ''),
-                                    'features': None,
-                                    'total_cards': None,
-                                    'total_corners': None,
-                                    'referee_name': match.get('referee_name'),
-                                }
-                                _copy_positive_odds(match_entry, match, overwrite=True)
-                                seen_matches[match_key] = match_entry
-                            else:
-                                existing_match = seen_matches[match_key]
-                                prefer_file_odds = upcoming_file.name == f"upcoming_scheduled_{target_date}.json"
-                                if match.get('event_id') and not existing_match.get('event_id'):
-                                    existing_match['event_id'] = match.get('event_id')
-                                if match.get('time') and not existing_match.get('start_time'):
-                                    existing_match['start_time'] = match.get('time', '')
-                                if match.get('home_team_id') and not existing_match.get('home_team_id'):
-                                    existing_match['home_team_id'] = match.get('home_team_id')
-                                if match.get('away_team_id') and not existing_match.get('away_team_id'):
-                                    existing_match['away_team_id'] = match.get('away_team_id')
-                                if match.get('referee_name') and not existing_match.get('referee_name'):
-                                    existing_match['referee_name'] = match['referee_name']
-                                _copy_positive_odds(existing_match, match, overwrite=prefer_file_odds)
+                            source_rank = 1
+                            if upcoming_file.name == f"upcoming_scheduled_{target_date}.json":
+                                source_rank = 2
+                            match_entry = _raw_match_to_match_data(
+                                match, comp_type, country, comp_name,
+                                source_rank=source_rank,
+                                source_path=upcoming_file,
+                            )
+                            event_id = match_entry.get('event_id')
+                            match_key = str(event_id) if event_id else f"{comp_type}_{country}_{comp_name}_{match_entry['home']}_{match_entry['away']}"
+                            seen_matches[match_key] = _merge_source_match(
+                                seen_matches.get(match_key),
+                                match_entry,
+                            )
                 except Exception:
                     pass
     
-    return list(seen_matches.values())
+    return [_strip_internal_match_fields(m) for m in seen_matches.values()]
 
 
 def _event_unique_tournament_id(event: dict):
@@ -2013,6 +2117,34 @@ def _find_by_keys(index: Dict[str, Dict], keys: List[str]) -> Optional[Dict]:
     return None
 
 
+def _drop_stale_rescheduled_report_entries(report: Dict, target_date: str) -> int:
+    canonical_events = _build_canonical_raw_event_index(Path(__file__).parent / 'data')
+    kept = []
+    removed = 0
+
+    for match in report.get('matches', []):
+        if match.get('status') == 'finished':
+            kept.append(match)
+            continue
+
+        key = _source_event_key(match.get('event_id'))
+        canonical = canonical_events.get(key) if key else None
+        canonical_date = (canonical.get('date') or '')[:10] if canonical else ''
+        if canonical_date and canonical_date != target_date:
+            removed += 1
+            safe_print(
+                f"[DEDUP] Removed stale {match.get('home_team')} vs {match.get('away_team')} "
+                f"from {target_date}; canonical event date is {canonical_date}."
+            )
+            continue
+
+        kept.append(match)
+
+    if removed:
+        report['matches'] = kept
+    return removed
+
+
 def calculate_model_accuracy(matches: List[Dict]) -> Dict:
     accuracy = {}
     
@@ -2096,6 +2228,10 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         match_entry.update(_serialize_result_prediction_data(r, actual_result))
 
         matches.append(match_entry)
+
+    tmp_report = {'matches': matches}
+    _drop_stale_rescheduled_report_entries(tmp_report, target_date)
+    matches = tmp_report['matches']
 
     today = datetime.now().strftime('%Y-%m-%d')
     if target_date < today:
@@ -2224,6 +2360,9 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
         new_entry.update(_serialize_result_prediction_data(r, actual_result))
         report['matches'].append(new_entry)
     report_date = report.get('date', '')
+    if report_date:
+        _drop_stale_rescheduled_report_entries(report, report_date)
+
     today = datetime.now().strftime('%Y-%m-%d')
     if report_date < today:
         for match in report['matches']:
@@ -2556,6 +2695,8 @@ def main():
                 match_entry['actual_result'] = actual_result
                 match_entry['actual_score'] = m_data.get('score')
                 _mark_match_prediction_correctness(match_entry, actual_result)
+
+            _drop_stale_rescheduled_report_entries(existing_report, target_date)
 
             from datetime import datetime as _dt
             if _dt.strptime(target_date, '%Y-%m-%d').date() < _dt.now().date():
