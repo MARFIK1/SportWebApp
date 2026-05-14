@@ -1,10 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import Image from "next/image";
 import { ChevronDownIcon } from "@heroicons/react/24/outline";
 import { PredictionMatch, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
-import { teamLogoUrl } from "@/app/util/urls";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
+import TeamLogo from "@/app/components/common/TeamLogo";
 
 interface PredictionsClientProps {
     matches: PredictionMatch[];
@@ -174,11 +173,10 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                 <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:w-[420px] lg:w-[520px] lg:gap-4 2xl:w-[700px]">
                                     <div className="flex min-w-0 items-center gap-2">
                                         {teamIds[match.home_team] && (
-                                            <Image
-                                                src={teamLogoUrl(teamIds[match.home_team])}
+                                            <TeamLogo
+                                                teamId={teamIds[match.home_team]}
                                                 alt={match.home_team}
-                                                width={24}
-                                                height={24}
+                                                size={24}
                                                 className="h-6 w-6 shrink-0 object-contain"
                                             />
                                         )}
@@ -192,11 +190,10 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                     <div className="flex min-w-0 items-center justify-end gap-2">
                                         <span className="min-w-0 truncate text-right text-sm text-gray-900 dark:text-white">{match.away_team}</span>
                                         {teamIds[match.away_team] && (
-                                            <Image
-                                                src={teamLogoUrl(teamIds[match.away_team])}
+                                            <TeamLogo
+                                                teamId={teamIds[match.away_team]}
                                                 alt={match.away_team}
-                                                width={24}
-                                                height={24}
+                                                size={24}
                                                 className="h-6 w-6 shrink-0 object-contain"
                                             />
                                         )}

@@ -1,25 +1,48 @@
 const SOFASCORE_IMAGE_URLS = [
     "https://img.sofascore.com/api/v1/team/{id}/image",
-    "https://img.sofascore.com/api/v1/team/{id}/image/small",
     "https://api.sofascore.app/api/v1/team/{id}/image",
-    "https://api.sofascore.app/api/v1/team/{id}/image/small",
     "https://www.sofascore.com/api/v1/team/{id}/image",
     "https://api.sofascore.com/api/v1/team/{id}/image",
+    "https://img.sofascore.com/api/v1/team/{id}/image/small",
+    "https://api.sofascore.app/api/v1/team/{id}/image/small",
 ];
-const IMAGE_CACHE_CONTROL = "public, max-age=86400, s-maxage=604800, stale-while-revalidate=2592000";
-const FALLBACK_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800";
+const IMAGE_CACHE_CONTROL = "public, max-age=604800, s-maxage=2592000, stale-while-revalidate=2592000";
+const FALLBACK_CACHE_CONTROL = "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
+const IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const FALLBACK_CACHE_TTL_MS = 60 * 1000;
 
-const IMAGE_REQUEST_HEADERS = {
-    Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    Referer: "https://www.sofascore.com/",
-    "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-};
+const IMAGE_REQUEST_HEADER_VARIANTS: Record<string, string>[] = [
+    {
+        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    },
+    {
+        "User-Agent": "Mozilla/5.0",
+    },
+    {
+        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        Referer: "https://www.sofascore.com/",
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    },
+];
 
 type RouteContext = {
-    params: Promise<{ id?: string }> | { id?: string };
+    params: Promise<{ id?: string }>;
 };
+
+type CachedLogo = {
+    body: ArrayBuffer;
+    cacheControl: string;
+    contentType: string;
+    expiresAt: number;
+    fallback: boolean;
+};
+
+const logoCache = new Map<string, CachedLogo>();
+const pendingLogoRequests = new Map<string, Promise<CachedLogo>>();
 
 function fallbackLogoSvg(id: string): string {
     const label = id && /^\d+$/.test(id) ? id.slice(-2).padStart(2, "0") : "FC";
@@ -40,15 +63,66 @@ function fallbackLogoSvg(id: string): string {
 </svg>`;
 }
 
-function fallbackLogoResponse(id: string): Response {
-    return new Response(fallbackLogoSvg(id), {
+function fallbackLogoEntry(id: string): CachedLogo {
+    return {
+        body: new TextEncoder().encode(fallbackLogoSvg(id)).buffer,
+        cacheControl: FALLBACK_CACHE_CONTROL,
+        contentType: "image/svg+xml; charset=utf-8",
+        expiresAt: Date.now() + FALLBACK_CACHE_TTL_MS,
+        fallback: true,
+    };
+}
+
+function logoResponse(entry: CachedLogo, cacheState: "hit" | "miss" | "pending"): Response {
+    return new Response(entry.body.slice(0), {
         status: 200,
         headers: {
-            "Content-Type": "image/svg+xml; charset=utf-8",
-            "Cache-Control": FALLBACK_CACHE_CONTROL,
-            "X-Team-Logo-Fallback": "1",
+            "Content-Type": entry.contentType,
+            "Cache-Control": entry.cacheControl,
+            "X-Team-Logo-Cache": cacheState,
+            ...(entry.fallback ? { "X-Team-Logo-Fallback": "1" } : {}),
         },
     });
+}
+
+async function fetchLogo(id: string): Promise<CachedLogo> {
+    for (const template of SOFASCORE_IMAGE_URLS) {
+        for (const headers of IMAGE_REQUEST_HEADER_VARIANTS) {
+            try {
+                const response = await fetch(template.replace("{id}", id), {
+                    cache: "no-store",
+                    headers,
+                    redirect: "follow",
+                });
+
+                if (!response.ok) {
+                    continue;
+                }
+
+                const contentType = response.headers.get("content-type") || "";
+                if (!contentType.toLowerCase().startsWith("image/")) {
+                    continue;
+                }
+
+                const image = await response.arrayBuffer();
+                if (image.byteLength === 0) {
+                    continue;
+                }
+
+                return {
+                    body: image,
+                    cacheControl: IMAGE_CACHE_CONTROL,
+                    contentType,
+                    expiresAt: Date.now() + IMAGE_CACHE_TTL_MS,
+                    fallback: false,
+                };
+            } catch {
+                continue;
+            }
+        }
+    }
+
+    return fallbackLogoEntry(id);
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -56,41 +130,30 @@ export async function GET(_request: Request, context: RouteContext) {
     const id = params?.id ?? "";
 
     if (!/^\d+$/.test(id)) {
-        return fallbackLogoResponse(id);
+        return logoResponse(fallbackLogoEntry(id), "miss");
     }
 
-    for (const template of SOFASCORE_IMAGE_URLS) {
-        try {
-            const response = await fetch(template.replace("{id}", id), {
-                headers: IMAGE_REQUEST_HEADERS,
-                redirect: "follow",
-            });
-
-            if (!response.ok) {
-                continue;
-            }
-
-            const contentType = response.headers.get("content-type") || "";
-            if (!contentType.toLowerCase().startsWith("image/")) {
-                continue;
-            }
-
-            const image = await response.arrayBuffer();
-            if (image.byteLength === 0) {
-                continue;
-            }
-
-            return new Response(image, {
-                status: 200,
-                headers: {
-                    "Content-Type": contentType,
-                    "Cache-Control": IMAGE_CACHE_CONTROL,
-                },
-            });
-        } catch {
-            continue;
-        }
+    const cached = logoCache.get(id);
+    if (cached && cached.expiresAt > Date.now()) {
+        return logoResponse(cached, "hit");
     }
 
-    return fallbackLogoResponse(id);
+    const pending = pendingLogoRequests.get(id);
+    if (pending) {
+        const entry = await pending;
+        return logoResponse(entry, "pending");
+    }
+
+    const request = fetchLogo(id)
+        .then((entry) => {
+            logoCache.set(id, entry);
+            return entry;
+        })
+        .finally(() => {
+            pendingLogoRequests.delete(id);
+        });
+
+    pendingLogoRequests.set(id, request);
+    const entry = await request;
+    return logoResponse(entry, "miss");
 }

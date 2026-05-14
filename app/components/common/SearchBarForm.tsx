@@ -4,8 +4,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import type { SearchTeam, SearchPlayer } from "@/app/util/data/dataService";
-import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
+import { playerImageUrl } from "@/app/util/urls";
 import { useLanguage } from "./LanguageProvider";
+import TeamLogo from "./TeamLogo";
 
 export default function SearchBarForm() {
     const router = useRouter();
@@ -126,7 +127,7 @@ export default function SearchBarForm() {
                             className={`p-2 px-3 flex items-center gap-2 text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800 ${i === focusedIndex ? "bg-gray-100 dark:bg-gray-800" : ""}`}
                             onClick={() => { setSearchTerm(""); setShowFilteredBox(false); }}
                         >
-                            <Image src={teamLogoUrl(team.id)} alt={team.name} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                            <TeamLogo teamId={team.id} alt={team.name} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                             <span className="text-sm">{team.name}</span>
                         </Link>
                     ))}

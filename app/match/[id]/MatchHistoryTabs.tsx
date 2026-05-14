@@ -1,10 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
-import { teamLogoUrl } from "@/app/util/urls";
+import TeamLogo from "@/app/components/common/TeamLogo";
 
 export interface MatchHistoryItem {
     eventId: number;
@@ -74,11 +73,11 @@ function TeamCell({ id, name, align = "left" }: { id: number; name: string; alig
             {align === "right" ? (
                 <>
                     <span className="min-w-0 break-words text-sm font-bold leading-tight text-gray-900 dark:text-white">{name}</span>
-                    <Image src={teamLogoUrl(id)} alt={name} width={22} height={22} className="h-[22px] w-[22px] object-contain" />
+                    <TeamLogo teamId={id} alt={name} size={22} className="h-[22px] w-[22px] object-contain" />
                 </>
             ) : (
                 <>
-                    <Image src={teamLogoUrl(id)} alt={name} width={22} height={22} className="h-[22px] w-[22px] object-contain" />
+                    <TeamLogo teamId={id} alt={name} size={22} className="h-[22px] w-[22px] object-contain" />
                     <span className="min-w-0 break-words text-sm font-bold leading-tight text-gray-900 dark:text-white">{name}</span>
                 </>
             )}
@@ -90,7 +89,7 @@ function MobileTeamBlock({ id, name }: { id: number; name: string }) {
     return (
         <div className="flex min-w-0 flex-col items-center text-center">
             <div className="flex h-8 items-center justify-center">
-                <Image src={teamLogoUrl(id)} alt={name} width={28} height={28} className="h-7 w-7 object-contain" />
+                <TeamLogo teamId={id} alt={name} size={28} className="h-7 w-7 object-contain" />
             </div>
             <span className="mt-2 block min-h-10 min-w-0 max-w-full line-clamp-2 break-words text-sm font-black leading-tight text-gray-900 dark:text-white">
                 {name}
@@ -220,7 +219,7 @@ export default function MatchHistoryTabs({
                                 aria-pressed={active}
                             >
                                 {tab.logo ? (
-                                    <Image src={teamLogoUrl(tab.logo)} alt="" width={22} height={22} className="h-[22px] w-[22px] object-contain" />
+                                    <TeamLogo teamId={tab.logo} alt="" size={22} className="h-[22px] w-[22px] object-contain" />
                                 ) : (
                                     <span className="rounded-full border border-emerald-400/60 px-2 py-1 text-[11px] font-black text-emerald-300">VS</span>
                                 )}

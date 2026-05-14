@@ -4,8 +4,9 @@ import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findTeamData, getTeamSquad, type PlayerInfo } from "@/app/util/data/dataService";
 import type { SofascoreMatch } from "@/types/sofascore";
-import { teamLogoUrl, playerImageUrl } from "@/app/util/urls";
+import { playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
+import TeamLogo from "@/app/components/common/TeamLogo";
 
 interface PageProps {
     params: Promise<{ id: string }>;
@@ -89,11 +90,11 @@ export default async function TeamPage({ params }: PageProps) {
 
             <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-8 mb-6">
                 <div className="flex flex-col items-center gap-4">
-                    <Image
-                        src={teamLogoUrl(teamId)}
+                    <TeamLogo
+                        teamId={teamId}
                         alt={teamName}
-                        width={100}
-                        height={100}
+                        size={120}
+                        loading="eager"
                         className="object-contain"
                         style={{ width: "100px", height: "100px" }}
                     />
@@ -164,13 +165,13 @@ export default async function TeamPage({ params }: PageProps) {
                                 {nextMatches.map((m) => (
                                     <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                         <div className="flex items-center gap-2 flex-1">
-                                            <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                            <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                             <span className="text-sm truncate">{m.home_team}</span>
                                         </div>
                                         <span className="text-sm text-gray-400 dark:text-gray-500 px-2">vs</span>
                                         <div className="flex items-center gap-2 flex-1 justify-end">
                                             <span className="text-sm truncate text-right">{m.away_team}</span>
-                                            <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                            <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         </div>
                                         <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
                                     </Link>
@@ -197,13 +198,13 @@ export default async function TeamPage({ params }: PageProps) {
                                             {won ? "W" : drew ? "D" : "L"}
                                         </span>
                                         <div className="flex items-center gap-2 flex-1">
-                                            <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                            <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                             <span className={`text-sm truncate ${isHome ? "font-semibold" : ""}`}>{m.home_team}</span>
                                         </div>
                                         <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
                                         <div className="flex items-center gap-2 flex-1 justify-end">
                                             <span className={`text-sm truncate text-right ${!isHome ? "font-semibold" : ""}`}>{m.away_team}</span>
-                                            <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                            <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         </div>
                                         <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
                                     </Link>

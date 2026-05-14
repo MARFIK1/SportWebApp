@@ -1,11 +1,10 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getCompetitionBySlug } from "@/app/util/league/leagueRegistry";
 import { loadAllSeasons, computeStandings, type StandingRow } from "@/app/util/data/dataService";
 import type { SofascoreMatch } from "@/types/sofascore";
-import { teamLogoUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
+import TeamLogo from "@/app/components/common/TeamLogo";
 
 interface PageProps {
     params: Promise<{ slug: string }>;
@@ -82,7 +81,7 @@ function StandingsTable({ standings, t }: { standings: StandingRow[]; t: (key: s
                             <td className="py-3 px-2 text-gray-500 dark:text-gray-400">{row.position}</td>
                             <td className="py-3 px-2">
                                 <Link href={`/team/${row.teamId}`} prefetch={false} className="flex items-center gap-2 hover:text-emerald-400 transition-colors">
-                                    <Image src={teamLogoUrl(row.teamId)} alt={row.teamName} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                    <TeamLogo teamId={row.teamId} alt={row.teamName} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                     <span className="font-medium">{row.teamName}</span>
                                 </Link>
                             </td>
@@ -221,7 +220,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                                     .map((m) => (
                                     <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                         <div className="flex items-center gap-2 flex-1">
-                                            <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                            <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                             <span className="text-sm truncate">{m.home_team}</span>
                                         </div>
                                         {m.status === "finished" ? (
@@ -231,7 +230,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                                         )}
                                         <div className="flex items-center gap-2 flex-1 justify-end">
                                             <span className="text-sm truncate text-right">{m.away_team}</span>
-                                            <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                            <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         </div>
                                         <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
                                     </Link>
@@ -257,13 +256,13 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                             {upcoming.map((m) => (
                                 <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                     <div className="flex items-center gap-2 flex-1">
-                                        <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                        <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         <span className="text-sm truncate">{m.home_team}</span>
                                     </div>
                                     <span className="text-sm text-gray-400 dark:text-gray-500 px-2">vs</span>
                                     <div className="flex items-center gap-2 flex-1 justify-end">
                                         <span className="text-sm truncate text-right">{m.away_team}</span>
-                                        <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                        <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                     </div>
                                     <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
                                 </Link>
@@ -279,13 +278,13 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                             {finished.map((m) => (
                                 <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                     <div className="flex items-center gap-2 flex-1">
-                                        <Image src={teamLogoUrl(m.home_team_id)} alt={m.home_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                        <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         <span className="text-sm truncate">{m.home_team}</span>
                                     </div>
                                     <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
                                     <div className="flex items-center gap-2 flex-1 justify-end">
                                         <span className="text-sm truncate text-right">{m.away_team}</span>
-                                        <Image src={teamLogoUrl(m.away_team_id)} alt={m.away_team} width={24} height={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                            <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                     </div>
                                     <span className="text-xs text-gray-400 dark:text-gray-500 w-20 text-right">{m.date.slice(0, 10)}</span>
                                 </Link>

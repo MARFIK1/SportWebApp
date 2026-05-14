@@ -1,12 +1,11 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
 import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
 import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
-import { teamLogoUrl } from "@/app/util/urls";
 import MatchPredictions from "./MatchPredictions";
+import TeamLogo from "@/app/components/common/TeamLogo";
 import MatchStatistics from "./MatchStatistics";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import { normalizeReportDate } from "@/app/util/data/dateUtils";
@@ -190,11 +189,11 @@ export default async function Match({ params, searchParams }: PageProps) {
                         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-8">
                             <div className="flex min-w-0 flex-col items-center">
                                 <div className="flex h-16 w-full items-center justify-center sm:h-24">
-                                    <Image
-                                        src={teamLogoUrl(match.home_team_id)}
+                                    <TeamLogo
+                                        teamId={match.home_team_id}
                                         alt={match.home_team}
-                                        width={80}
-                                        height={80}
+                                        size={96}
+                                        loading="eager"
                                         className="h-14 w-14 object-contain sm:h-20 sm:w-20"
                                     />
                                 </div>
@@ -233,11 +232,11 @@ export default async function Match({ params, searchParams }: PageProps) {
 
                             <div className="flex min-w-0 flex-col items-center">
                                 <div className="flex h-16 w-full items-center justify-center sm:h-24">
-                                    <Image
-                                        src={teamLogoUrl(match.away_team_id)}
+                                    <TeamLogo
+                                        teamId={match.away_team_id}
                                         alt={match.away_team}
-                                        width={80}
-                                        height={80}
+                                        size={96}
+                                        loading="eager"
                                         className="h-14 w-14 object-contain sm:h-20 sm:w-20"
                                     />
                                 </div>

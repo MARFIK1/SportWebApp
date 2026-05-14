@@ -1,8 +1,7 @@
 import Link from "next/link";
-import Image from "next/image";
 import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import { getServerT } from "@/app/util/i18n/getLocale";
-import { teamLogoUrl } from "@/app/util/urls";
+import TeamLogo from "@/app/components/common/TeamLogo";
 
 interface MatchCardProps {
     match: PredictionMatch;
@@ -86,11 +85,10 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
             <div className="flex flex-1 items-center justify-between gap-3">
                 <div className="flex flex-col items-center gap-1 flex-1">
                     {homeTeamId ? (
-                        <Image
-                            src={teamLogoUrl(homeTeamId)}
+                        <TeamLogo
+                            teamId={homeTeamId}
                             alt={match.home_team}
-                            width={40}
-                            height={40}
+                            size={40}
                             className="object-contain"
                             style={{ width: "40px", height: "40px" }}
                         />
@@ -128,11 +126,10 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
 
                 <div className="flex flex-col items-center gap-1 flex-1">
                     {awayTeamId ? (
-                        <Image
-                            src={teamLogoUrl(awayTeamId)}
+                        <TeamLogo
+                            teamId={awayTeamId}
                             alt={match.away_team}
-                            width={40}
-                            height={40}
+                            size={40}
                             className="object-contain"
                             style={{ width: "40px", height: "40px" }}
                         />
