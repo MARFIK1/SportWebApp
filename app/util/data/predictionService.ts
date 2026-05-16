@@ -4,7 +4,7 @@ import { cache } from "../serverCache";
 import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
 import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
-import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
+import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
 
 type RawPredictionMatch = Omit<PredictionMatch, "predictions"> & {
     predictions: Record<string, ModelPrediction>;
@@ -29,6 +29,93 @@ interface AccuracyHistoryDate {
 interface AccuracyHistoryArtifact {
     generated_at?: string;
     dates: AccuracyHistoryDate[];
+}
+
+interface DiagnosticClassStats {
+    support: number;
+    predicted: number;
+    correct: number;
+    precision_pct: number;
+    recall_pct: number;
+    f1_pct: number;
+}
+
+export interface DiagnosticConfidenceBucket {
+    label: string;
+    min: number;
+    max: number | null;
+    total: number;
+    correct: number;
+    accuracy_pct: number;
+    avg_confidence_pct: number;
+}
+
+export interface DiagnosticLeagueAccuracy {
+    correct: number;
+    total: number;
+    accuracy_pct: number;
+}
+
+export interface DiagnosticDrawThresholdRow {
+    threshold_pct: number;
+    max_gap_to_best_pct: number;
+    total: number;
+    correct: number;
+    draw_support: number;
+    draw_predicted: number;
+    draw_correct: number;
+    accuracy_pct: number;
+    accuracy_delta_pct: number;
+    accuracy_loss_pct: number;
+    draw_precision_pct: number;
+    draw_recall_pct: number;
+    draw_recall_delta_pct: number;
+    draw_f1_pct: number;
+}
+
+export interface DiagnosticDrawWatchMatch {
+    report_date: string;
+    event_id: number | string;
+    league: string;
+    home_team: string;
+    away_team: string;
+    actual_result: MatchResult;
+    base_prediction: MatchResult;
+    adjusted_prediction: MatchResult;
+    base_correct: boolean;
+    adjusted_correct: boolean;
+    would_change_prediction: boolean;
+    effect: string;
+    draw_probability_pct: number;
+    draw_gap_to_best_pct: number;
+    rule_threshold_pct: number;
+    rule_max_gap_to_best_pct: number;
+}
+
+export interface ModelDiagnosticStats {
+    total: number;
+    correct: number;
+    incorrect: number;
+    accuracy_pct: number;
+    avg_confidence_pct: number;
+    brier_score: number | null;
+    per_class: Record<MatchResult, DiagnosticClassStats>;
+    confidence_buckets: DiagnosticConfidenceBucket[];
+    league_accuracy: Record<string, DiagnosticLeagueAccuracy>;
+    draw_threshold_sweep: DiagnosticDrawThresholdRow[];
+    draw_watch_matches: DiagnosticDrawWatchMatch[];
+}
+
+export interface ModelDiagnosticsArtifact {
+    generated_at: string;
+    date_range: {
+        first: string | null;
+        last: string | null;
+    };
+    reports_read: number;
+    finished_matches: number;
+    models: Record<string, ModelDiagnosticStats>;
+    csv_exports?: string;
 }
 
 function repoPath(...segments: string[]): string {
@@ -109,6 +196,14 @@ function accuracyHistoryPaths(): string[] {
     return paths;
 }
 
+function modelDiagnosticsPaths(): string[] {
+    const paths = [repoPath(".data", "models", "model_diagnostics.json")];
+    if (allowSourceFallback()) {
+        paths.push(repoPath("SofascoreData", "data", "models", "model_diagnostics.json"));
+    }
+    return paths;
+}
+
 function readPredictionReportInDateDir(dateDir: string): PredictionReport | null {
     return (
         normalizePredictionReport(readJson<RawPredictionReport>(path.join(dateDir, "predictions_finished.json"))) ??
@@ -185,6 +280,15 @@ export const loadAccuracyHistory = cache((): AccuracyHistoryArtifact | null => {
                 .filter((row) => isValidYmdDate(row.date) && row.models && typeof row.models === "object")
                 .sort((a, b) => a.date.localeCompare(b.date)),
         };
+    }
+    return null;
+});
+
+export const loadModelDiagnostics = cache((): ModelDiagnosticsArtifact | null => {
+    for (const filePath of modelDiagnosticsPaths()) {
+        const artifact = readJson<ModelDiagnosticsArtifact>(filePath);
+        if (!artifact?.models || typeof artifact.models !== "object") continue;
+        return artifact;
     }
     return null;
 });

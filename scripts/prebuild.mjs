@@ -382,6 +382,17 @@ if (fs.existsSync(summaryCsv)) {
     console.log("no comparison_summary.csv");
 }
 
+console.log("\nmodel diagnostics:");
+const diagnosticsJson = path.join(SOURCE_MODELS, "model_diagnostics.json");
+if (fs.existsSync(diagnosticsJson)) {
+    const outModelsDir = path.join(OUT_DIR, "models");
+    ensureDir(outModelsDir);
+    fs.copyFileSync(diagnosticsJson, path.join(outModelsDir, "model_diagnostics.json"));
+    console.log("model_diagnostics.json copied");
+} else {
+    console.log("no model_diagnostics.json");
+}
+
 const totalBytes = matchBytes + playerBytes;
 writeJsonFile(MANIFEST_PATH, {
     generated_at: new Date().toISOString(),
