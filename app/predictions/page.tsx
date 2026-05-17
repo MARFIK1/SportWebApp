@@ -4,6 +4,7 @@ import {
     loadPredictionReport,
     aggregateAccuracy,
     loadComparisonSummary,
+    loadModelDiagnostics,
     computeAccuracyOverTime,
     computeResultTypeAccuracy,
     computeConsensusAccuracy,
@@ -13,6 +14,7 @@ import { buildMatchLookupMaps } from "../util/data/dataService";
 import DatePicker from "../components/home/DatePicker";
 import PredictionsClient from "./PredictionsClient";
 import ModelComparisonCharts from "./ModelComparisonCharts";
+import ModelDiagnosticsPanel from "./ModelDiagnosticsPanel";
 import { getServerT } from "../util/i18n/getLocale";
 import { normalizeReportDate, todayYmd } from "../util/data/dateUtils";
 
@@ -51,6 +53,7 @@ export default async function Predictions({ searchParams }: PageProps) {
 
     const allDatesAccuracy = aggregateAccuracy();
     const comparisonSummary = loadComparisonSummary();
+    const modelDiagnostics = loadModelDiagnostics();
     const accuracyOverTime = computeAccuracyOverTime();
     const resultTypeBreakdown = computeResultTypeAccuracy(dates);
 
@@ -120,6 +123,8 @@ export default async function Predictions({ searchParams }: PageProps) {
                 accuracyOverTime={accuracyOverTime}
                 resultTypeBreakdown={resultTypeBreakdown}
             />
+
+            <ModelDiagnosticsPanel diagnostics={modelDiagnostics} t={t} />
 
             <div className="mt-6 grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="min-w-0">
