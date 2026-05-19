@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
+import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
 
 interface MatchCardProps {
     match: PredictionMatch;
@@ -48,6 +49,7 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
     const t = await getServerT();
     const isFinished = match.status === "finished";
     const prediction = getPredictionLabel(match, t);
+    const drawWatch = getDrawWatchSignalFromPredictions(match.predictions);
     const score = match.actual_score?.split("-").map((s) => s.trim());
     const correct = isPredictionCorrect(match);
 
@@ -162,6 +164,19 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
                         <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500">
                             <span>{t("agreement")}</span>
                             <span className="font-semibold text-gray-500 dark:text-gray-300">{prediction.agreement}</span>
+                        </div>
+                    )}
+                    {drawWatch && (
+                        <div
+                            className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-2.5 py-2"
+                            title={`${t("draw_watch_hint")}: ${drawWatch.drawProbability.toFixed(1)}%, ${t("gap_to_best")}: ${drawWatch.gapToBest.toFixed(1)}pp`}
+                        >
+                            <span className="min-w-0 truncate text-[10px] font-bold uppercase tracking-[0.16em] text-amber-600 dark:text-amber-300">
+                                {t("draw_watch")}
+                            </span>
+                            <span className="shrink-0 text-xs font-black text-amber-600 dark:text-amber-300">
+                                {drawWatch.drawProbability.toFixed(0)}%
+                            </span>
                         </div>
                     )}
                 </div>

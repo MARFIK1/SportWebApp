@@ -4,6 +4,7 @@ import { ChevronDownIcon } from "@heroicons/react/24/outline";
 import { PredictionMatch, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
+import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
 
 interface PredictionsClientProps {
     matches: PredictionMatch[];
@@ -155,6 +156,7 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                     const isFinished = match.status === "finished";
                     const score = match.actual_score?.split("-").map((s) => s.trim());
                     const correct = consensus?.correct;
+                    const drawWatch = getDrawWatchSignalFromPredictions(match.predictions);
 
                     return (
                         <div
@@ -218,6 +220,14 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                                 {" "}D:{consensus.avg_probabilities?.DRAW?.toFixed(0)}%
                                                 {" "}A:{consensus.avg_probabilities?.AWAY?.toFixed(0)}%
                                             </span>
+                                            {drawWatch && (
+                                                <span
+                                                    className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[11px] font-bold text-amber-600 dark:text-amber-300 sm:text-xs"
+                                                    title={`${t("draw_watch_hint")}: ${drawWatch.drawProbability.toFixed(1)}%, ${t("gap_to_best")}: ${drawWatch.gapToBest.toFixed(1)}pp`}
+                                                >
+                                                    {t("draw_watch")} {drawWatch.drawProbability.toFixed(0)}%
+                                                </span>
+                                            )}
                                         </>
                                     )}
                                 </div>
