@@ -2,6 +2,7 @@
 
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { PredictionVariantKey } from "@/types/predictions";
+import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import { useMatchPredictionVariant } from "./MatchPredictionVariantProvider";
 
 const PRIMARY_MARKETS = [
@@ -57,6 +58,7 @@ export default function MatchPredictionSidebar() {
         matchFinished,
     } = useMatchPredictionVariant();
     const showMarketPanel = Boolean(bundle.marketPredictions) || bundle.skippedTargets.length > 0;
+    const drawWatch = getDrawWatchSignalFromModels(bundle.models);
 
     return (
         <>
@@ -112,6 +114,32 @@ export default function MatchPredictionSidebar() {
                             </div>
                         ))}
                     </div>
+                    {drawWatch && (
+                        <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-amber-600 dark:text-amber-300">
+                                    {t("draw_watch")}
+                                </span>
+                                <span className="text-xs font-semibold text-amber-700 dark:text-amber-200">
+                                    {drawWatch.model}
+                                </span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                <div className="rounded-lg bg-white/50 px-2.5 py-2 dark:bg-black/20">
+                                    <div className="text-gray-500 dark:text-gray-400">{t("draw_probability")}</div>
+                                    <div className="mt-1 text-base font-black text-gray-900 dark:text-white">
+                                        {drawWatch.drawProbability.toFixed(1)}%
+                                    </div>
+                                </div>
+                                <div className="rounded-lg bg-white/50 px-2.5 py-2 dark:bg-black/20">
+                                    <div className="text-gray-500 dark:text-gray-400">{t("gap_to_best")}</div>
+                                    <div className="mt-1 text-base font-black text-gray-900 dark:text-white">
+                                        {drawWatch.gapToBest.toFixed(1)}pp
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
                             <span className="text-gray-500 dark:text-gray-400">{t("model_confidence")}</span>
