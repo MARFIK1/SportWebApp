@@ -13,6 +13,7 @@ import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
 import MatchHistoryTabs, { type MatchHistoryItem } from "./MatchHistoryTabs";
 import PostMatchInsights from "./PostMatchInsights";
+import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
@@ -305,6 +306,14 @@ export default async function Match({ params, searchParams }: PageProps) {
                 </div>
 
                 <div className="w-full lg:w-[400px] space-y-6">
+                <div className="w-full space-y-6 lg:w-[540px] xl:w-[680px]">
+                    {predMatch && (
+                        <PredictionExplanation
+                            homeTeam={match.home_team}
+                            awayTeam={match.away_team}
+                            analysis={analysis}
+                        />
+                    )}
                     {predMatch && <MatchPredictionSidebar />}
                     {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
                         <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">

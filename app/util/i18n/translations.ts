@@ -157,6 +157,11 @@ const translations: Record<Locale, Record<string, string>> = {
         form_score: "Form score",
         match_history: "Match history",
         direct_duels: "H2H",
+        prediction_reasoning: "Why this pick?",
+        prediction_reasoning_hint: "Key signals behind the current prediction variant.",
+        form_context: "Form context",
+        balanced: "Balanced",
+        no_draw_watch: "Not flagged",
 
         // Team
         rank: "Rank",
@@ -375,6 +380,11 @@ const translations: Record<Locale, Record<string, string>> = {
         form_score: "Punkty formy",
         match_history: "Historia meczów",
         direct_duels: "Bezpośrednie",
+        prediction_reasoning: "Dlaczego taki typ?",
+        prediction_reasoning_hint: "Najważniejsze sygnały dla aktualnego wariantu predykcji.",
+        form_context: "Kontekst formy",
+        balanced: "Wyrównane",
+        no_draw_watch: "Bez sygnału",
 
         // Team
         rank: "Pozycja",
