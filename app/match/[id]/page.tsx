@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
-import { findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
+import { computeStandings, findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
 import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
+import CompactLeagueTable from "./CompactLeagueTable";
 import MatchPredictions from "./MatchPredictions";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import MatchStatistics from "./MatchStatistics";
@@ -79,6 +80,49 @@ function toHistoryItem(match: SofascoreMatch): MatchHistoryItem {
     };
 }
 
+function resolveSeasonMatches(match: SofascoreMatch, matches: SofascoreMatch[]): SofascoreMatch[] {
+    const explicitSeason = typeof match.season === "string" ? match.season : "";
+    if (explicitSeason) {
+        const seasonMatches = matches.filter((m) => m.season === explicitSeason);
+        if (seasonMatches.length > 0) return seasonMatches;
+    }
+
+    const targetTime = Date.parse(match.date);
+    const seasons = new Map<string, SofascoreMatch[]>();
+    for (const item of matches) {
+        if (typeof item.season !== "string" || item.season.length === 0) continue;
+        const seasonMatches = seasons.get(item.season) ?? [];
+        seasonMatches.push(item);
+        seasons.set(item.season, seasonMatches);
+    }
+
+    let bestSeason: SofascoreMatch[] = [];
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const seasonMatches of seasons.values()) {
+        const times = seasonMatches
+            .map((item) => Date.parse(item.date))
+            .filter((time) => Number.isFinite(time))
+            .sort((a, b) => a - b);
+        if (times.length === 0) continue;
+
+        const minTime = times[0];
+        const maxTime = times[times.length - 1];
+        const distance = targetTime < minTime
+            ? minTime - targetTime
+            : targetTime > maxTime
+                ? targetTime - maxTime
+                : 0;
+
+        if (distance < bestScore || (distance === bestScore && maxTime > Date.parse(bestSeason[0]?.date ?? "1970-01-01"))) {
+            bestScore = distance;
+            bestSeason = seasonMatches;
+        }
+    }
+
+    return bestSeason.length > 0 ? bestSeason : matches;
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const eventId = parseInt(resolvedParams.id, 10);
@@ -112,6 +156,11 @@ export default async function Match({ params, searchParams }: PageProps) {
 
     const { match, competition } = result;
     const date = normalizeReportDate(resolvedSearchParams.date) || match.date.slice(0, 10);
+    const competitionMatches = loadAllSeasons(competition);
+    const sameSeasonMatches = resolveSeasonMatches(match, competitionMatches);
+    const leagueStandings = competition.compType === "league"
+        ? computeStandings(sameSeasonMatches)
+        : [];
 
     const predReport = loadPredictionReport(date);
     const analysisReport = loadAnalysisReport(date);
@@ -128,7 +177,7 @@ export default async function Match({ params, searchParams }: PageProps) {
 
     const finishedMatches: SofascoreMatch[] = [];
     for (const comp of competitions) {
-        const allMatches = loadAllSeasons(comp);
+        const allMatches = comp.dataPath === competition.dataPath ? competitionMatches : loadAllSeasons(comp);
         finishedMatches.push(...allMatches.filter((m) =>
             m.status === "finished" &&
             m.event_id !== eventId &&
@@ -305,7 +354,6 @@ export default async function Match({ params, searchParams }: PageProps) {
                     )}
                 </div>
 
-                <div className="w-full lg:w-[400px] space-y-6">
                 <div className="w-full space-y-6 lg:w-[540px] xl:w-[680px]">
                     {predMatch && (
                         <PredictionExplanation
@@ -315,6 +363,13 @@ export default async function Match({ params, searchParams }: PageProps) {
                         />
                     )}
                     {predMatch && <MatchPredictionSidebar />}
+                    <CompactLeagueTable
+                        standings={leagueStandings}
+                        homeTeamId={match.home_team_id}
+                        awayTeamId={match.away_team_id}
+                        leagueSlug={competition.slug}
+                        t={t}
+                    />
                     {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
                         <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
                             <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("pre_match_analysis")}</h3>
@@ -378,7 +433,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     );
 
     return (
-        <div className="mx-auto flex w-full max-w-[1400px] flex-col px-3 py-5 text-gray-900 dark:text-white sm:px-6 sm:py-8">
+        <div className="mx-auto flex w-full max-w-[1680px] flex-col px-3 py-5 text-gray-900 dark:text-white sm:px-6 sm:py-8">
             {predMatch ? (
                 <MatchPredictionVariantProvider key={predMatch.id} match={predMatch} matchFinished={isFinished}>
                     {content}
