@@ -5,6 +5,7 @@ import { PredictionMatch, ModelPrediction, ConsensusPrediction } from "@/types/p
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
+import type { MatchResult } from "@/types/predictions";
 
 interface PredictionsClientProps {
     matches: PredictionMatch[];
@@ -12,17 +13,99 @@ interface PredictionsClientProps {
     teamIds: Record<string, number>;
 }
 
+type MatchViewFilter = "all" | "drawWatch" | "highConfidence" | "finished" | "upcoming";
+type MatchSort = "default" | "confidence" | "agreement" | "drawProbability" | "kickoff";
+
+const HIGH_CONFIDENCE_THRESHOLD = 60;
+const OUTCOMES: MatchResult[] = ["HOME", "DRAW", "AWAY"];
+
+function getProbabilityScale(probabilities: Record<MatchResult, number> | undefined): number {
+    if (!probabilities) return 1;
+    return Math.max(...OUTCOMES.map((outcome) => probabilities[outcome] ?? 0)) <= 1 ? 100 : 1;
+}
+
+function getConsensusConfidence(match: PredictionMatch): number {
+    const consensus = match.predictions.consensus as ConsensusPrediction;
+    if (!consensus?.prediction) return 0;
+    const scale = getProbabilityScale(consensus.avg_probabilities);
+    return (consensus.avg_probabilities?.[consensus.prediction] ?? 0) * scale;
+}
+
+function getAgreementCount(match: PredictionMatch): number {
+    const consensus = match.predictions.consensus as ConsensusPrediction;
+    if (!consensus?.agreement) return 0;
+    const parsed = Number.parseInt(consensus.agreement.split("/")[0] ?? "0", 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getDrawProbability(match: PredictionMatch): number {
+    return getDrawWatchSignalFromPredictions(match.predictions)?.drawProbability ?? 0;
+}
+
+function kickoffValue(match: PredictionMatch): number {
+    const [hour = "99", minute = "99"] = (match.start_time || "").split(":");
+    const h = Number.parseInt(hour, 10);
+    const m = Number.parseInt(minute, 10);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return 9999;
+    return h * 60 + m;
+}
+
+function matchPassesViewFilter(match: PredictionMatch, filter: MatchViewFilter): boolean {
+    if (filter === "drawWatch") return Boolean(getDrawWatchSignalFromPredictions(match.predictions));
+    if (filter === "highConfidence") return getConsensusConfidence(match) >= HIGH_CONFIDENCE_THRESHOLD;
+    if (filter === "finished") return match.status === "finished";
+    if (filter === "upcoming") return match.status !== "finished";
+    return true;
+}
+
+function sortMatches(matches: PredictionMatch[], sortBy: MatchSort): PredictionMatch[] {
+    const sorted = [...matches];
+    if (sortBy === "confidence") {
+        return sorted.sort((a, b) => getConsensusConfidence(b) - getConsensusConfidence(a) || getAgreementCount(b) - getAgreementCount(a));
+    }
+    if (sortBy === "agreement") {
+        return sorted.sort((a, b) => getAgreementCount(b) - getAgreementCount(a) || getConsensusConfidence(b) - getConsensusConfidence(a));
+    }
+    if (sortBy === "drawProbability") {
+        return sorted.sort((a, b) => getDrawProbability(b) - getDrawProbability(a) || getConsensusConfidence(b) - getConsensusConfidence(a));
+    }
+    if (sortBy === "kickoff") {
+        return sorted.sort((a, b) => kickoffValue(a) - kickoffValue(b));
+    }
+    return sorted;
+}
+
 export default function PredictionsClient({ matches, leagues, teamIds }: PredictionsClientProps) {
     const { t } = useLanguage();
     const [selectedLeague, setSelectedLeague] = useState<string>("all");
+    const [viewFilter, setViewFilter] = useState<MatchViewFilter>("all");
+    const [sortBy, setSortBy] = useState<MatchSort>("default");
     const [leagueMenuOpen, setLeagueMenuOpen] = useState(false);
     const [expandedMatch, setExpandedMatch] = useState<string | null>(null);
     const matchRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const pendingScrollMatch = useRef<string | null>(null);
 
-    const filtered = selectedLeague === "all"
+    const leagueFiltered = selectedLeague === "all"
         ? matches
         : matches.filter((m) => `${m.comp_type}/${m.league}` === selectedLeague);
+    const filtered = sortMatches(
+        leagueFiltered.filter((match) => matchPassesViewFilter(match, viewFilter)),
+        sortBy,
+    );
+    const viewFilterOptions: { key: MatchViewFilter; label: string; count: number }[] = [
+        { key: "all", label: t("filter_all_matches"), count: leagueFiltered.length },
+        { key: "drawWatch", label: t("filter_draw_watch"), count: leagueFiltered.filter((match) => matchPassesViewFilter(match, "drawWatch")).length },
+        { key: "highConfidence", label: t("filter_high_confidence"), count: leagueFiltered.filter((match) => matchPassesViewFilter(match, "highConfidence")).length },
+        { key: "finished", label: t("filter_finished"), count: leagueFiltered.filter((match) => matchPassesViewFilter(match, "finished")).length },
+        { key: "upcoming", label: t("filter_upcoming"), count: leagueFiltered.filter((match) => matchPassesViewFilter(match, "upcoming")).length },
+    ];
+    const sortOptions: { key: MatchSort; label: string }[] = [
+        { key: "default", label: t("sort_default") },
+        { key: "confidence", label: t("sort_confidence") },
+        { key: "agreement", label: t("sort_agreement") },
+        { key: "drawProbability", label: t("sort_draw_probability") },
+        { key: "kickoff", label: t("sort_kickoff") },
+    ];
     const leagueOptions = [
         { dataPath: "all", name: t("all_leagues"), count: matches.length },
         ...leagues,
@@ -148,7 +231,86 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                 ))}
             </div>
 
+            <div className="mb-4 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm shadow-slate-900/5 dark:border-white/10 dark:bg-gray-900/50 dark:shadow-black/10 sm:p-4">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_260px]">
+                    <div className="min-w-0">
+                        <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
+                            {t("filter_label")}
+                        </div>
+                        <div className="scrollbar-app flex max-w-full gap-2 overflow-x-auto pb-1">
+                            {viewFilterOptions.map((option) => {
+                                const selected = viewFilter === option.key;
+                                return (
+                                    <button
+                                        key={option.key}
+                                        type="button"
+                                        onClick={() => {
+                                            setViewFilter(option.key);
+                                            setExpandedMatch(null);
+                                        }}
+                                        className={`shrink-0 rounded-xl border px-3 py-2 text-sm font-bold transition-colors ${
+                                            selected
+                                                ? "border-emerald-500 bg-emerald-600 text-white"
+                                                : "border-gray-200 bg-gray-50 text-gray-600 hover:border-emerald-400 hover:text-gray-900 dark:border-gray-800 dark:bg-black/20 dark:text-gray-300 dark:hover:text-white"
+                                        }`}
+                                    >
+                                        {option.label}
+                                        <span className={`ml-2 text-xs ${selected ? "text-white/80" : "text-gray-400 dark:text-gray-500"}`}>
+                                            {option.count}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="min-w-0">
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400" htmlFor="prediction-sort">
+                            {t("sort_label")}
+                        </label>
+                        <select
+                            id="prediction-sort"
+                            value={sortBy}
+                            onChange={(event) => {
+                                setSortBy(event.target.value as MatchSort);
+                                setExpandedMatch(null);
+                            }}
+                            className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-bold text-gray-900 outline-none transition-colors focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-800 dark:bg-black/20 dark:text-white"
+                        >
+                            {sortOptions.map((option) => (
+                                <option key={option.key} value={option.key}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                    <span>{t("filtered_matches")}: <strong className="text-gray-900 dark:text-white">{filtered.length}</strong></span>
+                    {(viewFilter !== "all" || sortBy !== "default") && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setViewFilter("all");
+                                setSortBy("default");
+                                setExpandedMatch(null);
+                            }}
+                            className="font-bold text-emerald-500 hover:text-emerald-400"
+                        >
+                            {t("reset_filters")}
+                        </button>
+                    )}
+                </div>
+            </div>
+
             <div className="min-w-0 space-y-3">
+                {filtered.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-6 text-center text-sm text-gray-500 dark:border-gray-800 dark:bg-gray-900/50 dark:text-gray-400">
+                        {t("no_matches_after_filters")}
+                    </div>
+                )}
+
                 {filtered.map((match) => {
                     const consensus = match.predictions.consensus as ConsensusPrediction;
                     const isExpanded = expandedMatch === match.id;

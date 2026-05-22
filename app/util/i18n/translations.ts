@@ -90,6 +90,21 @@ const translations: Record<Locale, Record<string, string>> = {
         daily_draw_watch_subtitle: "Matches where draw probability is close to the top pick.",
         daily_draw_probability: "Draw probability",
         daily_highlights_empty: "No matches in this group for the selected date.",
+        filter_label: "Filter",
+        filter_all_matches: "All matches",
+        filter_draw_watch: "Draw Watch",
+        filter_high_confidence: "High confidence",
+        filter_finished: "Finished",
+        filter_upcoming: "Upcoming",
+        sort_label: "Sort",
+        sort_default: "Default order",
+        sort_confidence: "Highest confidence",
+        sort_agreement: "Model agreement",
+        sort_draw_probability: "Draw probability",
+        sort_kickoff: "Kick-off time",
+        filtered_matches: "Visible matches",
+        reset_filters: "Reset filters",
+        no_matches_after_filters: "No matches match the selected filters.",
 
         // Match
         full_time: "FULL TIME",
@@ -192,6 +207,7 @@ const translations: Record<Locale, Record<string, string>> = {
         zone_champions_league: "Champions League",
         zone_europa_league: "UEFA Europa League",
         zone_conference_league: "Conference League Qualification",
+        zone_relegation_playoff: "Relegation play-off",
         zone_relegation: "Relegation",
 
         // Team
@@ -343,6 +359,21 @@ const translations: Record<Locale, Record<string, string>> = {
         daily_draw_watch_subtitle: "Mecze, w których remis jest blisko głównego typu.",
         daily_draw_probability: "Prawdopodobieństwo remisu",
         daily_highlights_empty: "Brak meczów w tej grupie dla wybranej daty.",
+        filter_label: "Filtr",
+        filter_all_matches: "Wszystkie mecze",
+        filter_draw_watch: "Remis blisko",
+        filter_high_confidence: "Wysoka pewność",
+        filter_finished: "Zakończone",
+        filter_upcoming: "Nadchodzące",
+        sort_label: "Sortowanie",
+        sort_default: "Domyślna kolejność",
+        sort_confidence: "Najwyższa pewność",
+        sort_agreement: "Zgodność modeli",
+        sort_draw_probability: "Prawdopodobieństwo remisu",
+        sort_kickoff: "Godzina meczu",
+        filtered_matches: "Widoczne mecze",
+        reset_filters: "Wyczyść filtry",
+        no_matches_after_filters: "Brak meczów dla wybranych filtrów.",
 
         // Match
         full_time: "KONIEC MECZU",
@@ -446,6 +477,7 @@ const translations: Record<Locale, Record<string, string>> = {
         zone_champions_league: "Liga Mistrzów",
         zone_europa_league: "Liga Europy UEFA",
         zone_conference_league: "Kwalifikacje Ligi Konferencji",
+        zone_relegation_playoff: "Baraż o utrzymanie",
         zone_relegation: "Spadek",
 
         // Team
