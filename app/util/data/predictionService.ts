@@ -118,6 +118,24 @@ export interface ModelDiagnosticsArtifact {
     csv_exports?: string;
 }
 
+export interface OperationalLogEntry {
+    kind: "daily" | "weekly";
+    file_name: string;
+    started_at: string | null;
+    last_modified: string;
+    size_bytes: number;
+    status: "success" | "failed" | "unknown";
+    summary: string;
+    tail: string[];
+}
+
+export interface OperationalStatusArtifact {
+    generated_at: string;
+    source_logs: string;
+    daily: OperationalLogEntry | null;
+    weekly: OperationalLogEntry | null;
+}
+
 function repoPath(...segments: string[]): string {
     return path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments);
 }
@@ -202,6 +220,133 @@ function modelDiagnosticsPaths(): string[] {
         paths.push(repoPath("SofascoreData", "data", "models", "model_diagnostics.json"));
     }
     return paths;
+}
+
+function siblingStableLogsDir(): string {
+    return path.join(path.dirname(process.cwd()), "SportWebApp-daily-stable", "logs");
+}
+
+function operationalStatusPaths(): string[] {
+    const paths = [repoPath(".data", "admin", "operational_status.json")];
+    if (allowSourceFallback()) {
+        paths.push(repoPath("logs", "operational_status.json"));
+        paths.push(path.join(siblingStableLogsDir(), "operational_status.json"));
+    }
+    return paths;
+}
+
+function startedAtFromLogName(fileName: string): string | null {
+    const match = fileName.match(/(\d{8})-(\d{6})\.log$/);
+    if (!match) return null;
+
+    const [, date, time] = match;
+    return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
+}
+
+function classifyLog(raw: string): OperationalLogEntry["status"] {
+    if (/finished successfully/i.test(raw)) return "success";
+    if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
+    return "unknown";
+}
+
+function isCompleteLog(raw: string): boolean {
+    return /Windows PowerShell transcript end|finished successfully|failed with exit code|TerminatingError/i.test(raw);
+}
+
+function summarizeLog(raw: string, status: OperationalLogEntry["status"]): string {
+    const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const failure = lines.find((line) => /failed with exit code|TerminatingError|not found|DEV_NOT_READY|error=/i.test(line));
+    if (failure) return failure.slice(0, 240);
+
+    const success = lines.find((line) => /finished successfully/i.test(line));
+    if (success) return success.slice(0, 240);
+
+    const deploy = lines.find((line) => /done\. production:/i.test(line));
+    if (deploy) return deploy.slice(0, 240);
+
+    return status === "unknown" ? "Log ended without a clear success or failure marker." : status;
+}
+
+function newestLogEntry(logDir: string, prefix: string, kind: OperationalLogEntry["kind"]): OperationalLogEntry | null {
+    if (!fs.existsSync(logDir)) return null;
+    let files: { fileName: string; filePath: string; mtimeMs: number; mtime: Date; size: number }[] = [];
+    try {
+        files = fs.readdirSync(logDir, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".log"))
+            .map((entry) => {
+                const filePath = path.join(logDir, entry.name);
+                const stat = fs.statSync(filePath);
+                return {
+                    fileName: entry.name,
+                    filePath,
+                    mtimeMs: stat.mtimeMs,
+                    mtime: stat.mtime,
+                    size: stat.size,
+                };
+            })
+            .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    } catch {
+        return null;
+    }
+
+    let latest: typeof files[number] | undefined;
+    let raw = "";
+
+    for (const candidate of files) {
+        let candidateRaw = "";
+        try {
+            candidateRaw = fs.readFileSync(candidate.filePath, "utf-8");
+        } catch {
+            continue;
+        }
+
+        if (!latest || isCompleteLog(candidateRaw)) {
+            latest = candidate;
+            raw = candidateRaw;
+        }
+
+        if (isCompleteLog(candidateRaw)) break;
+    }
+
+    if (!latest) return null;
+
+    try {
+        const status = classifyLog(raw);
+        return {
+            kind,
+            file_name: latest.fileName,
+            started_at: startedAtFromLogName(latest.fileName),
+            last_modified: latest.mtime.toISOString(),
+            size_bytes: latest.size,
+            status,
+            summary: summarizeLog(raw, status),
+            tail: raw.split(/\r?\n/).slice(-40),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function loadOperationalStatusFromLogs(logDir: string): OperationalStatusArtifact | null {
+    if (!fs.existsSync(logDir)) return null;
+    const daily = newestLogEntry(logDir, "local-daily-refresh-", "daily");
+    const weekly = newestLogEntry(logDir, "local-weekly-training-", "weekly");
+    if (!daily && !weekly) return null;
+
+    return {
+        generated_at: new Date().toISOString(),
+        source_logs: logDir,
+        daily,
+        weekly,
+    };
+}
+
+function newestOperationalLog(
+    entries: Array<OperationalLogEntry | null | undefined>,
+): OperationalLogEntry | null {
+    return entries
+        .filter((entry): entry is OperationalLogEntry => Boolean(entry))
+        .sort((a, b) => Date.parse(b.last_modified) - Date.parse(a.last_modified))[0] ?? null;
 }
 
 function readPredictionReportInDateDir(dateDir: string): PredictionReport | null {
@@ -291,6 +436,35 @@ export const loadModelDiagnostics = cache((): ModelDiagnosticsArtifact | null =>
         return artifact;
     }
     return null;
+});
+
+export const loadOperationalStatus = cache((): OperationalStatusArtifact | null => {
+    const artifacts: OperationalStatusArtifact[] = [];
+
+    for (const filePath of operationalStatusPaths()) {
+        const artifact = readJson<OperationalStatusArtifact>(filePath);
+        if (!artifact) continue;
+        artifacts.push(artifact);
+    }
+
+    if (allowSourceFallback()) {
+        for (const logDir of [repoPath("logs"), siblingStableLogsDir()]) {
+            const artifact = loadOperationalStatusFromLogs(logDir);
+            if (artifact) artifacts.push(artifact);
+        }
+    }
+
+    if (artifacts.length === 0) return null;
+
+    return {
+        generated_at: artifacts
+            .map((artifact) => artifact.generated_at)
+            .sort()
+            .at(-1) ?? new Date().toISOString(),
+        source_logs: artifacts.map((artifact) => artifact.source_logs).filter(Boolean).join(" | "),
+        daily: newestOperationalLog(artifacts.map((artifact) => artifact.daily)),
+        weekly: newestOperationalLog(artifacts.map((artifact) => artifact.weekly)),
+    };
 });
 
 export function getLatestReportDate(): string | null {

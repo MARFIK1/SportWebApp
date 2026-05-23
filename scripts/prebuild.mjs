@@ -11,6 +11,9 @@ const ROOT = path.join(__dirname, "..");
 const SOURCE_DATA = path.join(ROOT, "SofascoreData", "data");
 const SOURCE_REPORTS = path.join(ROOT, "SofascoreData", "reports");
 const SOURCE_MODELS = path.join(ROOT, "SofascoreData", "data", "models");
+const SOURCE_LOGS = process.env.PREBUILD_LOGS_DIR
+    ? path.resolve(ROOT, process.env.PREBUILD_LOGS_DIR)
+    : path.join(ROOT, "logs");
 const OUT_DIR = process.env.PREBUILD_OUT_DIR
     ? path.resolve(ROOT, process.env.PREBUILD_OUT_DIR)
     : path.join(ROOT, ".data");
@@ -166,6 +169,89 @@ function copyDir(src, dest) {
 
 function writeJsonFile(filePath, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
+}
+
+function startedAtFromLogName(fileName) {
+    const match = fileName.match(/(\d{8})-(\d{6})\.log$/);
+    if (!match) return null;
+
+    const [, date, time] = match;
+    return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
+}
+
+function logStatus(raw) {
+    if (/finished successfully/i.test(raw)) return "success";
+    if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
+    return "unknown";
+}
+
+function isCompleteLog(raw) {
+    return /Windows PowerShell transcript end|finished successfully|failed with exit code|TerminatingError/i.test(raw);
+}
+
+function logSummary(raw, status) {
+    const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const failure = lines.find((line) => /failed with exit code|TerminatingError|not found|DEV_NOT_READY|error=/i.test(line));
+    if (failure) return failure.slice(0, 240);
+
+    const success = lines.find((line) => /finished successfully/i.test(line));
+    if (success) return success.slice(0, 240);
+
+    const deploy = lines.find((line) => /done\. production:/i.test(line));
+    if (deploy) return deploy.slice(0, 240);
+
+    return status === "unknown" ? "Log ended without a clear success or failure marker." : status;
+}
+
+function newestLogEntry(logDir, prefix, kind) {
+    if (!fs.existsSync(logDir)) return null;
+    const files = fs.readdirSync(logDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".log"))
+        .map((entry) => {
+            const filePath = path.join(logDir, entry.name);
+            const stat = fs.statSync(filePath);
+            return { fileName: entry.name, filePath, stat };
+        })
+        .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+
+    let latest = null;
+    let raw = "";
+    for (const candidate of files) {
+        const candidateRaw = fs.readFileSync(candidate.filePath, "utf-8");
+        if (!latest || isCompleteLog(candidateRaw)) {
+            latest = candidate;
+            raw = candidateRaw;
+        }
+        if (isCompleteLog(candidateRaw)) break;
+    }
+
+    if (!latest) return null;
+    const status = logStatus(raw);
+    const tail = raw.split(/\r?\n/).slice(-40);
+
+    return {
+        kind,
+        file_name: latest.fileName,
+        started_at: startedAtFromLogName(latest.fileName),
+        last_modified: latest.stat.mtime.toISOString(),
+        size_bytes: latest.stat.size,
+        status,
+        summary: logSummary(raw, status),
+        tail,
+    };
+}
+
+function writeOperationalStatus(logDir, outAdminDir) {
+    ensureDir(outAdminDir);
+    const status = {
+        generated_at: new Date().toISOString(),
+        source_logs: logDir,
+        daily: newestLogEntry(logDir, "local-daily-refresh-", "daily"),
+        weekly: newestLogEntry(logDir, "local-weekly-training-", "weekly"),
+    };
+
+    writeJsonFile(path.join(outAdminDir, "operational_status.json"), status);
+    console.log("operational_status.json written");
 }
 
 function todayYmd(date = new Date()) {
@@ -391,6 +477,13 @@ if (fs.existsSync(diagnosticsJson)) {
     console.log("model_diagnostics.json copied");
 } else {
     console.log("no model_diagnostics.json");
+}
+
+console.log("\noperational status:");
+if (fs.existsSync(SOURCE_LOGS)) {
+    writeOperationalStatus(SOURCE_LOGS, path.join(OUT_DIR, "admin"));
+} else {
+    console.log("no logs directory");
 }
 
 const totalBytes = matchBytes + playerBytes;
