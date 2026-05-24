@@ -368,6 +368,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                         homeTeamId={match.home_team_id}
                         awayTeamId={match.away_team_id}
                         leagueSlug={competition.slug}
+                        season={match.season || date || match.date}
                         t={t}
                     />
                     {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
