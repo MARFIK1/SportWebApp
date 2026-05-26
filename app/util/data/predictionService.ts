@@ -136,6 +136,9 @@ export interface OperationalStatusArtifact {
     weekly: OperationalLogEntry | null;
 }
 
+const LOG_TIME_ZONE = process.env.REPORT_TIME_ZONE || "Europe/Warsaw";
+const ACTIVE_LOG_GRACE_MS = Number(process.env.ADMIN_ACTIVE_LOG_GRACE_MINUTES || 360) * 60 * 1000;
+
 function repoPath(...segments: string[]): string {
     return path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments);
 }
@@ -235,17 +238,67 @@ function operationalStatusPaths(): string[] {
     return paths;
 }
 
+function timeZoneOffsetMs(utcMs: number, timeZone: string): number {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    }).formatToParts(new Date(utcMs));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const zonedAsUtc = Date.UTC(
+        Number(values.year),
+        Number(values.month) - 1,
+        Number(values.day),
+        Number(values.hour),
+        Number(values.minute),
+        Number(values.second),
+    );
+    return zonedAsUtc - utcMs;
+}
+
+function localTimeInZoneToIso(
+    year: number,
+    month: number,
+    day: number,
+    hour: number,
+    minute: number,
+    second: number,
+    timeZone = LOG_TIME_ZONE,
+): string {
+    const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+    let utcMs = localAsUtc - timeZoneOffsetMs(localAsUtc, timeZone);
+    utcMs = localAsUtc - timeZoneOffsetMs(utcMs, timeZone);
+    return new Date(utcMs).toISOString();
+}
+
 function startedAtFromLogName(fileName: string): string | null {
     const match = fileName.match(/(\d{8})-(\d{6})\.log$/);
     if (!match) return null;
 
     const [, date, time] = match;
-    return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
+    return localTimeInZoneToIso(
+        Number(date.slice(0, 4)),
+        Number(date.slice(4, 6)),
+        Number(date.slice(6, 8)),
+        Number(time.slice(0, 2)),
+        Number(time.slice(2, 4)),
+        Number(time.slice(4, 6)),
+    );
+}
+
+function isBuildOrDeployLog(raw: string): boolean {
+    return /==> Build production bundle|Creating an optimized production build|==> Deploy to Vercel|staging copy for Vercel|done\. production:/i.test(raw);
 }
 
 function classifyLog(raw: string): OperationalLogEntry["status"] {
     if (/finished successfully/i.test(raw)) return "success";
     if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
+    if (isBuildOrDeployLog(raw)) return "success";
     return "unknown";
 }
 
@@ -264,7 +317,17 @@ function summarizeLog(raw: string, status: OperationalLogEntry["status"]): strin
     const deploy = lines.find((line) => /done\. production:/i.test(line));
     if (deploy) return deploy.slice(0, 240);
 
+    if (isBuildOrDeployLog(raw)) {
+        return "Daily refresh reached the production build/deploy phase; this snapshot belongs to the current run.";
+    }
+
     return status === "unknown" ? "Log ended without a clear success or failure marker." : status;
+}
+
+function shouldUseNewestLog(candidate: { mtimeMs: number }, raw: string): boolean {
+    if (isCompleteLog(raw)) return true;
+    if (isBuildOrDeployLog(raw)) return true;
+    return Date.now() - candidate.mtimeMs <= ACTIVE_LOG_GRACE_MS;
 }
 
 function newestLogEntry(logDir: string, prefix: string, kind: OperationalLogEntry["kind"]): OperationalLogEntry | null {
@@ -300,12 +363,18 @@ function newestLogEntry(logDir: string, prefix: string, kind: OperationalLogEntr
             continue;
         }
 
-        if (!latest || isCompleteLog(candidateRaw)) {
+        if (!latest) {
             latest = candidate;
             raw = candidateRaw;
+            if (shouldUseNewestLog(candidate, candidateRaw)) break;
+            continue;
         }
 
-        if (isCompleteLog(candidateRaw)) break;
+        if (isCompleteLog(candidateRaw)) {
+            latest = candidate;
+            raw = candidateRaw;
+            break;
+        }
     }
 
     if (!latest) return null;

@@ -18,6 +18,8 @@ const OUT_DIR = process.env.PREBUILD_OUT_DIR
     ? path.resolve(ROOT, process.env.PREBUILD_OUT_DIR)
     : path.join(ROOT, ".data");
 const MANIFEST_PATH = path.join(OUT_DIR, ".prebuild-manifest.json");
+const LOG_TIME_ZONE = process.env.REPORT_TIME_ZONE || "Europe/Warsaw";
+const ACTIVE_LOG_GRACE_MS = Number(process.env.ADMIN_ACTIVE_LOG_GRACE_MINUTES || 360) * 60 * 1000;
 
 const MATCH_FIELDS = new Set([
     "event_id", "home_team", "away_team", "home_team_id", "away_team_id",
@@ -171,17 +173,59 @@ function writeJsonFile(filePath, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
+function timeZoneOffsetMs(utcMs, timeZone) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    }).formatToParts(new Date(utcMs));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const zonedAsUtc = Date.UTC(
+        Number(values.year),
+        Number(values.month) - 1,
+        Number(values.day),
+        Number(values.hour),
+        Number(values.minute),
+        Number(values.second),
+    );
+    return zonedAsUtc - utcMs;
+}
+
+function localTimeInZoneToIso(year, month, day, hour, minute, second, timeZone = LOG_TIME_ZONE) {
+    const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+    let utcMs = localAsUtc - timeZoneOffsetMs(localAsUtc, timeZone);
+    utcMs = localAsUtc - timeZoneOffsetMs(utcMs, timeZone);
+    return new Date(utcMs).toISOString();
+}
+
 function startedAtFromLogName(fileName) {
     const match = fileName.match(/(\d{8})-(\d{6})\.log$/);
     if (!match) return null;
 
     const [, date, time] = match;
-    return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
+    return localTimeInZoneToIso(
+        Number(date.slice(0, 4)),
+        Number(date.slice(4, 6)),
+        Number(date.slice(6, 8)),
+        Number(time.slice(0, 2)),
+        Number(time.slice(2, 4)),
+        Number(time.slice(4, 6)),
+    );
+}
+
+function isBuildOrDeployLog(raw) {
+    return /==> Build production bundle|Creating an optimized production build|==> Deploy to Vercel|staging copy for Vercel|done\. production:/i.test(raw);
 }
 
 function logStatus(raw) {
     if (/finished successfully/i.test(raw)) return "success";
     if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
+    if (isBuildOrDeployLog(raw)) return "success";
     return "unknown";
 }
 
@@ -200,7 +244,17 @@ function logSummary(raw, status) {
     const deploy = lines.find((line) => /done\. production:/i.test(line));
     if (deploy) return deploy.slice(0, 240);
 
+    if (isBuildOrDeployLog(raw)) {
+        return "Daily refresh reached the production build/deploy phase; this snapshot belongs to the current run.";
+    }
+
     return status === "unknown" ? "Log ended without a clear success or failure marker." : status;
+}
+
+function shouldUseNewestLog(candidate, raw) {
+    if (isCompleteLog(raw)) return true;
+    if (isBuildOrDeployLog(raw)) return true;
+    return Date.now() - candidate.stat.mtimeMs <= ACTIVE_LOG_GRACE_MS;
 }
 
 function newestLogEntry(logDir, prefix, kind) {
@@ -218,11 +272,18 @@ function newestLogEntry(logDir, prefix, kind) {
     let raw = "";
     for (const candidate of files) {
         const candidateRaw = fs.readFileSync(candidate.filePath, "utf-8");
-        if (!latest || isCompleteLog(candidateRaw)) {
+        if (!latest) {
             latest = candidate;
             raw = candidateRaw;
+            if (shouldUseNewestLog(candidate, candidateRaw)) break;
+            continue;
         }
-        if (isCompleteLog(candidateRaw)) break;
+
+        if (isCompleteLog(candidateRaw)) {
+            latest = candidate;
+            raw = candidateRaw;
+            break;
+        }
     }
 
     if (!latest) return null;
