@@ -3,7 +3,7 @@ import { listReportDates, loadPredictionReport } from "./util/data/predictionSer
 import { resolveCompetitionByDataPath } from "./util/league/leagueRegistry";
 import { buildMatchLookupMaps } from "./util/data/dataService";
 import DatePicker from "./components/home/DatePicker";
-import LeagueSection from "./components/home/LeagueSection";
+import HomeLeagueList from "./components/home/HomeLeagueList";
 import { getServerT } from "./util/i18n/getLocale";
 import { normalizeReportDate, todayYmd } from "./util/data/dateUtils";
 import type { ConsensusPrediction, PredictionMatch } from "@/types/predictions";
@@ -145,20 +145,12 @@ export default async function Home({ searchParams }: PageProps) {
 
             <DatePicker dates={dates} selectedDate={selectedDate} todayIso={todayIso} />
 
-            <div className="mt-6">
-                {leagueSections.map(({ dataPath, leagueName, slug, defaultOpen, matches }) => (
-                    <LeagueSection
-                        key={dataPath}
-                        leagueName={leagueName}
-                        slug={slug}
-                        matches={matches}
-                        teamIds={teamIds}
-                        eventIds={eventIds}
-                        selectedDate={selectedDate}
-                        defaultOpen={defaultOpen}
-                    />
-                ))}
-            </div>
+            <HomeLeagueList
+                sections={leagueSections}
+                teamIds={teamIds}
+                eventIds={eventIds}
+                selectedDate={selectedDate}
+            />
         </div>
     );
 }

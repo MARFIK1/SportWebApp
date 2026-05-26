@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/24/outline";
+import { StarIcon as StarOutlineIcon } from "@heroicons/react/24/outline";
+import { StarIcon as StarSolidIcon } from "@heroicons/react/24/solid";
 
 interface LeagueAccuracy {
     correct: number;
@@ -17,12 +19,16 @@ interface LeagueSectionToggleProps {
     statusText: string;
     accuracy: LeagueAccuracy | null;
     defaultOpen: boolean;
+    isFavorite: boolean;
+    onToggleFavorite: () => void;
     labels: {
         matchesCount: string;
         accuracy: string;
         viewStandings: string;
         expandLeague: string;
         collapseLeague: string;
+        favoriteLeague: string;
+        unfavoriteLeague: string;
     };
     children: ReactNode;
 }
@@ -34,6 +40,8 @@ export default function LeagueSectionToggle({
     statusText,
     accuracy,
     defaultOpen,
+    isFavorite,
+    onToggleFavorite,
     labels,
     children,
 }: LeagueSectionToggleProps) {
@@ -67,6 +75,20 @@ export default function LeagueSectionToggle({
                 </button>
 
                 <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={onToggleFavorite}
+                        className={`flex h-10 w-10 items-center justify-center rounded-xl border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                            isFavorite
+                                ? "border-amber-400/50 bg-amber-400/15 text-amber-400"
+                                : "border-gray-200 text-gray-400 hover:border-amber-400/50 hover:text-amber-400 dark:border-gray-700 dark:text-gray-500"
+                        }`}
+                        aria-pressed={isFavorite}
+                        aria-label={`${isFavorite ? labels.unfavoriteLeague : labels.favoriteLeague}: ${leagueName}`}
+                        title={isFavorite ? labels.unfavoriteLeague : labels.favoriteLeague}
+                    >
+                        {isFavorite ? <StarSolidIcon className="h-5 w-5" aria-hidden="true" /> : <StarOutlineIcon className="h-5 w-5" aria-hidden="true" />}
+                    </button>
                     {accuracy && (
                         <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white/70 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40">
                             <span className="text-xs text-gray-500 dark:text-gray-400">{labels.accuracy}:</span>

@@ -1,6 +1,10 @@
+"use client";
+
 import Link from "next/link";
+import { StarIcon as StarOutlineIcon } from "@heroicons/react/24/outline";
+import { StarIcon as StarSolidIcon } from "@heroicons/react/24/solid";
 import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
-import { getServerT } from "@/app/util/i18n/getLocale";
+import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
 
@@ -10,6 +14,10 @@ interface MatchCardProps {
     awayTeamId: number | null;
     eventId: number | null;
     date: string;
+    homeTeamFavorite: boolean;
+    awayTeamFavorite: boolean;
+    onToggleHomeTeamFavorite: () => void;
+    onToggleAwayTeamFavorite: () => void;
 }
 
 function getPredictionColor(prediction: string): string {
@@ -45,8 +53,49 @@ function isPredictionCorrect(match: PredictionMatch): boolean | null {
     return consensus.prediction === match.actual_result;
 }
 
-export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId, date }: MatchCardProps) {
-    const t = await getServerT();
+function FavoriteTeamButton({
+    active,
+    label,
+    onToggle,
+}: {
+    active: boolean;
+    label: string;
+    onToggle: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onToggle();
+            }}
+            className={`pointer-events-auto absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full border shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                active
+                    ? "border-amber-400/70 bg-amber-400 text-gray-950"
+                    : "border-gray-200 bg-white/90 text-gray-400 hover:border-amber-400/60 hover:text-amber-500 dark:border-white/10 dark:bg-gray-950/90 dark:text-gray-500 dark:hover:text-amber-300"
+            }`}
+            aria-pressed={active}
+            aria-label={label}
+            title={label}
+        >
+            {active ? <StarSolidIcon className="h-4 w-4" aria-hidden="true" /> : <StarOutlineIcon className="h-4 w-4" aria-hidden="true" />}
+        </button>
+    );
+}
+
+export default function MatchCard({
+    match,
+    homeTeamId,
+    awayTeamId,
+    eventId,
+    date,
+    homeTeamFavorite,
+    awayTeamFavorite,
+    onToggleHomeTeamFavorite,
+    onToggleAwayTeamFavorite,
+}: MatchCardProps) {
+    const { t } = useLanguage();
     const isFinished = match.status === "finished";
     const prediction = getPredictionLabel(match, t);
     const drawWatch = getDrawWatchSignalFromPredictions(match.predictions);
@@ -86,19 +135,26 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
 
             <div className="flex flex-1 items-center justify-between gap-3">
                 <div className="flex flex-col items-center gap-1 flex-1">
-                    {homeTeamId ? (
-                        <TeamLogo
-                            teamId={homeTeamId}
-                            alt={match.home_team}
-                            size={40}
-                            className="object-contain"
-                            style={{ width: "40px", height: "40px" }}
+                    <div className="relative">
+                        {homeTeamId ? (
+                            <TeamLogo
+                                teamId={homeTeamId}
+                                alt={match.home_team}
+                                size={40}
+                                className="object-contain"
+                                style={{ width: "40px", height: "40px" }}
+                            />
+                        ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-300 text-xs font-bold text-gray-700 dark:bg-gray-700 dark:text-gray-200" aria-hidden="true">
+                                {match.home_team.slice(0, 2).toUpperCase()}
+                            </div>
+                        )}
+                        <FavoriteTeamButton
+                            active={homeTeamFavorite}
+                            label={`${homeTeamFavorite ? t("unfavorite_team") : t("favorite_team")}: ${match.home_team}`}
+                            onToggle={onToggleHomeTeamFavorite}
                         />
-                    ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-300 text-xs font-bold text-gray-700 dark:bg-gray-700 dark:text-gray-200" aria-hidden="true">
-                            {match.home_team.slice(0, 2).toUpperCase()}
-                        </div>
-                    )}
+                    </div>
                     <span className="line-clamp-2 text-center text-sm font-semibold leading-tight text-gray-800 dark:text-gray-100">
                         {match.home_team}
                     </span>
@@ -127,19 +183,26 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
                 </div>
 
                 <div className="flex flex-col items-center gap-1 flex-1">
-                    {awayTeamId ? (
-                        <TeamLogo
-                            teamId={awayTeamId}
-                            alt={match.away_team}
-                            size={40}
-                            className="object-contain"
-                            style={{ width: "40px", height: "40px" }}
+                    <div className="relative">
+                        {awayTeamId ? (
+                            <TeamLogo
+                                teamId={awayTeamId}
+                                alt={match.away_team}
+                                size={40}
+                                className="object-contain"
+                                style={{ width: "40px", height: "40px" }}
+                            />
+                        ) : (
+                            <div className="w-10 h-10 bg-gray-300 dark:bg-gray-700 rounded-full flex items-center justify-center text-xs font-bold text-gray-700 dark:text-gray-200" aria-hidden="true">
+                                {match.away_team.slice(0, 2).toUpperCase()}
+                            </div>
+                        )}
+                        <FavoriteTeamButton
+                            active={awayTeamFavorite}
+                            label={`${awayTeamFavorite ? t("unfavorite_team") : t("favorite_team")}: ${match.away_team}`}
+                            onToggle={onToggleAwayTeamFavorite}
                         />
-                    ) : (
-                        <div className="w-10 h-10 bg-gray-300 dark:bg-gray-700 rounded-full flex items-center justify-center text-xs font-bold text-gray-700 dark:text-gray-200" aria-hidden="true">
-                            {match.away_team.slice(0, 2).toUpperCase()}
-                        </div>
-                    )}
+                    </div>
                     <span className="line-clamp-2 text-center text-sm font-semibold leading-tight text-gray-800 dark:text-gray-100">
                         {match.away_team}
                     </span>
@@ -186,15 +249,25 @@ export default async function MatchCard({ match, homeTeamId, awayTeamId, eventId
 
     if (!href) {
         return (
-            <div className={cardClassName} aria-disabled="true">
-                {content}
-            </div>
+            <article className={cardClassName}>
+                <div className="relative z-10 flex h-full flex-col">
+                    {content}
+                </div>
+            </article>
         );
     }
 
     return (
-        <Link href={href} prefetch={false} className={cardClassName}>
-            {content}
-        </Link>
+        <article className={cardClassName}>
+            <Link
+                href={href}
+                prefetch={false}
+                className="absolute inset-0 z-10 rounded-3xl"
+                aria-label={`${match.home_team} vs ${match.away_team}`}
+            />
+            <div className="pointer-events-none relative z-20 flex h-full flex-col">
+                {content}
+            </div>
+        </article>
     );
 }

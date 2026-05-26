@@ -1,7 +1,10 @@
+"use client";
+
 import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import MatchCard from "./MatchCard";
 import LeagueSectionToggle from "./LeagueSectionToggle";
-import { getServerT } from "@/app/util/i18n/getLocale";
+import { useLanguage } from "@/app/components/common/LanguageProvider";
+import { getTeamFavoriteKey } from "@/app/util/favorites/favorites";
 
 interface LeagueSectionProps {
     leagueName: string;
@@ -11,6 +14,10 @@ interface LeagueSectionProps {
     eventIds: Record<string, number>;
     selectedDate: string;
     defaultOpen: boolean;
+    isFavorite: boolean;
+    favoriteTeamKeys: Set<string>;
+    onToggleLeagueFavorite: (slug: string) => void;
+    onToggleTeamFavorite: (teamKey: string) => void;
 }
 
 function getLeagueAccuracy(matches: PredictionMatch[]): { correct: number; total: number } | null {
@@ -40,8 +47,20 @@ function sortMatchesByKickoff(matches: PredictionMatch[]): PredictionMatch[] {
     });
 }
 
-export default async function LeagueSection({ leagueName, slug, matches, teamIds, eventIds, selectedDate, defaultOpen }: LeagueSectionProps) {
-    const t = await getServerT();
+export default function LeagueSection({
+    leagueName,
+    slug,
+    matches,
+    teamIds,
+    eventIds,
+    selectedDate,
+    defaultOpen,
+    isFavorite,
+    favoriteTeamKeys,
+    onToggleLeagueFavorite,
+    onToggleTeamFavorite,
+}: LeagueSectionProps) {
+    const { t } = useLanguage();
     const accuracy = getLeagueAccuracy(matches);
 
     const finished = sortMatchesByKickoff(matches.filter((m) => m.status === "finished"));
@@ -51,14 +70,27 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
         return (
             <div className="grid gap-4 pb-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {list.map((match) => (
-                    <MatchCard
-                        key={match.id}
-                        match={match}
-                        homeTeamId={teamIds[match.home_team] ?? null}
-                        awayTeamId={teamIds[match.away_team] ?? null}
-                        eventId={match.event_id ?? eventIds[`${match.home_team}_vs_${match.away_team}_${selectedDate}`] ?? null}
-                        date={selectedDate}
-                    />
+                    (() => {
+                        const homeTeamId = teamIds[match.home_team] ?? null;
+                        const awayTeamId = teamIds[match.away_team] ?? null;
+                        const homeFavoriteKey = getTeamFavoriteKey(homeTeamId, match.home_team);
+                        const awayFavoriteKey = getTeamFavoriteKey(awayTeamId, match.away_team);
+
+                        return (
+                            <MatchCard
+                                key={match.id}
+                                match={match}
+                                homeTeamId={homeTeamId}
+                                awayTeamId={awayTeamId}
+                                eventId={match.event_id ?? eventIds[`${match.home_team}_vs_${match.away_team}_${selectedDate}`] ?? null}
+                                date={selectedDate}
+                                homeTeamFavorite={favoriteTeamKeys.has(homeFavoriteKey)}
+                                awayTeamFavorite={favoriteTeamKeys.has(awayFavoriteKey)}
+                                onToggleHomeTeamFavorite={() => onToggleTeamFavorite(homeFavoriteKey)}
+                                onToggleAwayTeamFavorite={() => onToggleTeamFavorite(awayFavoriteKey)}
+                            />
+                        );
+                    })()
                 ))}
             </div>
         );
@@ -72,12 +104,16 @@ export default async function LeagueSection({ leagueName, slug, matches, teamIds
             statusText={finished.length > 0 ? `${finished.length} ${t("finished")}` : `${scheduled.length} ${t("scheduled")}`}
             accuracy={accuracy}
             defaultOpen={defaultOpen}
+            isFavorite={isFavorite}
+            onToggleFavorite={() => onToggleLeagueFavorite(slug)}
             labels={{
                 matchesCount: t("matches_count"),
                 accuracy: t("accuracy"),
                 viewStandings: t("view_standings"),
                 expandLeague: t("expand_league"),
                 collapseLeague: t("collapse_league"),
+                favoriteLeague: t("favorite_league"),
+                unfavoriteLeague: t("unfavorite_league"),
             }}
         >
 
