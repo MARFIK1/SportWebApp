@@ -76,6 +76,7 @@ export default async function PredictionsDashboard({
         return {
             dataPath: dp,
             name: comp?.name ?? dp,
+            slug: comp?.slug ?? dp,
             priority: comp?.priority ?? 999,
             count: matchCountByLeague[dp] ?? 0,
         };

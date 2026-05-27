@@ -1,19 +1,23 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDownIcon } from "@heroicons/react/24/outline";
 import { PredictionMatch, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
+import {
+    getTeamFavoriteKey,
+} from "@/app/util/favorites/favorites";
+import { useStoredFavorites } from "@/app/util/favorites/useStoredFavorites";
 import type { MatchResult } from "@/types/predictions";
 
 interface PredictionsClientProps {
     matches: PredictionMatch[];
-    leagues: { dataPath: string; name: string; count: number }[];
+    leagues: { dataPath: string; name: string; count: number; slug: string }[];
     teamIds: Record<string, number>;
 }
 
-type MatchViewFilter = "all" | "drawWatch" | "highConfidence" | "finished" | "upcoming";
+type MatchViewFilter = "all" | "favorites" | "drawWatch" | "highConfidence" | "finished" | "upcoming";
 type MatchSort = "default" | "confidence" | "agreement" | "drawProbability" | "kickoff";
 
 const HIGH_CONFIDENCE_THRESHOLD = 60;
@@ -50,6 +54,28 @@ function kickoffValue(match: PredictionMatch): number {
     return h * 60 + m;
 }
 
+function getLeagueDataPath(match: PredictionMatch): string {
+    return `${match.comp_type}/${match.league}`;
+}
+
+function matchMatchesFavorites(
+    match: PredictionMatch,
+    favoriteLeagueKeys: Set<string>,
+    favoriteTeamKeys: Set<string>,
+    teamIds: Record<string, number>,
+    leagueSlugByDataPath: Map<string, string>,
+): boolean {
+    const dataPath = getLeagueDataPath(match);
+    const slug = leagueSlugByDataPath.get(dataPath);
+    if (favoriteLeagueKeys.has(dataPath) || (slug && favoriteLeagueKeys.has(slug))) {
+        return true;
+    }
+
+    const homeKey = getTeamFavoriteKey(teamIds[match.home_team] ?? null, match.home_team);
+    const awayKey = getTeamFavoriteKey(teamIds[match.away_team] ?? null, match.away_team);
+    return favoriteTeamKeys.has(homeKey) || favoriteTeamKeys.has(awayKey);
+}
+
 function matchPassesViewFilter(match: PredictionMatch, filter: MatchViewFilter): boolean {
     if (filter === "drawWatch") return Boolean(getDrawWatchSignalFromPredictions(match.predictions));
     if (filter === "highConfidence") return getConsensusConfidence(match) >= HIGH_CONFIDENCE_THRESHOLD;
@@ -82,18 +108,33 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
     const [sortBy, setSortBy] = useState<MatchSort>("default");
     const [leagueMenuOpen, setLeagueMenuOpen] = useState(false);
     const [expandedMatch, setExpandedMatch] = useState<string | null>(null);
+    const [favorites] = useStoredFavorites();
     const matchRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const pendingScrollMatch = useRef<string | null>(null);
+
+    const favoriteLeagueKeys = useMemo(() => new Set(favorites.leagues), [favorites.leagues]);
+    const favoriteTeamKeys = useMemo(() => new Set(favorites.teams), [favorites.teams]);
+    const leagueSlugByDataPath = useMemo(
+        () => new Map(leagues.map((league) => [league.dataPath, league.slug])),
+        [leagues],
+    );
 
     const leagueFiltered = selectedLeague === "all"
         ? matches
         : matches.filter((m) => `${m.comp_type}/${m.league}` === selectedLeague);
+    const favoritesFiltered = leagueFiltered.filter((match) => (
+        matchMatchesFavorites(match, favoriteLeagueKeys, favoriteTeamKeys, teamIds, leagueSlugByDataPath)
+    ));
+    const viewFiltered = viewFilter === "favorites"
+        ? favoritesFiltered
+        : leagueFiltered.filter((match) => matchPassesViewFilter(match, viewFilter));
     const filtered = sortMatches(
-        leagueFiltered.filter((match) => matchPassesViewFilter(match, viewFilter)),
+        viewFiltered,
         sortBy,
     );
     const viewFilterOptions: { key: MatchViewFilter; label: string; count: number }[] = [
         { key: "all", label: t("filter_all_matches"), count: leagueFiltered.length },
+        { key: "favorites", label: t("favorites_only"), count: favoritesFiltered.length },
         { key: "drawWatch", label: t("filter_draw_watch"), count: leagueFiltered.filter((match) => matchPassesViewFilter(match, "drawWatch")).length },
         { key: "highConfidence", label: t("filter_high_confidence"), count: leagueFiltered.filter((match) => matchPassesViewFilter(match, "highConfidence")).length },
         { key: "finished", label: t("filter_finished"), count: leagueFiltered.filter((match) => matchPassesViewFilter(match, "finished")).length },
