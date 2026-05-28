@@ -12,6 +12,7 @@ joblib
 psutil
 ipykernel
 ipywidgets
+nbconvert
 nbstripout
 shap
 optuna
