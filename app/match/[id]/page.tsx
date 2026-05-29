@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
-import { computeStandings, findMatchInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
+import { computeStandings, findMatchInCompetitions, loadAllSeasons, resolveLeagueTableContext } from "@/app/util/data/dataService";
 import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import CompactLeagueTable from "./CompactLeagueTable";
@@ -158,8 +158,10 @@ export default async function Match({ params, searchParams }: PageProps) {
     const date = normalizeReportDate(resolvedSearchParams.date) || match.date.slice(0, 10);
     const competitionMatches = loadAllSeasons(competition);
     const sameSeasonMatches = resolveSeasonMatches(match, competitionMatches);
-    const leagueStandings = competition.compType === "league"
-        ? computeStandings(sameSeasonMatches)
+    const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(sameSeasonMatches) : null;
+    const leagueStandings = leagueTableContext
+        ? computeStandings(leagueTableContext.standingsMatches)
+        : [];
         : [];
 
     const predReport = loadPredictionReport(date);

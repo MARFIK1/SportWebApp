@@ -100,6 +100,78 @@ export interface StandingRow {
     form: string[];
 }
 
+export interface LeagueTableContext {
+    standingsMatches: SofascoreMatch[];
+    excludedMatches: SofascoreMatch[];
+    regularTeamIds: Set<number>;
+}
+
+function isTableMembershipCandidate(match: SofascoreMatch): boolean {
+    return (
+        Number.isFinite(match.home_team_id) &&
+        Number.isFinite(match.away_team_id) &&
+        match.status !== "postponed"
+    );
+}
+
+function addTeamAppearance(appearances: Map<number, number>, teamId: number) {
+    appearances.set(teamId, (appearances.get(teamId) ?? 0) + 1);
+}
+
+export function resolveLeagueTableContext(matches: SofascoreMatch[]): LeagueTableContext {
+    const candidates = matches.filter(isTableMembershipCandidate);
+    const appearances = new Map<number, number>();
+
+    for (const match of candidates) {
+        addTeamAppearance(appearances, match.home_team_id);
+        addTeamAppearance(appearances, match.away_team_id);
+    }
+
+    const allTeamIds = new Set(appearances.keys());
+    const maxAppearances = Math.max(0, ...appearances.values());
+
+    if (maxAppearances < 8) {
+        return {
+            standingsMatches: matches,
+            excludedMatches: [],
+            regularTeamIds: allTeamIds,
+        };
+    }
+
+    const minAppearances = Math.max(4, Math.floor(maxAppearances * 0.2));
+    const regularTeamIds = new Set(
+        Array.from(appearances.entries())
+            .filter(([, count]) => count >= minAppearances)
+            .map(([teamId]) => teamId)
+    );
+
+    const standingsMatches = matches.filter(
+        (match) => regularTeamIds.has(match.home_team_id) && regularTeamIds.has(match.away_team_id)
+    );
+    const excludedMatches = matches.filter(
+        (match) => !regularTeamIds.has(match.home_team_id) || !regularTeamIds.has(match.away_team_id)
+    );
+
+    const filteringLooksSafe =
+        excludedMatches.length > 0 &&
+        regularTeamIds.size >= 8 &&
+        regularTeamIds.size >= Math.floor(allTeamIds.size * 0.6);
+
+    if (!filteringLooksSafe) {
+        return {
+            standingsMatches: matches,
+            excludedMatches: [],
+            regularTeamIds: allTeamIds,
+        };
+    }
+
+    return {
+        standingsMatches,
+        excludedMatches,
+        regularTeamIds,
+    };
+}
+
 export function computeStandings(matches: SofascoreMatch[]): StandingRow[] {
     const finished = matches
         .filter((m) => m.status === "finished" && m.home_score !== null && m.away_score !== null)
@@ -325,7 +397,8 @@ export function findTeamData(teamId: number, competitions: Competition[]): { tea
             teamName = first.home_team_id === teamId ? first.home_team : first.away_team;
         }
 
-        const standings = computeStandings(matches);
+        const tableContext = comp.compType === "league" ? resolveLeagueTableContext(matches) : null;
+        const standings = computeStandings(tableContext?.standingsMatches ?? matches);
         const standing = standings.find((r) => r.teamId === teamId) ?? null;
 
         data.push({ competition: comp, season, matches: teamMatches, standing });
