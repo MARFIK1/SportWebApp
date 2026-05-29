@@ -123,6 +123,41 @@ function resolveSeasonMatches(match: SofascoreMatch, matches: SofascoreMatch[]):
     return bestSeason.length > 0 ? bestSeason : matches;
 }
 
+function hasSameTeamPair(match: SofascoreMatch, homeTeamId: number, awayTeamId: number): boolean {
+    return (
+        (match.home_team_id === homeTeamId && match.away_team_id === awayTeamId) ||
+        (match.home_team_id === awayTeamId && match.away_team_id === homeTeamId)
+    );
+}
+
+function resolvePlayoffContextMatches(
+    match: SofascoreMatch,
+    seasonMatches: SofascoreMatch[],
+    regularTeamIds: Set<number> | undefined
+): SofascoreMatch[] {
+    if (!regularTeamIds) return [];
+
+    const currentMatchUsesExternalTeam =
+        !regularTeamIds.has(match.home_team_id) || !regularTeamIds.has(match.away_team_id);
+    if (!currentMatchUsesExternalTeam) return [];
+
+    const contextMatches = seasonMatches
+        .filter((item) => hasSameTeamPair(item, match.home_team_id, match.away_team_id))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    if (!contextMatches.some((item) => item.event_id === match.event_id)) {
+        contextMatches.push(match);
+        contextMatches.sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    return Array.from(
+        contextMatches.reduce((map, item) => {
+            map.set(item.event_id, item);
+            return map;
+        }, new Map<number, SofascoreMatch>()).values()
+    );
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const eventId = parseInt(resolvedParams.id, 10);
@@ -162,6 +197,8 @@ export default async function Match({ params, searchParams }: PageProps) {
     const leagueStandings = leagueTableContext
         ? computeStandings(leagueTableContext.standingsMatches)
         : [];
+    const leaguePlayoffMatches = leagueTableContext
+        ? resolvePlayoffContextMatches(match, sameSeasonMatches, leagueTableContext.regularTeamIds)
         : [];
 
     const predReport = loadPredictionReport(date);
@@ -371,6 +408,9 @@ export default async function Match({ params, searchParams }: PageProps) {
                         awayTeamId={match.away_team_id}
                         leagueSlug={competition.slug}
                         season={match.season || date || match.date}
+                        playoffMatches={leaguePlayoffMatches}
+                        regularTeamIds={leagueTableContext?.regularTeamIds}
+                        currentMatchId={match.event_id}
                         t={t}
                     />
                     {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (

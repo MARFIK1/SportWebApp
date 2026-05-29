@@ -220,6 +220,15 @@ const translations: Record<Locale, Record<string, string>> = {
         zone_conference_league: "Conference League Qualification",
         zone_relegation_playoff: "Relegation play-off",
         zone_relegation: "Relegation",
+        playoff_context: "Play-off context",
+        playoff_context_hint: "Cross-division play-off matches are excluded from the regular table and shown separately.",
+        playoff_tie: "Two-leg tie",
+        special_match: "Special match",
+        leg: "Leg",
+        match: "Match",
+        regular_table_team: "Regular table team",
+        playoff_opponent: "Play-off opponent",
+        playoff_two_leg_hint: "The regular standings stay clean; this card keeps the play-off tie visible next to the table.",
 
         // Team
         rank: "Rank",
@@ -501,6 +510,15 @@ const translations: Record<Locale, Record<string, string>> = {
         zone_conference_league: "Kwalifikacje Ligi Konferencji",
         zone_relegation_playoff: "Baraż o utrzymanie",
         zone_relegation: "Spadek",
+        playoff_context: "Kontekst barażu",
+        playoff_context_hint: "Mecze barażowe między poziomami rozgrywek są wyłączone z regularnej tabeli i pokazane osobno.",
+        playoff_tie: "Dwumecz",
+        special_match: "Mecz specjalny",
+        leg: "Mecz",
+        match: "Mecz",
+        regular_table_team: "Drużyna z tabeli",
+        playoff_opponent: "Rywal barażowy",
+        playoff_two_leg_hint: "Tabela pozostaje tabelą sezonu regularnego, a ten panel pokazuje kontekst barażu obok niej.",
 
         // Team
         rank: "Pozycja",

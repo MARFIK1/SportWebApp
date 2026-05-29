@@ -1,6 +1,7 @@
 import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import type { StandingRow } from "@/app/util/data/dataService";
+import type { SofascoreMatch } from "@/types/sofascore";
 import {
     getPositionZone,
     getStandingZones,
@@ -19,6 +20,9 @@ interface CompactLeagueTableProps {
     awayTeamId: number;
     leagueSlug: string;
     season?: string;
+    playoffMatches?: SofascoreMatch[];
+    regularTeamIds?: Set<number>;
+    currentMatchId?: number;
     t: (key: string) => string;
 }
 
@@ -74,17 +78,152 @@ function formatGoalDifference(value: number): string {
     return String(value);
 }
 
+function teamRoleLabel(teamId: number, regularTeamIds: Set<number> | undefined, t: (key: string) => string): string {
+    if (!regularTeamIds || regularTeamIds.has(teamId)) return t("regular_table_team");
+    return t("playoff_opponent");
+}
+
+function formatPlayoffResult(match: SofascoreMatch, t: (key: string) => string): string {
+    if (match.status === "finished" && match.home_score != null && match.away_score != null) {
+        return `${match.home_score} - ${match.away_score}`;
+    }
+    if (match.status === "postponed") return t("postponed");
+    return t("not_started");
+}
+
+function matchPairKey(match: SofascoreMatch): string {
+    return [match.home_team_id, match.away_team_id].sort((a, b) => a - b).join("-");
+}
+
+function resolvePlayoffContext(
+    playoffMatches: SofascoreMatch[] | undefined,
+    regularTeamIds: Set<number> | undefined,
+    homeTeamId: number,
+    awayTeamId: number,
+    currentMatchId: number | undefined
+): SofascoreMatch[] {
+    if (!playoffMatches || playoffMatches.length === 0) return [];
+
+    const currentIsPlayoff = currentMatchId != null && playoffMatches.some((match) => match.event_id === currentMatchId);
+    const hasTableOutlier = regularTeamIds ? !regularTeamIds.has(homeTeamId) || !regularTeamIds.has(awayTeamId) : false;
+    if (!currentIsPlayoff && !hasTableOutlier) return [];
+
+    const currentPairKey = [homeTeamId, awayTeamId].sort((a, b) => a - b).join("-");
+    const contextMatches = playoffMatches
+        .filter((match) => matchPairKey(match) === currentPairKey)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    return contextMatches.length > 0 ? contextMatches : playoffMatches.filter((match) => match.event_id === currentMatchId);
+}
+
+function PlayoffContextCard({
+    matches,
+    regularTeamIds,
+    currentMatchId,
+    t,
+}: {
+    matches: SofascoreMatch[];
+    regularTeamIds?: Set<number>;
+    currentMatchId?: number;
+    t: (key: string) => string;
+}) {
+    if (matches.length === 0) return null;
+
+    const secondMatch = matches.length > 1 ? matches[1] : null;
+
+    return (
+        <div className="mt-4 rounded-xl border border-amber-400/35 bg-amber-500/10 p-3 dark:bg-amber-500/10 sm:p-4">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <h4 className="text-xs font-black uppercase tracking-[0.12em] text-amber-400">
+                        {t("playoff_context")}
+                    </h4>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                        {t("playoff_context_hint")}
+                    </p>
+                </div>
+                <span className="rounded-full border border-amber-400/35 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-amber-400">
+                    {matches.length > 1 ? t("playoff_tie") : t("special_match")}
+                </span>
+            </div>
+
+            <div className="space-y-2">
+                {matches.map((match, index) => {
+                    const isCurrent = match.event_id === currentMatchId;
+                    return (
+                        <div
+                            key={match.event_id}
+                            className={`rounded-lg border p-2.5 ${isCurrent ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-gray-900/30"}`}
+                        >
+                            <div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
+                                <span>{matches.length > 1 ? `${t("leg")} ${index + 1}` : t("match")}</span>
+                                <span>{match.date.slice(0, 10)}</span>
+                            </div>
+
+                            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+                                <div className="min-w-0">
+                                    <div className="flex min-w-0 items-center gap-2">
+                                        <TeamLogo
+                                            teamId={match.home_team_id}
+                                            alt={match.home_team}
+                                            size={20}
+                                            className="h-5 w-5 shrink-0 object-contain"
+                                        />
+                                        <span className="truncate text-xs font-black text-gray-900 dark:text-white">{match.home_team}</span>
+                                    </div>
+                                    <div className="mt-1 truncate text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
+                                        {teamRoleLabel(match.home_team_id, regularTeamIds, t)}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-md bg-gray-950/65 px-2.5 py-1 text-center text-sm font-black text-white">
+                                    {formatPlayoffResult(match, t)}
+                                </div>
+
+                                <div className="min-w-0 text-right">
+                                    <div className="flex min-w-0 items-center justify-end gap-2">
+                                        <span className="truncate text-xs font-black text-gray-900 dark:text-white">{match.away_team}</span>
+                                        <TeamLogo
+                                            teamId={match.away_team_id}
+                                            alt={match.away_team}
+                                            size={20}
+                                            className="h-5 w-5 shrink-0 object-contain"
+                                        />
+                                    </div>
+                                    <div className="mt-1 truncate text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
+                                        {teamRoleLabel(match.away_team_id, regularTeamIds, t)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {secondMatch && (
+                <p className="mt-3 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                    {t("playoff_two_leg_hint")}
+                </p>
+            )}
+        </div>
+    );
+}
+
 export default function CompactLeagueTable({
     standings,
     homeTeamId,
     awayTeamId,
     leagueSlug,
     season,
+    playoffMatches,
+    regularTeamIds,
+    currentMatchId,
     t,
 }: CompactLeagueTableProps) {
     if (standings.length === 0) return null;
     const zones = getStandingZones(leagueSlug, standings.length, season);
     const teamZones = getStandingTeamZones(leagueSlug, season);
+    const playoffContext = resolvePlayoffContext(playoffMatches, regularTeamIds, homeTeamId, awayTeamId, currentMatchId);
     const legendKinds = Array.from(new Set([
         ...zones.map((zone) => zone.kind),
         ...teamZones.map((zone) => zone.kind),
@@ -192,6 +331,13 @@ export default function CompactLeagueTable({
                     ))}
                 </div>
             )}
+
+            <PlayoffContextCard
+                matches={playoffContext}
+                regularTeamIds={regularTeamIds}
+                currentMatchId={currentMatchId}
+                t={t}
+            />
         </section>
     );
 }
