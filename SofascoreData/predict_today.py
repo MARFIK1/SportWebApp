@@ -235,6 +235,135 @@ def _result_from_scores(home_score, away_score) -> Optional[str]:
     return 'D'
 
 
+def _score_number(value) -> Optional[float]:
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_score_part(value) -> str:
+    score = _score_number(value)
+    if score is None:
+        return ''
+    if score.is_integer():
+        return str(int(score))
+    return f"{score:g}"
+
+
+def _score_text(home_score, away_score) -> Optional[str]:
+    home_val = _score_number(home_score)
+    away_val = _score_number(away_score)
+    if home_val is None or away_val is None:
+        return None
+    return f"{_format_score_part(home_val)}-{_format_score_part(away_val)}"
+
+
+def _raw_score_pair(match: Dict):
+    return _score_number(match.get('home_score')), _score_number(match.get('away_score'))
+
+
+def _penalty_score_pair(match: Dict):
+    return _score_number(match.get('home_score_pen')), _score_number(match.get('away_score_pen'))
+
+
+def _base_score_pair(match: Dict):
+    home_score, away_score = _raw_score_pair(match)
+    home_pen, away_pen = _penalty_score_pair(match)
+
+    if (
+        home_score is not None and away_score is not None and
+        home_pen is not None and away_pen is not None and
+        (home_pen != 0 or away_pen != 0) and
+        home_score >= home_pen and away_score >= away_pen and
+        (home_score > home_pen or away_score > away_pen)
+    ):
+        return home_score - home_pen, away_score - away_pen
+
+    return home_score, away_score
+
+
+def _match_decided_by_penalties(match: Dict) -> bool:
+    home_pen, away_pen = _penalty_score_pair(match)
+    return home_pen is not None and away_pen is not None and home_pen != away_pen
+
+
+def _result_from_match_scores(match: Dict) -> Optional[str]:
+    home_pen, away_pen = _penalty_score_pair(match)
+    if home_pen is not None and away_pen is not None and home_pen != away_pen:
+        return _result_from_scores(home_pen, away_pen)
+
+    home_score, away_score = _base_score_pair(match)
+    return _result_from_scores(home_score, away_score)
+
+
+def _score_text_from_match(match: Dict) -> Optional[str]:
+    home_score, away_score = _base_score_pair(match)
+    return _score_text(home_score, away_score)
+
+
+def _penalty_score_text_from_match(match: Dict) -> Optional[str]:
+    home_pen, away_pen = _penalty_score_pair(match)
+    return _score_text(home_pen, away_pen)
+
+
+def _looks_like_unverified_shootout_score(match: Dict) -> bool:
+    if match.get('status') != 'finished':
+        return False
+    if match.get('home_score_pen') is not None or match.get('away_score_pen') is not None:
+        return False
+
+    home_score, away_score = _raw_score_pair(match)
+    if home_score is None or away_score is None:
+        return False
+
+    return (home_score + away_score) >= 5 and abs(home_score - away_score) <= 2
+
+
+def _first_score_value(score_obj: Dict, keys: List[str]):
+    for key in keys:
+        value = score_obj.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _apply_api_score_fields(match: Dict, api_match: Dict) -> bool:
+    home_score_obj = api_match.get('homeScore') or {}
+    away_score_obj = api_match.get('awayScore') or {}
+
+    home_score = _first_score_value(home_score_obj, ['display', 'normaltime', 'current'])
+    away_score = _first_score_value(away_score_obj, ['display', 'normaltime', 'current'])
+    if home_score is not None:
+        match['home_score'] = home_score
+    if away_score is not None:
+        match['away_score'] = away_score
+
+    home_ht = _first_score_value(home_score_obj, ['period1'])
+    away_ht = _first_score_value(away_score_obj, ['period1'])
+    if home_ht is not None:
+        match['home_score_ht'] = home_ht
+    if away_ht is not None:
+        match['away_score_ht'] = away_ht
+
+    home_et = _first_score_value(home_score_obj, ['overtime', 'extraTime'])
+    away_et = _first_score_value(away_score_obj, ['overtime', 'extraTime'])
+    if home_et is not None:
+        match['home_score_et'] = home_et
+    if away_et is not None:
+        match['away_score_et'] = away_et
+
+    home_pen = _first_score_value(home_score_obj, ['penalties'])
+    away_pen = _first_score_value(away_score_obj, ['penalties'])
+    if home_pen is not None or away_pen is not None:
+        match['home_score_pen'] = home_pen
+        match['away_score_pen'] = away_pen
+
+    return home_score is not None and away_score is not None
+
+
 def _source_status_rank(match: Dict) -> int:
     if match.get('result') is not None or _raw_has_score(match):
         return 50
@@ -272,9 +401,8 @@ def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
 
 def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_name: str,
                              source_rank: int = 0, source_path: Optional[Path] = None) -> Dict:
-    home_score = match.get('home_score')
-    away_score = match.get('away_score')
-    result = _result_from_scores(home_score, away_score)
+    result = _result_from_match_scores(match)
+    score = _score_text_from_match(match)
     raw_status = match.get('status', '')
 
     if result is not None:
@@ -307,7 +435,9 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
         'home_team_id': match.get('home_team_id'),
         'away_team_id': match.get('away_team_id'),
         'result': result,
-        'score': f"{home_score}-{away_score}" if result is not None else None,
+        'score': score if result is not None else None,
+        'penalty_score': _penalty_score_text_from_match(match),
+        'decided_by_penalties': _match_decided_by_penalties(match),
         'status': status,
         'date': match.get('date', ''),
         'start_time': match.get('time', ''),
@@ -671,12 +801,9 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
                     continue
 
                 api_status = api_match.get('status', {}).get('type', '')
-                home_score = api_match.get('homeScore', {}).get('current')
-                away_score = api_match.get('awayScore', {}).get('current')
+                has_score = _apply_api_score_fields(match, api_match)
 
-                if api_status == 'finished' and home_score is not None and away_score is not None:
-                    match['home_score'] = home_score
-                    match['away_score'] = away_score
+                if api_status == 'finished' and has_score:
                     match['status'] = 'finished'
                     if api_match.get('id') and not match.get('event_id'):
                         match['event_id'] = api_match.get('id')
@@ -715,7 +842,8 @@ def _collect_competitions_requiring_update(base_dir: Path, target_date: str):
                     if match.get('date', '').startswith(target_date):
                         status = match.get('status', '')
                         has_score = match.get('home_score') is not None and match.get('away_score') is not None
-                        if status in ('inprogress', 'upcoming', 'notstarted') or not has_score:
+                        needs_score_refresh = comp_type != 'league' and _looks_like_unverified_shootout_score(match)
+                        if status in ('inprogress', 'upcoming', 'notstarted') or not has_score or needs_score_refresh:
                             needs_update = True
                             break
                 if needs_update:
@@ -955,12 +1083,9 @@ def update_match_results(target_date: str):
 
                         if api_home_id == home_id and api_away_id == away_id:
                             api_status = api_m.get('status', {}).get('type', '')
-                            home_score = api_m.get('homeScore', {}).get('current')
-                            away_score = api_m.get('awayScore', {}).get('current')
+                            has_score = _apply_api_score_fields(match, api_m)
 
-                            if api_status == 'finished' and home_score is not None:
-                                match['home_score'] = home_score
-                                match['away_score'] = away_score
+                            if api_status == 'finished' and has_score:
                                 match['status'] = 'finished'
 
                                 event_id = api_m.get('id') or match.get('event_id')
@@ -987,7 +1112,10 @@ def update_match_results(target_date: str):
                                 modified = True
                                 updated_count += 1
                                 updated_matches.add(match_key)
-                                print(f"    OK {match.get('home_team')} {home_score}-{away_score} {match.get('away_team')}")
+                                score_text = _score_text_from_match(match) or "?-?"
+                                penalty_score_text = _penalty_score_text_from_match(match)
+                                penalty_suffix = f" (pen {penalty_score_text})" if penalty_score_text else ""
+                                print(f"    OK {match.get('home_team')} {score_text}{penalty_suffix} {match.get('away_team')}")
                             elif api_status == 'postponed':
                                 match['status'] = 'postponed'
                                 matches[idx] = match
@@ -2072,6 +2200,32 @@ def map_result_to_label(result: str) -> str:
     return mapping.get(result, result)
 
 
+def _actual_fields_from_match(m: Dict) -> Dict:
+    actual_result = map_result_to_label(m['result']) if m.get('result') else None
+    return {
+        'actual_result': actual_result,
+        'actual_score': m.get('score'),
+        'actual_penalty_score': m.get('penalty_score'),
+        'decided_by_penalties': bool(m.get('decided_by_penalties')),
+    }
+
+
+def _apply_actual_fields_to_report_match(match_entry: Dict, m: Dict) -> Optional[str]:
+    fields = _actual_fields_from_match(m)
+
+    if fields.get('actual_score') is not None:
+        match_entry['actual_score'] = fields['actual_score']
+    if fields.get('actual_penalty_score') is not None or match_entry.get('actual_penalty_score') is not None:
+        match_entry['actual_penalty_score'] = fields.get('actual_penalty_score')
+    match_entry['decided_by_penalties'] = fields.get('decided_by_penalties', False)
+
+    actual_result = fields.get('actual_result')
+    if actual_result:
+        match_entry['actual_result'] = actual_result
+        return actual_result
+    return None
+
+
 def _legacy_match_id(m: Dict) -> str:
     comp_type = m.get('comp_type', 'league')
     return f"{comp_type}_{m['country']}_{m['league']}_{m['home']}_vs_{m['away']}".replace(' ', '_')
@@ -2200,8 +2354,9 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         comp_type = m.get('comp_type', 'league')
         match_id = _report_match_id(m)
         
-        is_finished = m.get('result') is not None
-        actual_result = map_result_to_label(m['result']) if m.get('result') else None
+        actual_fields = _actual_fields_from_match(m)
+        actual_result = actual_fields['actual_result']
+        is_finished = actual_result is not None
         
         if is_finished:
             match_status = 'finished'
@@ -2219,12 +2374,11 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'away_team': m['away'],
             'start_time': m.get('start_time', ''),
             'status': match_status,
-            'actual_result': actual_result,
-            'actual_score': m.get('score'),
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
         }
+        match_entry.update(actual_fields)
         match_entry.update(_serialize_result_prediction_data(r, actual_result))
 
         matches.append(match_entry)
@@ -2293,8 +2447,6 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
         if m.get('event_id') and not match.get('event_id'):
             match['event_id'] = m.get('event_id')
         
-        if m.get('score') and not match.get('actual_score'):
-            match['actual_score'] = m.get('score')
         if m.get('total_cards') is not None:
             match['actual_cards'] = m['total_cards']
         if m.get('total_corners') is not None:
@@ -2304,11 +2456,9 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
 
         new_status = m.get('status', 'upcoming')
 
-        if m.get('result') and match['status'] != 'finished':
-            actual_result = map_result_to_label(m['result'])
+        actual_result = _apply_actual_fields_to_report_match(match, m)
+        if actual_result:
             match['status'] = 'finished'
-            match['actual_result'] = actual_result
-            match['actual_score'] = m.get('score')
             if m.get('total_cards') is not None:
                 match['actual_cards'] = m['total_cards']
             if m.get('total_corners') is not None:
@@ -2338,8 +2488,9 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
         if _find_by_keys(existing_by_key, keys):
             continue
         
-        is_finished = m.get('result') is not None
-        actual_result = map_result_to_label(m['result']) if m.get('result') else None
+        actual_fields = _actual_fields_from_match(m)
+        actual_result = actual_fields['actual_result']
+        is_finished = actual_result is not None
         comp_type = m.get('comp_type', 'league')
         match_id = _report_match_id(m)
         
@@ -2351,12 +2502,11 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             'home_team': m['home'],
             'away_team': m['away'],
             'status': m.get('status', 'finished' if is_finished else 'upcoming'),
-            'actual_result': actual_result,
-            'actual_score': m.get('score'),
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
         }
+        new_entry.update(actual_fields)
         new_entry.update(_serialize_result_prediction_data(r, actual_result))
         report['matches'].append(new_entry)
     report_date = report.get('date', '')
@@ -2683,17 +2833,15 @@ def main():
                 for key in _source_match_keys(m_data):
                     matches_by_key.setdefault(key, m_data)
             for match_entry in existing_report.get('matches', []):
-                if match_entry.get('status') == 'finished':
-                    continue
                 m_data = _find_by_keys(matches_by_key, _report_match_keys(match_entry))
                 if not m_data or not m_data.get('result'):
                     continue
                 if m_data.get('event_id') and not match_entry.get('event_id'):
                     match_entry['event_id'] = m_data.get('event_id')
-                actual_result = map_result_to_label(m_data['result'])
+                actual_result = _apply_actual_fields_to_report_match(match_entry, m_data)
+                if not actual_result:
+                    continue
                 match_entry['status'] = 'finished'
-                match_entry['actual_result'] = actual_result
-                match_entry['actual_score'] = m_data.get('score')
                 _mark_match_prediction_correctness(match_entry, actual_result)
 
             _drop_stale_rescheduled_report_entries(existing_report, target_date)

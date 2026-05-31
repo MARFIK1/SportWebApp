@@ -71,6 +71,8 @@ export interface PredictionMatch {
     status: string;
     actual_result: MatchResult | null;
     actual_score: string | null;
+    actual_penalty_score?: string | null;
+    decided_by_penalties?: boolean | null;
     actual_cards: number | null;
     actual_corners: number | null;
     referee_name: string | null;
