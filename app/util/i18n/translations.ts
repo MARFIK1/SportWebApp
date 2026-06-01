@@ -42,6 +42,8 @@ const translations: Record<Locale, Record<string, string>> = {
         unfavorite_team: "Remove team from favorites",
         favorites_empty_title: "No favorite matches for this date",
         favorites_empty_body: "Mark a league or team with a star, then use this view to track only those matches.",
+        no_matches_for_date_title: "No matches for this date",
+        no_matches_for_date_body: "There are no fixtures in the currently tracked competitions for this day. Friendly or national-team matches may be outside this app's configured competition set.",
 
         // Predictions
         total_matches_today: "Total Matches Today",
@@ -62,8 +64,7 @@ const translations: Record<Locale, Record<string, string>> = {
         chart_no_models: "Select at least one model",
         select_all: "All",
         clear_selection: "Clear",
-        chart_hint:
-            "Cumulative accuracy uses all report dates in the window. Lower Brier score means better-calibrated probabilities.",
+        chart_hint: "Cumulative accuracy uses all report dates in the window. Lower Brier score means better-calibrated probabilities.",
         no_finished_matches: "No finished matches yet",
         diagnostics_title: "Model diagnostics",
         diagnostics_missing: "Run npm run diagnostics:models to generate model diagnostics.",
@@ -331,6 +332,8 @@ const translations: Record<Locale, Record<string, string>> = {
         unfavorite_team: "Usuń drużynę z ulubionych",
         favorites_empty_title: "Brak ulubionych meczów dla tej daty",
         favorites_empty_body: "Oznacz ligę lub drużynę gwiazdką, a ten widok pokaże tylko pasujące mecze.",
+        no_matches_for_date_title: "Brak meczów dla tej daty",
+        no_matches_for_date_body: "W aktualnie obsługiwanych rozgrywkach nie ma meczów dla tego dnia. Mecze towarzyskie lub reprezentacyjne mogą być poza skonfigurowanym zakresem aplikacji.",
 
         // Predictions
         total_matches_today: "Mecze dzisiaj",
@@ -351,8 +354,7 @@ const translations: Record<Locale, Record<string, string>> = {
         chart_no_models: "Wybierz przynajmniej jeden model",
         select_all: "Wszystkie",
         clear_selection: "Wyczyść",
-        chart_hint:
-            "Skuteczność narastająco z uwzględnieniem dat raportów w oknie. Niższy Brier oznacza lepszą kalibrację prawdopodobieństw.",
+        chart_hint: "Skuteczność narastająco z uwzględnieniem dat raportów w oknie. Niższy Brier oznacza lepszą kalibrację prawdopodobieństw.",
         no_finished_matches: "Brak zakończonych meczów",
         diagnostics_title: "Diagnostyka modeli",
         diagnostics_missing: "Uruchom npm run diagnostics:models, żeby wygenerować diagnostykę modeli.",

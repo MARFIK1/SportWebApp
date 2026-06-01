@@ -25,11 +25,12 @@ interface HomeLeagueListProps {
     teamIds: Record<string, number>;
     eventIds: Record<string, number>;
     selectedDate: string;
+    hasReport: boolean;
 }
 
 type ViewMode = "all" | "favorites";
 
-export default function HomeLeagueList({ sections, teamIds, eventIds, selectedDate }: HomeLeagueListProps) {
+export default function HomeLeagueList({ sections, teamIds, eventIds, selectedDate, hasReport }: HomeLeagueListProps) {
     const { t } = useLanguage();
     const [viewMode, setViewMode] = useState<ViewMode>("all");
     const [favorites, setFavorites] = useStoredFavorites();
@@ -141,6 +142,13 @@ export default function HomeLeagueList({ sections, teamIds, eventIds, selectedDa
                         onToggleTeamFavorite={toggleTeamFavorite}
                     />
                 ))
+            ) : viewMode === "all" && !hasReport ? (
+                <div className="rounded-3xl border border-dashed border-gray-300 bg-white/50 p-8 text-center dark:border-white/10 dark:bg-gray-950/20">
+                    <p className="text-lg font-black text-gray-900 dark:text-white">{t("no_matches_for_date_title")}</p>
+                    <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-gray-500 dark:text-gray-400">
+                        {t("no_matches_for_date_body")}
+                    </p>
+                </div>
             ) : (
                 <div className="rounded-3xl border border-dashed border-gray-300 bg-white/50 p-8 text-center dark:border-white/10 dark:bg-gray-950/20">
                     <p className="text-lg font-black text-gray-900 dark:text-white">{t("favorites_empty_title")}</p>

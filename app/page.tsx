@@ -24,9 +24,13 @@ function getConsensusConfidence(match: PredictionMatch): number {
 }
 
 function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
-    if (requestedDate && dates.includes(requestedDate)) return requestedDate;
-    if (dates.includes(todayIso)) return todayIso;
-    return dates[dates.length - 1] || "";
+    if (requestedDate) return requestedDate;
+    return todayIso || dates[dates.length - 1] || "";
+}
+
+function getDatePickerDates(dates: string[], selectedDate: string): string[] {
+    if (!selectedDate || dates.includes(selectedDate)) return dates;
+    return [...dates, selectedDate].sort((a, b) => a.localeCompare(b));
 }
 
 export default async function Home({ searchParams }: PageProps) {
@@ -35,11 +39,12 @@ export default async function Home({ searchParams }: PageProps) {
     const requestedDate = normalizeReportDate(resolvedSearchParams.date);
     const todayIso = todayYmd();
     const selectedDate = selectReportDate(dates, requestedDate, todayIso);
-    const report = selectedDate ? loadPredictionReport(selectedDate) : null;
+    const report = selectedDate && dates.includes(selectedDate) ? loadPredictionReport(selectedDate) : null;
+    const datePickerDates = getDatePickerDates(dates, selectedDate);
 
     const t = await getServerT();
 
-    if (!report || dates.length === 0) {
+    if (!selectedDate || datePickerDates.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-gray-500 dark:text-gray-400">
                 <p className="text-xl">{t("no_data")}</p>
@@ -47,15 +52,16 @@ export default async function Home({ searchParams }: PageProps) {
         );
     }
 
-    const leagueDataPaths = Array.from(new Set(report.matches.map((m) => `${m.comp_type}/${m.league}`)));
+    const matches = report?.matches ?? [];
+    const leagueDataPaths = Array.from(new Set(matches.map((m) => `${m.comp_type}/${m.league}`)));
     const competitions = leagueDataPaths.flatMap((dataPath) => {
         const comp = resolveCompetitionByDataPath(dataPath);
         return comp ? [comp] : [];
     });
     const { teamIds, eventIds } = buildMatchLookupMaps(competitions);
 
-    const matchesByLeague: Record<string, typeof report.matches> = {};
-    for (const match of report.matches) {
+    const matchesByLeague: Record<string, PredictionMatch[]> = {};
+    for (const match of matches) {
         const key = `${match.comp_type}/${match.league}`;
         if (!matchesByLeague[key]) matchesByLeague[key] = [];
         matchesByLeague[key].push(match);
@@ -87,10 +93,10 @@ export default async function Home({ searchParams }: PageProps) {
         return a.leagueName.localeCompare(b.leagueName);
     });
 
-    const totalMatches = report.summary.total_matches;
-    const finishedMatches = report.summary.finished_matches;
+    const totalMatches = report?.summary.total_matches ?? 0;
+    const finishedMatches = report?.summary.finished_matches ?? 0;
     const pendingMatches = totalMatches - finishedMatches;
-    const predictedMatches = report.matches.filter((match) => getConsensusConfidence(match) > 0);
+    const predictedMatches = matches.filter((match) => getConsensusConfidence(match) > 0);
     const averageConfidence = predictedMatches.length
         ? predictedMatches.reduce((sum, match) => sum + getConsensusConfidence(match), 0) / predictedMatches.length
         : 0;
@@ -143,13 +149,14 @@ export default async function Home({ searchParams }: PageProps) {
                 </div>
             </div>
 
-            <DatePicker dates={dates} selectedDate={selectedDate} todayIso={todayIso} />
+            <DatePicker dates={datePickerDates} selectedDate={selectedDate} todayIso={todayIso} />
 
             <HomeLeagueList
                 sections={leagueSections}
                 teamIds={teamIds}
                 eventIds={eventIds}
                 selectedDate={selectedDate}
+                hasReport={Boolean(report)}
             />
         </div>
     );
