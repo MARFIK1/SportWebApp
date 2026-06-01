@@ -43,7 +43,7 @@ const translations: Record<Locale, Record<string, string>> = {
         favorites_empty_title: "No favorite matches for this date",
         favorites_empty_body: "Mark a league or team with a star, then use this view to track only those matches.",
         no_matches_for_date_title: "No matches for this date",
-        no_matches_for_date_body: "There are no fixtures in the currently tracked competitions for this day. Friendly or national-team matches may be outside this app's configured competition set.",
+        no_matches_for_date_body: "There are no matches for this day.",
 
         // Predictions
         total_matches_today: "Total Matches Today",
@@ -333,7 +333,7 @@ const translations: Record<Locale, Record<string, string>> = {
         favorites_empty_title: "Brak ulubionych meczów dla tej daty",
         favorites_empty_body: "Oznacz ligę lub drużynę gwiazdką, a ten widok pokaże tylko pasujące mecze.",
         no_matches_for_date_title: "Brak meczów dla tej daty",
-        no_matches_for_date_body: "W aktualnie obsługiwanych rozgrywkach nie ma meczów dla tego dnia. Mecze towarzyskie lub reprezentacyjne mogą być poza skonfigurowanym zakresem aplikacji.",
+        no_matches_for_date_body: "W tym dniu nie ma meczów.",
 
         // Predictions
         total_matches_today: "Mecze dzisiaj",

@@ -28,9 +28,27 @@ function selectReportDate(dates: string[], requestedDate: string | null, todayIs
     return todayIso || dates[dates.length - 1] || "";
 }
 
-function getDatePickerDates(dates: string[], selectedDate: string): string[] {
-    if (!selectedDate || dates.includes(selectedDate)) return dates;
-    return [...dates, selectedDate].sort((a, b) => a.localeCompare(b));
+const DATE_PICKER_WINDOW_DAYS = 4;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function formatDateUtc(time: number): string {
+    return new Date(time).toISOString().slice(0, 10);
+}
+
+function getDatePickerDates(dates: string[], selectedDate: string, todayIso: string): string[] {
+    const expandedDates = new Set(dates);
+    const anchors = [selectedDate, todayIso].filter(Boolean);
+
+    for (const anchor of anchors) {
+        const baseTime = Date.parse(`${anchor}T12:00:00Z`);
+        if (!Number.isFinite(baseTime)) continue;
+
+        for (let offset = -DATE_PICKER_WINDOW_DAYS; offset <= DATE_PICKER_WINDOW_DAYS; offset += 1) {
+            expandedDates.add(formatDateUtc(baseTime + offset * MS_PER_DAY));
+        }
+    }
+
+    return Array.from(expandedDates).sort((a, b) => a.localeCompare(b));
 }
 
 export default async function Home({ searchParams }: PageProps) {
@@ -40,7 +58,7 @@ export default async function Home({ searchParams }: PageProps) {
     const todayIso = todayYmd();
     const selectedDate = selectReportDate(dates, requestedDate, todayIso);
     const report = selectedDate && dates.includes(selectedDate) ? loadPredictionReport(selectedDate) : null;
-    const datePickerDates = getDatePickerDates(dates, selectedDate);
+    const datePickerDates = getDatePickerDates(dates, selectedDate, todayIso);
 
     const t = await getServerT();
 
