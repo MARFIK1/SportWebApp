@@ -208,7 +208,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const rawAnalysis = analysisReport?.matches?.[analysisKey] ?? null;
 
-    const { displayHomeScore, displayAwayScore, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
+    const { displayHomeScore, displayAwayScore, penaltyScore, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
     const matchStats = isFinished ? buildMatchStats(match) : [];
     const rawMatch = match as unknown as Record<string, unknown>;
     const actualXgHome = readStatValue(rawMatch, ["home_expectedgoals", "home_xg"]);
@@ -298,9 +298,9 @@ export default async function Match({ params, searchParams }: PageProps) {
                                         <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white sm:px-3 sm:text-xs">
                                             {t("full_time")}
                                         </span>
-                                        {match.home_score_pen != null && match.away_score_pen != null && (
+                                        {penaltyScore && (
                                             <span className="text-xs text-gray-500 dark:text-gray-400">
-                                                {t("penalties")}: {match.home_score_pen} - {match.away_score_pen}
+                                                {t("penalties")}: {penaltyScore.home} - {penaltyScore.away}
                                             </span>
                                         )}
                                         {match.home_score_ht != null && match.away_score_ht != null && (

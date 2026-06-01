@@ -131,6 +131,7 @@ function HighlightCard({
     const { match, consensus, confidence } = item;
     const href = match.event_id ? `/match/${match.event_id}?date=${selectedDate}` : null;
     const score = match.actual_score?.split("-").map((part) => part.trim());
+    const penaltyScore = match.actual_penalty_score?.split("-").map((part) => part.trim());
     const isFinished = match.status === "finished";
     const metricLabel = variant === "draw" ? t("daily_draw_probability") : t("confidence");
     const metricValue = variant === "draw" ? item.drawProbability ?? 0 : confidence;
@@ -140,11 +141,18 @@ function HighlightCard({
         <>
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
                 <TeamBadge name={match.home_team} teamId={teamIds[match.home_team]} />
-                <div className="flex min-w-[56px] justify-center">
+                <div className="flex min-w-[56px] flex-col items-center justify-center gap-1">
                     {isFinished && score ? (
-                        <span className="rounded-xl bg-gray-950 px-2.5 py-1.5 text-sm font-black text-white dark:bg-black/60">
-                            {score[0]} - {score[1]}
-                        </span>
+                        <>
+                            <span className="rounded-xl bg-gray-950 px-2.5 py-1.5 text-sm font-black text-white dark:bg-black/60">
+                                {score[0]} - {score[1]}
+                            </span>
+                            {penaltyScore && (
+                                <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
+                                    {t("penalties")} {penaltyScore[0]} - {penaltyScore[1]}
+                                </span>
+                            )}
+                        </>
                     ) : (
                         <span className="text-sm font-black uppercase text-gray-400 dark:text-gray-500">vs</span>
                     )}

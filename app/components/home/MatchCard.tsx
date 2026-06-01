@@ -100,6 +100,7 @@ export default function MatchCard({
     const prediction = getPredictionLabel(match, t);
     const drawWatch = getDrawWatchSignalFromPredictions(match.predictions);
     const score = match.actual_score?.split("-").map((s) => s.trim());
+    const penaltyScore = match.actual_penalty_score?.split("-").map((s) => s.trim());
     const correct = isPredictionCorrect(match);
 
     const borderColor = correct === null
@@ -166,6 +167,11 @@ export default function MatchCard({
                             <span className="rounded-2xl bg-gray-950 px-3 py-2 text-xl font-black text-white dark:bg-black/60">
                                 {score[0]} - {score[1]}
                             </span>
+                            {penaltyScore && (
+                                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
+                                    {t("penalties")} {penaltyScore[0]} - {penaltyScore[1]}
+                                </span>
+                            )}
                         </>
                     ) : match.status === "postponed" ? (
                         <>

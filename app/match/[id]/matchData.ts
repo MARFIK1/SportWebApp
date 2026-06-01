@@ -6,6 +6,8 @@ export interface MatchDisplayState {
     displayStatus: string;
     displayHomeScore: number | null;
     displayAwayScore: number | null;
+    penaltyScore: { home: number; away: number } | null;
+    decidedByPenalties: boolean;
     actualResult: MatchResult | null;
     isFinished: boolean;
 }
@@ -32,19 +34,56 @@ export function resultFromScore(home: number | null | undefined, away: number | 
     return "DRAW";
 }
 
+function deriveBaseScore(
+    score: { home: number; away: number } | null,
+    penaltyScore: { home: number; away: number } | null
+): { home: number; away: number } | null {
+    if (!score) return null;
+    if (
+        penaltyScore &&
+        (penaltyScore.home !== 0 || penaltyScore.away !== 0) &&
+        score.home >= penaltyScore.home &&
+        score.away >= penaltyScore.away &&
+        (score.home > penaltyScore.home || score.away > penaltyScore.away)
+    ) {
+        return {
+            home: score.home - penaltyScore.home,
+            away: score.away - penaltyScore.away,
+        };
+    }
+    return score;
+}
+
 export function resolveMatchDisplayState(match: SofascoreMatch, predMatch: PredictionMatch | null | undefined): MatchDisplayState {
     const reportScore = parseActualScore(predMatch?.actual_score);
-    const reportFinished = predMatch?.status === "finished" && reportScore !== null;
+    const reportPenaltyScore = parseActualScore(predMatch?.actual_penalty_score);
+    const rawPenaltyScore = match.home_score_pen != null && match.away_score_pen != null
+        ? { home: match.home_score_pen, away: match.away_score_pen }
+        : null;
+    const penaltyScore = reportPenaltyScore ?? rawPenaltyScore;
+    const rawMatchScore = match.home_score != null && match.away_score != null
+        ? { home: match.home_score, away: match.away_score }
+        : null;
+    const baseScore = deriveBaseScore(reportScore ?? rawMatchScore, penaltyScore);
+    const reportFinished = predMatch?.status === "finished" && baseScore !== null;
     const displayStatus = reportFinished ? "finished" : match.status;
-    const displayHomeScore = reportFinished && reportScore ? reportScore.home : match.home_score;
-    const displayAwayScore = reportFinished && reportScore ? reportScore.away : match.away_score;
-    const actualResult = predMatch?.actual_result ?? resultFromScore(displayHomeScore, displayAwayScore);
+    const displayScore = displayStatus === "finished" ? baseScore : rawMatchScore;
+    const displayHomeScore = displayScore?.home ?? null;
+    const displayAwayScore = displayScore?.away ?? null;
+    const decidedByPenalties = Boolean(
+        predMatch?.decided_by_penalties ??
+        (penaltyScore && penaltyScore.home !== penaltyScore.away)
+    );
+    const penaltyResult = decidedByPenalties && penaltyScore ? resultFromScore(penaltyScore.home, penaltyScore.away) : null;
+    const actualResult = predMatch?.actual_result ?? penaltyResult ?? resultFromScore(displayHomeScore, displayAwayScore);
     const isFinished = displayStatus === "finished" && actualResult !== null;
 
     return {
         displayStatus,
         displayHomeScore,
         displayAwayScore,
+        penaltyScore,
+        decidedByPenalties,
         actualResult,
         isFinished,
     };
