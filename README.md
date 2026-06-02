@@ -1,66 +1,69 @@
 # SportWebApp
 
-Football results and prediction web app backed by a custom Sofascore scraping and ML pipeline.
+Football match prediction web app backed by a custom Sofascore scraping, feature engineering and machine-learning pipeline.
 
-## Overview
+The project is designed as an end-to-end system, not a one-off notebook: data can be refreshed, reports can be regenerated, model quality can be measured on live matches, and the frontend can publish a compact production snapshot.
 
-The app combines a Python data pipeline with a Next.js frontend:
+## What The App Does
 
-- the scraper collects fixtures, scores, statistics and selected odds markets from Sofascore
-- historical data is transformed into ML features and used to train multiple models
-- `predict_today.py` generates daily prediction reports consumed by the web app
-- the frontend shows match lists, match pages, teams, players, league tables and a `/predictions` dashboard
-
-On the match page you can now compare two prediction variants:
-
-- `Without odds` - data-only model variant
-- `With odds` - odds-enhanced model variant
-
-Both variants are stored in the report payload and can be toggled directly on the match page.
+- shows daily football predictions grouped by league
+- supports favorite teams and leagues in the daily view
+- shows draw-watch flags when a draw is close to the top prediction
+- explains individual match predictions with key signals, probability maps and model votes
+- compares `without odds` and `with odds` prediction variants
+- displays live model accuracy, Brier score, confidence buckets and league splits
+- exposes a protected `/admin` panel for operational status and deeper diagnostics
+- deploys a trimmed `.data` snapshot instead of the full research dataset
 
 ## Stack
 
-- **Next.js 16.2.4** (App Router) + **React 19** + TypeScript
-- **Tailwind CSS 3**
-- **ESLint 9** + `eslint-config-next`
-- **Python 3.11**
-- **ML:** scikit-learn, XGBoost, LightGBM, PyTorch (LSTM), Optuna
-- **Charts:** Recharts
-- **Tests:** Jest
+- Next.js `16.2.6` App Router, React `19.2.5`, TypeScript
+- Tailwind CSS 3
+- Recharts
+- Jest, ESLint, TypeScript type checks
+- Python 3.11 data pipeline
+- scikit-learn, XGBoost, LightGBM, PyTorch LSTM, Optuna
 
-## Model Results
+## Main Routes
 
-Main classification task: `HOME / DRAW / AWAY`.
-Random baseline is about `33%`.
+| Route | Purpose |
+| --- | --- |
+| `/` | daily match list, date picker, league sections, favorites, empty state for dates without tracked matches |
+| `/match/[id]` | match detail page with teams, score/status, prediction explanation, radar, prediction triangle, H2H, model table and league table context |
+| `/league/[slug]` | league standings and competition view |
+| `/predictions` | public model dashboard and prediction analytics |
+| `/admin` | protected operational panel with automation status and admin-only diagnostics |
+
+## Current Model Snapshot
+
+Main task: `HOME / DRAW / AWAY`.
+
+Random baseline for a balanced 1X2 classifier is about `33%`, but football is noisy and draws are difficult, so live accuracy and calibration are tracked together.
 
 Current `without_odds` summary from `SofascoreData/data/models/comparison_summary.csv`:
 
-| Model | Test Accuracy | Test F1 | Live Accuracy | Live Matches | Brier Score |
-|-------|:-------------:|:-------:|:-------------:|:------------:|:-----------:|
-| LightGBM | 50.6% | 43.2% | 51.9% | 1376 | 0.604 |
-| MLP | 50.3% | 43.8% | 51.7% | 1376 | 0.607 |
-| Random Forest | 48.8% | 46.9% | 49.3% | 1376 | 0.614 |
-| Logistic Regression | 46.2% | 46.7% | 47.8% | 1376 | 0.615 |
-| XGBoost | 46.0% | 46.4% | 47.6% | 1376 | 0.619 |
-| Stacking | 45.3% | 46.2% | 47.7% | 1376 | 0.624 |
-| KNN | 45.7% | 43.8% | 45.1% | 1376 | 0.651 |
-| Ensemble | 45.3% | 46.1% | 44.6% | 1376 | 0.627 |
-| LSTM | 46.1% | 45.6% | 43.1% | 1376 | 0.641 |
+| Model | Test Accuracy | Test F1 | Live Accuracy | Live Matches | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LightGBM | 49.4% | 43.7% | 51.3% | 1726 | 0.609 |
+| MLP | 49.0% | 44.6% | 50.8% | 1726 | 0.612 |
+| Random Forest | 47.8% | 46.3% | 49.4% | 1726 | 0.617 |
+| Logistic Regression | 45.5% | 46.3% | 47.9% | 1726 | 0.618 |
+| XGBoost | 45.6% | 46.1% | 47.7% | 1726 | 0.622 |
+| KNN | 45.4% | 43.5% | 46.2% | 1726 | 0.645 |
+| Stacking | 45.4% | 46.1% | 46.1% | 1726 | 0.630 |
+| Ensemble | 46.3% | 46.7% | 43.5% | 1726 | 0.634 |
+| LSTM | 47.3% | 45.7% | 42.6% | 1726 | 0.646 |
 
-Current comparison summary was generated on `2026-05-07` after retraining with the updated pre-match feature set.
-Compared with the previous `2026-04-30` summary, the top live accuracy increased from `51.7%` to `51.9%`.
-The currently used model artifacts were last refreshed on:
+`npm run diagnostics:models` also produces `SofascoreData/data/models/model_diagnostics.json`, currently based on 61 reports and 1875 finished matches from `2026-03-01` to `2026-05-14`.
 
-- `without_odds`: `2026-05-07`
-- `with_odds`: `2026-05-07`
+## Prediction Outputs
 
-The current training pipeline separates feature sets by availability:
+Daily reports can contain two prediction bundles:
 
-- `without_odds` uses `pre_match_safe` features available before a match
-- `with_odds` uses `odds_available` features when valid match-result odds are present
-- model artifacts include JSON manifests with feature set, target list, date ranges and calibration metrics
+- `without_odds` - model variant based on football and statistical pre-match features
+- `with_odds` - variant that additionally uses available match-result odds features
 
-The app also predicts additional markets such as:
+The app also predicts secondary markets:
 
 - BTTS
 - over 1.5 goals
@@ -68,105 +71,65 @@ The app also predicts additional markets such as:
 - corners 8.5+
 - cards 3.5+
 
-These are typical high-interest pre-match bookmaker markets commonly used in football betting analysis.
-
-## Prediction Variants
-
-Daily reports can contain two parallel prediction bundles:
-
-- `without_odds`
-- `with_odds`
-
-The report still keeps the top-level prediction fields for compatibility, but match pages can now switch between the two explicit variants.
-
-The current default match-page view is `without_odds`, with `with_odds` available as a comparison variant.
-
-This makes it possible to compare:
-
-- a model trained only on football/statistical data
-- a model that also uses available bookmaker odds features
-
 ## Data Pipeline
 
-The Python side lives in `SofascoreData/` and is responsible for:
-
-1. scraping raw match data
-2. generating ML-ready features
-3. training and comparing models
-4. generating daily prediction reports
-
-Important files:
+The Python pipeline lives in `SofascoreData/`:
 
 ```text
 SofascoreData/
-  sofascore/                # scraper, feature generation, predictor code
-  data/                     # full historical dataset and trained models
-  reports/                  # daily prediction reports used by the web app
-  predict_today.py          # scrape/update/repredict entry point
-  train_models.ipynb        # training workflow
-  ml_comparison.ipynb       # model comparison workflow
+  sofascore/                 # scraper, feature generation and predictor code
+  data/                      # historical data, model artifacts and diagnostics
+  reports/                   # daily prediction reports consumed by the app
+  predict_today.py           # update/scrape/predict entry point
+  scrape_all.py              # competition season scraper
+  regenerate_all_features.py # feature rebuild step
+  train_models.ipynb         # training workflow
 ```
 
-Common scraping commands:
+Typical workflow:
+
+1. scraper downloads fixtures, results and statistics
+2. feature engineering builds pre-match-safe features such as form, H2H and rolling team statistics
+3. models are trained and compared with chronological validation
+4. `predict_today.py` writes daily reports
+5. the frontend reads reports and model metadata from `.data` or `SofascoreData`
+
+Common Python commands:
 
 ```bash
 cd SofascoreData
-python scrape_all.py              # current/latest season for all competitions
-python scrape_all.py --all        # full 5-season scrape
-python scrape_all.py --seasons 3  # custom season count
+python scrape_all.py
+python regenerate_all_features.py
+python predict_today.py 2026-05-15 --update
+python predict_today.py 2026-05-15 --scrape
 ```
 
-## Prebuild And `.data`
+## Model Diagnostics
 
-The frontend does not ship the full raw training dataset.
+Run:
 
-Before production build/deploy, `scripts/prebuild.mjs` prepares a smaller `.data/` snapshot for the app:
-
-- copies only the competitions used by the frontend
-- trims match/player payloads to fields actually used in the UI
-- copies model comparison outputs
-- copies only a recent report window by default
-- writes compact historical `accuracy_history.json` for dashboard charts
-
-This keeps the deployment payload much smaller and separates:
-
-- full working data in `SofascoreData/data`
-- app-ready snapshot in `.data`
-
-By default the app ships reports from `14` days back through `14` days ahead.
-The `/predictions` dashboard keeps the full accuracy-over-time history from the compact prebuild artifact instead of requiring all historical report folders in production.
-
-Useful environment flags:
-
-- `PREBUILD_REPORT_DAYS_PAST`
-- `PREBUILD_REPORT_DAYS_FUTURE`
-- `PREBUILD_COPY_ALL_REPORTS=1`
-- `PREBUILD_CLEAN=1`
-
-## Project Structure
-
-```text
-app/                        # Next.js application
-  page.tsx                  # home page with daily matches
-  match/[id]/               # match details page
-  team/[id]/                # team page
-  player/[id]/              # player page
-  league/[slug]/            # league tables / standings
-  predictions/              # model dashboard
-scripts/
-  prebuild.mjs              # builds the trimmed .data snapshot
-  vercel-deploy.mjs         # deploy helper with local data staging
-SofascoreData/
-  sofascore/                # scraper + ML code
-  data/                     # full historical data + trained models
-  reports/                  # generated daily reports
-types/                      # shared frontend types
-__tests__/                  # unit tests
+```bash
+npm run diagnostics:models
 ```
+
+This generates:
+
+- `SofascoreData/data/models/model_diagnostics.json`
+- CSV files under `SofascoreData/data/models/diagnostics/`
+
+Diagnostics include:
+
+- live accuracy by model
+- Brier score
+- draw recall and confusion matrix
+- confidence buckets
+- league accuracy split
+- draw-watch threshold sweep
+- balanced draw candidates
+
+The public `/predictions` page shows selected user-safe analytics. The `/admin` page shows operational and deeper diagnostic context.
 
 ## Local Development
-
-The repo is currently developed with modern Node.js and Python 3.11.
 
 Install frontend dependencies:
 
@@ -174,20 +137,22 @@ Install frontend dependencies:
 npm install
 ```
 
-Run the app locally:
+Run with local working data:
 
 ```bash
 npm run dev
 ```
 
-Install Python dependencies for scraping / ML:
+The app reads `.data/` first and falls back to `SofascoreData/data/` during local development. If your data lives outside the repository, point the app to it with `SOFASCORE_DATA_DIR` and `SOFASCORE_REPORTS_DIR`.
+
+Install Python dependencies:
 
 ```bash
 pip install -r SofascoreData/requirements.txt
 python -m nbstripout --install
 ```
 
-On Windows, if the repository path contains spaces, normalize the local Git filter to the project venv:
+On Windows, if notebook output stripping needs a repo-local Python path:
 
 ```bash
 git config filter.nbstripout.clean ".venv/Scripts/python.exe -m nbstripout"
@@ -196,13 +161,39 @@ git config filter.nbstripout.required true
 git config diff.ipynb.textconv ".venv/Scripts/python.exe -m nbstripout -t"
 ```
 
-The app reads from `.data/` first and falls back to `SofascoreData/data/` when needed.
+## Environment Variables
 
-Scraping also requires a local Chrome or Brave browser for Selenium.
+| Variable | Purpose |
+| --- | --- |
+| `ADMIN_PASSWORD` | enables password login for `/admin` |
+| `ADMIN_ACCESS_TOKEN` | alternative admin secret |
+| `SOFASCORE_DATA_DIR` | overrides frontend data directory |
+| `SOFASCORE_REPORTS_DIR` | overrides frontend reports directory |
+| `PREBUILD_REPORT_DAYS_PAST` | controls past report window copied into `.data` |
+| `PREBUILD_REPORT_DAYS_FUTURE` | controls future report window copied into `.data` |
+| `PREBUILD_COPY_ALL_REPORTS` | copies all reports when set to `1` |
+| `PREBUILD_CLEAN` | cleans `.data` before prebuild when set to `1` |
+| `PREBUILD_LOGS_DIR` | copies automation logs into the production snapshot |
+| `MODEL_DIAGNOSTICS_DIR` | custom CSV output directory for model diagnostics |
+
+In local development, `/admin` is available without a password only when no admin secret is configured. In production, set `ADMIN_PASSWORD` or `ADMIN_ACCESS_TOKEN`.
+
+## Prebuild And Data Snapshot
+
+The frontend does not deploy the full raw dataset. `scripts/prebuild.mjs` prepares a compact `.data/` snapshot:
+
+- trimmed competition and match payloads
+- recent daily reports
+- model comparison artifacts
+- model diagnostics
+- accuracy history for dashboard charts
+- automation status/log summaries for `/admin`
+
+The app reads `.data/` first and falls back to `SofascoreData/data/` during local development.
 
 ## Build And Deploy
 
-Local production build:
+Production build:
 
 ```bash
 npm run build:prod
@@ -214,11 +205,15 @@ Deploy with local data snapshot:
 npm run deploy:vercel
 ```
 
-This deploy command is pinned to Vercel scope `sportwebapp-project`, project `sport-web-app`, and verifies production alias `https://sport-web-app-eight.vercel.app`.
+Current public deployment:
 
-Important: pushing Git commits alone does **not** deploy the local `.data/` snapshot. The production deploy flow for this project is the local Vercel deploy command above.
+```text
+https://sport-web-app-eight.vercel.app
+```
 
-## Testing
+For a different Vercel project, link and configure Vercel locally, set the required environment variables, then run the deploy command. Pushing Git commits alone does not upload the local `.data` snapshot. The local deploy flow builds and deploys the snapshot explicitly.
+
+## Tests
 
 ```bash
 npm test
@@ -226,3 +221,9 @@ npm run typecheck
 npm run typecheck:test
 npm run lint
 ```
+
+## Repository Hygiene
+
+- keep secrets in `.env.local` or Vercel environment variables, never in committed files
+- notebook outputs are stripped with `nbstripout`
+- generated diagnostics are useful for analysis, but only commit them intentionally
