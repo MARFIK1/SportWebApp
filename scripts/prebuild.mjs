@@ -1,6 +1,6 @@
 // Trim SofascoreData to the fields the app uses; write to .data/
 // Run: node scripts/prebuild.mjs
-// Env: PREBUILD_REPORT_DAYS_PAST / PREBUILD_REPORT_DAYS_FUTURE (default 14), PREBUILD_COPY_ALL_REPORTS=1 for all report dates.
+// Env: PREBUILD_REPORT_DAYS_PAST / PREBUILD_REPORT_DAYS_FUTURE (default 30 past / 1 future), PREBUILD_COPY_ALL_REPORTS=1 for all report dates.
 
 import fs from "fs";
 import path from "path";
@@ -353,8 +353,8 @@ function copyReportsWindowed(srcReports, destReports) {
         return { copied: n, skipped: 0, total: n };
     }
 
-    const past = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_PAST || "14", 10));
-    const future = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_FUTURE || "14", 10));
+    const past = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_PAST || "30", 10));
+    const future = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_FUTURE || "1", 10));
     const today = todayYmd();
     const minYmd = addCalendarDaysYmd(today, -past);
     const maxYmd = addCalendarDaysYmd(today, future);

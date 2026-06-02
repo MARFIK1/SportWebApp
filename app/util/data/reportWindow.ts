@@ -11,8 +11,8 @@ export function filterReportDatesByWindow(dates: string[]): string[] {
     const validDates = dates.filter(isValidYmdDate);
     if (disabled) return validDates;
 
-    const past = Math.max(0, parseInt(process.env.REPORT_DAYS_PAST ?? "14", 10));
-    const future = Math.max(0, parseInt(process.env.REPORT_DAYS_FUTURE ?? "14", 10));
+    const past = Math.max(0, parseInt(process.env.REPORT_DAYS_PAST ?? "30", 10));
+    const future = Math.max(0, parseInt(process.env.REPORT_DAYS_FUTURE ?? "1", 10));
     const today = todayYmd();
     const minYmd = addCalendarDaysYmd(today, -past);
     const maxYmd = addCalendarDaysYmd(today, future);

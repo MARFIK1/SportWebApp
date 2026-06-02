@@ -24,7 +24,9 @@ function getConsensusConfidence(match: PredictionMatch): number {
     return prediction ? consensus.avg_probabilities?.[prediction] ?? 0 : 0;
 }
 
-const DATE_PICKER_WINDOW_DAYS = 4;
+const REPORT_DAYS_PAST = 30;
+const REPORT_DAYS_FUTURE = 1;
+const DAILY_DATE_WINDOW_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function parseDateUtc(date: string): number {
@@ -35,38 +37,39 @@ function formatDateUtc(time: number): string {
     return new Date(time).toISOString().slice(0, 10);
 }
 
-function isInDailyDateWindow(date: string, todayIso: string): boolean {
+function getDayOffset(date: string, todayIso: string): number | null {
     const dateTime = parseDateUtc(date);
     const todayTime = parseDateUtc(todayIso);
-    if (!Number.isFinite(dateTime) || !Number.isFinite(todayTime)) return false;
+    if (!Number.isFinite(dateTime) || !Number.isFinite(todayTime)) return null;
 
-    return Math.abs(dateTime - todayTime) <= DATE_PICKER_WINDOW_DAYS * MS_PER_DAY;
+    return Math.round((dateTime - todayTime) / MS_PER_DAY);
 }
 
-function addDateWindow(expandedDates: Set<string>, anchor: string) {
+function isInReportDateWindow(date: string, todayIso: string): boolean {
+    const offset = getDayOffset(date, todayIso);
+    return offset !== null && offset >= -REPORT_DAYS_PAST && offset <= REPORT_DAYS_FUTURE;
+}
+
+function addDailyDateWindow(expandedDates: Set<string>, anchor: string) {
     const baseTime = parseDateUtc(anchor);
     if (!Number.isFinite(baseTime)) return;
 
-    for (let offset = -DATE_PICKER_WINDOW_DAYS; offset <= DATE_PICKER_WINDOW_DAYS; offset += 1) {
+    for (let offset = -DAILY_DATE_WINDOW_DAYS; offset <= DAILY_DATE_WINDOW_DAYS; offset += 1) {
         expandedDates.add(formatDateUtc(baseTime + offset * MS_PER_DAY));
     }
 }
 
 function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
-    const dateSet = new Set(dates);
-
-    if (requestedDate && (dateSet.has(requestedDate) || isInDailyDateWindow(requestedDate, todayIso))) {
+    if (requestedDate && isInReportDateWindow(requestedDate, todayIso)) {
         return requestedDate;
     }
 
     return todayIso || dates[dates.length - 1] || "";
 }
 
-function getDatePickerDates(dates: string[], selectedDate: string, todayIso: string): string[] {
-    const expandedDates = new Set(dates);
-
-    addDateWindow(expandedDates, todayIso);
-    if (dates.includes(selectedDate)) addDateWindow(expandedDates, selectedDate);
+function getDatePickerDates(dates: string[], todayIso: string): string[] {
+    const expandedDates = new Set(dates.filter((date) => isInReportDateWindow(date, todayIso)));
+    addDailyDateWindow(expandedDates, todayIso);
 
     return Array.from(expandedDates).sort((a, b) => a.localeCompare(b));
 }
@@ -80,7 +83,7 @@ export default async function Home({ searchParams }: PageProps) {
     if (requestedDate && requestedDate !== selectedDate) redirect(`/?date=${selectedDate}`);
 
     const report = selectedDate && dates.includes(selectedDate) ? loadPredictionReport(selectedDate) : null;
-    const datePickerDates = getDatePickerDates(dates, selectedDate, todayIso);
+    const datePickerDates = getDatePickerDates(dates, todayIso);
 
     const t = await getServerT();
 
