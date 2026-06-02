@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getCompetitionBySlug } from "@/app/util/league/leagueRegistry";
-import { loadAllSeasons, computeStandings, type StandingRow } from "@/app/util/data/dataService";
+import { loadAllSeasons, computeStandings, resolveLeagueTableContext, type StandingRow } from "@/app/util/data/dataService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
@@ -144,6 +144,8 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
     const seasons = Array.from(seasonSet).sort();
     const selectedSeason = resolvedSearchParams.season || (seasons.length > 0 ? seasons[seasons.length - 1] : "");
     const seasonMatches = selectedSeason ? allMatches.filter((m) => m.season === selectedSeason) : allMatches;
+    const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(seasonMatches) : null;
+    const standingsMatches = leagueTableContext?.standingsMatches ?? seasonMatches;
 
     const groups = detectGroups(seasonMatches);
     const playoffMatches = seasonMatches.filter((m) => m.round != null && m.round > 10);
@@ -242,7 +244,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
             ) : (
                 <div className="bg-white dark:bg-gray-900/50 rounded-2xl p-8 mb-6">
                     {(() => {
-                        const standings = computeStandings(seasonMatches);
+                        const standings = computeStandings(standingsMatches);
                         return standings.length > 0 ? <StandingsTable standings={standings} t={t} /> : null;
                     })()}
                 </div>
