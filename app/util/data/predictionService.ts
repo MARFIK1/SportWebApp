@@ -210,7 +210,11 @@ function collectReportDates(): string[] {
 }
 
 function accuracyHistoryPaths(): string[] {
-    const paths = [repoPath(".data", "models", "accuracy_history.json")];
+    const paths: string[] = [];
+    if (process.env.SOFASCORE_DATA_DIR) {
+        paths.push(path.join(process.env.SOFASCORE_DATA_DIR, "models", "accuracy_history.json"));
+    }
+    paths.push(repoPath(".data", "models", "accuracy_history.json"));
     if (allowSourceFallback()) {
         paths.push(repoPath("SofascoreData", "data", "models", "accuracy_history.json"));
     }
@@ -218,7 +222,11 @@ function accuracyHistoryPaths(): string[] {
 }
 
 function modelDiagnosticsPaths(): string[] {
-    const paths = [repoPath(".data", "models", "model_diagnostics.json")];
+    const paths: string[] = [];
+    if (process.env.SOFASCORE_DATA_DIR) {
+        paths.push(path.join(process.env.SOFASCORE_DATA_DIR, "models", "model_diagnostics.json"));
+    }
+    paths.push(repoPath(".data", "models", "model_diagnostics.json"));
     if (allowSourceFallback()) {
         paths.push(repoPath("SofascoreData", "data", "models", "model_diagnostics.json"));
     }
