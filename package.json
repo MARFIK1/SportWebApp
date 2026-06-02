@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "next dev --webpack",
+    "dev:stable-data": "node scripts/dev-stable-data.mjs",
     "dev:turbo": "next dev --turbo",
     "prebuild": "node scripts/prebuild.mjs",
     "build": "next build",
