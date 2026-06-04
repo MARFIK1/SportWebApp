@@ -5,6 +5,7 @@ import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
 import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
+import { normalizePredictionMatchResult, predictionCorrectness } from "@/app/util/predictions/matchResult";
 
 type RawPredictionMatch = Omit<PredictionMatch, "predictions"> & {
     predictions: Record<string, ModelPrediction>;
@@ -150,20 +151,20 @@ function allowSourceFallback(): boolean {
 function normalizePredictionMatch(match: RawPredictionMatch): PredictionMatch {
     const predictions = match.predictions as PredictionMatch["predictions"];
     if ("consensus" in predictions) {
-        return match as unknown as PredictionMatch;
+        return normalizePredictionMatchResult(match as unknown as PredictionMatch);
     }
 
     if (!match.consensus) {
-        return { ...match, predictions } as PredictionMatch;
+        return normalizePredictionMatchResult({ ...match, predictions } as PredictionMatch);
     }
 
-    return {
+    return normalizePredictionMatchResult({
         ...match,
         predictions: {
             ...match.predictions,
             consensus: match.consensus,
         } as PredictionMatch["predictions"],
-    };
+    });
 }
 
 function normalizePredictionReport(report: RawPredictionReport | null): PredictionReport | null {
@@ -564,7 +565,50 @@ export function getMatchesByLeague(report: PredictionReport, league: string): Pr
 }
 
 export function getModelAccuracySummary(report: PredictionReport): Record<string, ModelAccuracy> {
-    return report.summary.model_accuracy;
+    return computeModelAccuracy(report.matches);
+}
+
+function computeModelAccuracy(matches: PredictionMatch[]): Record<string, ModelAccuracy> {
+    const modelNames = new Set<string>();
+
+    for (const match of matches) {
+        for (const model of Object.keys(match.predictions ?? {})) {
+            modelNames.add(model);
+        }
+    }
+
+    const result: Record<string, ModelAccuracy> = {};
+    const orderedModelNames = [
+        ...Array.from(modelNames).filter((model) => model !== "consensus").sort(),
+        ...(modelNames.has("consensus") ? ["consensus"] : []),
+    ];
+
+    for (const model of orderedModelNames) {
+        let correct = 0;
+        let total = 0;
+
+        for (const match of matches) {
+            const predData = model === "consensus"
+                ? match.predictions.consensus
+                : match.predictions[model];
+            const resolved = predictionCorrectness(predData?.prediction, match);
+            if (resolved === null) continue;
+
+            total++;
+            if (resolved) correct++;
+        }
+
+        if (total > 0) {
+            result[model] = {
+                correct,
+                incorrect: Math.max(0, total - correct),
+                total,
+                accuracy_pct: Math.round((correct / total) * 1000) / 10,
+            };
+        }
+    }
+
+    return result;
 }
 
 export function computeConsensusAccuracy(matches: PredictionMatch[]): ModelAccuracy {
@@ -573,7 +617,7 @@ export function computeConsensusAccuracy(matches: PredictionMatch[]): ModelAccur
 
     for (const match of finished) {
         const consensus = match.predictions.consensus as ConsensusPrediction | undefined;
-        if (consensus?.prediction === match.actual_result) correct++;
+        if (predictionCorrectness(consensus?.prediction, match)) correct++;
     }
 
     const total = finished.length;
@@ -690,7 +734,9 @@ export function computeAccuracyOverTime(dates?: string[]): AccuracyOverTimePoint
     const points: AccuracyOverTimePoint[] = [];
     const running: Record<string, { correct: number; total: number }> = {};
 
-    if (!dates) {
+    const reportDates = dates ?? listAllReportDates();
+
+    if (!dates && reportDates.length === 0) {
         const history = loadAccuracyHistory();
         if (history?.dates?.length) {
             for (const row of history.dates) {
@@ -703,11 +749,11 @@ export function computeAccuracyOverTime(dates?: string[]): AccuracyOverTimePoint
         }
     }
 
-    for (const date of dates ?? listAllReportDates()) {
+    for (const date of reportDates) {
         const report = loadPredictionReport(date);
         if (!report) continue;
 
-        for (const [model, acc] of Object.entries(report.summary.model_accuracy)) {
+        for (const [model, acc] of Object.entries(getModelAccuracySummary(report))) {
             addAccuracyStats(running, model, acc);
         }
 
@@ -747,7 +793,7 @@ export function computeResultTypeAccuracy(dates: string[]): ResultTypeBreakdown[
                     };
                 }
                 stats[model][actual].total++;
-                if (p.prediction === actual) stats[model][actual].correct++;
+                if (predictionCorrectness(p.prediction, match)) stats[model][actual].correct++;
             }
         }
     }
@@ -766,8 +812,9 @@ export function computeResultTypeAccuracy(dates: string[]): ResultTypeBreakdown[
 
 export function aggregateAccuracy(dates?: string[]): Record<string, ModelAccuracy> {
     const totals = new Map<string, ModelAccuracy>();
+    const reportDates = dates ?? listAllReportDates();
 
-    const history = dates ? null : loadAccuracyHistory();
+    const history = !dates && reportDates.length === 0 ? loadAccuracyHistory() : null;
     if (history?.dates?.length) {
         for (const row of history.dates) {
             for (const [model, acc] of Object.entries(row.models)) {
@@ -783,11 +830,11 @@ export function aggregateAccuracy(dates?: string[]): Record<string, ModelAccurac
         }
     }
 
-    for (const date of dates ?? (history?.dates?.length ? [] : listAllReportDates())) {
+    for (const date of reportDates) {
         const report = loadPredictionReport(date);
         if (!report) continue;
 
-        for (const [model, acc] of Object.entries(report.summary.model_accuracy)) {
+        for (const [model, acc] of Object.entries(getModelAccuracySummary(report))) {
             const existing = totals.get(model);
             if (existing) {
                 existing.correct += acc.correct;
