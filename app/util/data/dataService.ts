@@ -4,6 +4,7 @@ import { cache } from "../serverCache";
 import { readJson } from "./fileUtils";
 import { Competition } from "../league/leagueRegistry";
 import { SofascoreMatch, SofascoreMatchFile, SofascoreUpcomingMatch, SofascoreUpcomingFile } from "@/types/sofascore";
+import { deriveRegularScore, resultFromScorePair, scorePairFromValues } from "@/app/util/predictions/matchResult";
 
 function repoPath(...segments: string[]): string {
     return path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments);
@@ -174,8 +175,17 @@ export function resolveLeagueTableContext(matches: SofascoreMatch[]): LeagueTabl
 
 export function computeStandings(matches: SofascoreMatch[]): StandingRow[] {
     const finished = matches
-        .filter((m) => m.status === "finished" && m.home_score !== null && m.away_score !== null)
-        .sort((a, b) => a.date.localeCompare(b.date));
+        .map((m) => ({
+            match: m,
+            score: deriveRegularScore(
+                scorePairFromValues(m.home_score, m.away_score),
+                scorePairFromValues(m.home_score_pen, m.away_score_pen),
+            ),
+        }))
+        .filter((item): item is { match: SofascoreMatch; score: { home: number; away: number } } =>
+            item.match.status === "finished" && item.score !== null
+        )
+        .sort((a, b) => a.match.date.localeCompare(b.match.date));
 
     const teams = new Map<number, StandingRow>();
 
@@ -199,11 +209,12 @@ export function computeStandings(matches: SofascoreMatch[]): StandingRow[] {
         return teams.get(id)!;
     }
 
-    for (const m of finished) {
+    for (const { match: m, score } of finished) {
         const home = getTeam(m.home_team_id, m.home_team);
         const away = getTeam(m.away_team_id, m.away_team);
-        const hg = m.home_score!;
-        const ag = m.away_score!;
+        const hg = score.home;
+        const ag = score.away;
+        const result = resultFromScorePair(score);
 
         home.played++;
         away.played++;
@@ -212,13 +223,13 @@ export function computeStandings(matches: SofascoreMatch[]): StandingRow[] {
         away.goalsFor += ag;
         away.goalsAgainst += hg;
 
-        if (hg > ag) {
+        if (result === "HOME") {
             home.won++;
             home.points += 3;
             away.lost++;
             home.form.push("W");
             away.form.push("L");
-        } else if (hg < ag) {
+        } else if (result === "AWAY") {
             away.won++;
             away.points += 3;
             home.lost++;
