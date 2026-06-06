@@ -130,6 +130,59 @@ function argmaxResult(probabilities) {
         .sort((a, b) => b.value - a.value || RESULTS.indexOf(a.result) - RESULTS.indexOf(b.result))[0].result;
 }
 
+function parseScorePair(score) {
+    const match = typeof score === "string" ? score.match(/^\s*(\d+)\s*[-:]\s*(\d+)\s*$/) : null;
+    if (!match) return null;
+    return { home: Number(match[1]), away: Number(match[2]) };
+}
+
+function resultFromScorePair(score) {
+    if (!score) return null;
+    if (score.home > score.away) return "HOME";
+    if (score.away > score.home) return "AWAY";
+    return "DRAW";
+}
+
+function hasPenaltyShootoutScore(score) {
+    return Boolean(score && (score.home !== 0 || score.away !== 0));
+}
+
+function penaltyWinner(score) {
+    if (!hasPenaltyShootoutScore(score)) return null;
+    const result = resultFromScorePair(score);
+    return result === "DRAW" ? null : result;
+}
+
+function deriveRegularScore(score, penaltyScore) {
+    if (!score) return null;
+    if (
+        hasPenaltyShootoutScore(penaltyScore) &&
+        score.home >= penaltyScore.home &&
+        score.away >= penaltyScore.away
+    ) {
+        return {
+            home: score.home - penaltyScore.home,
+            away: score.away - penaltyScore.away,
+        };
+    }
+    return score;
+}
+
+function regularScoreForMatch(match) {
+    return deriveRegularScore(
+        parseScorePair(match.actual_score),
+        parseScorePair(match.actual_penalty_score),
+    );
+}
+
+function actualResultForMatch(match) {
+    const penaltyScore = parseScorePair(match.actual_penalty_score);
+    const decidedByPenalties = Boolean(match.decided_by_penalties || penaltyWinner(penaltyScore));
+    return (decidedByPenalties ? penaltyWinner(penaltyScore) : null)
+        ?? match.actual_result
+        ?? resultFromScorePair(regularScoreForMatch(match));
+}
+
 function predictWithDrawThreshold(probabilities, threshold, maxGapToBest) {
     const best = argmaxResult(probabilities);
     const bestProbability = probabilities[best];
@@ -194,7 +247,7 @@ function ensureLeague(acc, leagueKey) {
 }
 
 function addPrediction(acc, match, prediction, reportDate) {
-    const actual = match.actual_result;
+    const actual = actualResultForMatch(match);
     const predicted = prediction?.prediction;
     if (!RESULTS.includes(actual) || !RESULTS.includes(predicted)) return;
 
@@ -242,6 +295,7 @@ function addPrediction(acc, match, prediction, reportDate) {
 
     const probabilities = probabilitiesFor(prediction);
     if (probabilities) {
+        const regularScore = regularScoreForMatch(match);
         acc.threshold_records.push({
             report_date: reportDate,
             event_id: match.event_id ?? "",
@@ -249,8 +303,8 @@ function addPrediction(acc, match, prediction, reportDate) {
             round: match.round ?? "",
             home_team: match.home_team ?? "",
             away_team: match.away_team ?? "",
-            home_score: match.home_score ?? "",
-            away_score: match.away_score ?? "",
+            home_score: regularScore?.home ?? "",
+            away_score: regularScore?.away ?? "",
             actual,
             base_prediction: predicted,
             base_correct: correct,
@@ -460,7 +514,7 @@ function collectDiagnostics() {
         if (!report?.matches?.length) continue;
 
         for (const match of report.matches) {
-            if (match.status !== "finished" || !RESULTS.includes(match.actual_result)) continue;
+            if (match.status !== "finished" || !RESULTS.includes(actualResultForMatch(match))) continue;
             finishedMatches++;
             firstDate ??= date;
             lastDate = date;
