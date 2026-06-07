@@ -1,6 +1,7 @@
 import Link from "next/link";
 import TeamLogo from "../components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "../util/predictions/drawWatch";
+import { resolvePredictionMatchResult } from "../util/predictions/matchResult";
 import type { ConsensusPrediction, MatchResult, PredictionMatch } from "@/types/predictions";
 
 interface DailyHighlightsProps {
@@ -130,9 +131,10 @@ function HighlightCard({
 }) {
     const { match, consensus, confidence } = item;
     const href = match.event_id ? `/match/${match.event_id}?date=${selectedDate}` : null;
-    const score = match.actual_score?.split("-").map((part) => part.trim());
-    const penaltyScore = match.actual_penalty_score?.split("-").map((part) => part.trim());
-    const isFinished = match.status === "finished";
+    const resultState = resolvePredictionMatchResult(match);
+    const score = resultState.regularScore;
+    const penaltyScore = resultState.penaltyScore;
+    const isFinished = resultState.isFinished;
     const metricLabel = variant === "draw" ? t("daily_draw_probability") : t("confidence");
     const metricValue = variant === "draw" ? item.drawProbability ?? 0 : confidence;
     const metricTone = variant === "draw" ? "text-amber-400" : predictionTone(consensus.prediction);
@@ -145,11 +147,11 @@ function HighlightCard({
                     {isFinished && score ? (
                         <>
                             <span className="rounded-xl bg-gray-950 px-2.5 py-1.5 text-sm font-black text-white dark:bg-black/60">
-                                {score[0]} - {score[1]}
+                                {score.home} - {score.away}
                             </span>
                             {penaltyScore && (
                                 <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
-                                    {t("penalties")} {penaltyScore[0]} - {penaltyScore[1]}
+                                    {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
                                 </span>
                             )}
                         </>

@@ -7,6 +7,7 @@ import {
     computeAccuracyOverTime,
     computeResultTypeAccuracy,
     computeConsensusAccuracy,
+    getModelAccuracySummary,
 } from "../util/data/predictionService";
 import { resolveCompetitionByDataPath } from "../util/league/leagueRegistry";
 import { buildMatchLookupMaps } from "../util/data/dataService";
@@ -83,12 +84,13 @@ export default async function PredictionsDashboard({
     }).sort((a, b) => a.priority - b.priority);
 
     const consensusAcc = computeConsensusAccuracy(report.matches);
-    const bestModel = Object.entries(report.summary.model_accuracy)
+    const dayAccuracy = getModelAccuracySummary(report);
+    const bestModel = Object.entries(dayAccuracy)
         .filter(([key]) => key !== "consensus")
         .filter(([, acc]) => acc.total > 0)
         .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct)[0];
 
-    const dayModelRanking = Object.entries(report.summary.model_accuracy)
+    const dayModelRanking = Object.entries(dayAccuracy)
         .filter(([key]) => key !== "consensus")
         .filter(([, acc]) => acc.total > 0)
         .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct);

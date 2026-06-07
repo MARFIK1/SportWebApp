@@ -10,6 +10,7 @@ import {
 } from "@/app/util/favorites/favorites";
 import { useStoredFavorites } from "@/app/util/favorites/useStoredFavorites";
 import type { MatchResult } from "@/types/predictions";
+import { predictionCorrectness, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
 
 interface PredictionsClientProps {
     matches: PredictionMatch[];
@@ -356,10 +357,11 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                     const consensus = match.predictions.consensus as ConsensusPrediction;
                     const isExpanded = expandedMatch === match.id;
                     const models = Object.entries(match.predictions).filter(([key]) => key !== "consensus") as [string, ModelPrediction][];
-                    const isFinished = match.status === "finished";
-                    const score = match.actual_score?.split("-").map((s) => s.trim());
-                    const penaltyScore = match.actual_penalty_score?.split("-").map((s) => s.trim());
-                    const correct = consensus?.correct;
+                    const resultState = resolvePredictionMatchResult(match);
+                    const isFinished = resultState.isFinished;
+                    const score = resultState.regularScore;
+                    const penaltyScore = resultState.penaltyScore;
+                    const correct = predictionCorrectness(consensus?.prediction, match);
                     const drawWatch = getDrawWatchSignalFromPredictions(match.predictions);
 
                     return (
@@ -389,11 +391,11 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                         <span className="min-w-0 truncate text-sm text-gray-900 dark:text-white">{match.home_team}</span>
                                     </div>
                                     {isFinished && score ? (
-                                        <span className="flex flex-col items-center rounded-lg bg-gray-100 px-2 py-1 text-sm font-bold text-gray-900 dark:bg-black/30 dark:text-white">
-                                            <span>{score[0]} - {score[1]}</span>
+                                            <span className="flex flex-col items-center rounded-lg bg-gray-100 px-2 py-1 text-sm font-bold text-gray-900 dark:bg-black/30 dark:text-white">
+                                            <span>{score.home} - {score.away}</span>
                                             {penaltyScore && (
                                                 <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
-                                                    {t("penalties")} {penaltyScore[0]} - {penaltyScore[1]}
+                                                    {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
                                                 </span>
                                             )}
                                         </span>
@@ -443,7 +445,7 @@ export default function PredictionsClient({ matches, leagues, teamIds }: Predict
                                     )}
                                 </div>
 
-                                {isFinished && (
+                                {isFinished && correct !== null && (
                                     <span
                                         className={`text-xs font-bold ${correct ? "text-emerald-400" : "text-red-400"}`}
                                         aria-label={correct ? t("correct") : t("incorrect")}
