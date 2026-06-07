@@ -5,6 +5,7 @@ import MatchCard from "./MatchCard";
 import LeagueSectionToggle from "./LeagueSectionToggle";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { getTeamFavoriteKey } from "@/app/util/favorites/favorites";
+import { predictionCorrectness } from "@/app/util/predictions/matchResult";
 
 interface LeagueSectionProps {
     leagueName: string;
@@ -27,7 +28,7 @@ function getLeagueAccuracy(matches: PredictionMatch[]): { correct: number; total
     let correct = 0;
     for (const m of finished) {
         const consensus = m.predictions.consensus as ConsensusPrediction;
-        if (consensus?.prediction === m.actual_result) correct++;
+        if (predictionCorrectness(consensus?.prediction, m)) correct++;
     }
 
     return { correct, total: finished.length };

@@ -7,6 +7,7 @@ import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
+import { predictionCorrectness, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
 
 interface MatchCardProps {
     match: PredictionMatch;
@@ -45,12 +46,6 @@ function getPredictionLabel(match: PredictionMatch, t: (key: string) => string):
     else label = `${t("draw")} (${prob.toFixed(0)}%)`;
 
     return { text: label, color: getPredictionColor(pred), barColor: getPredictionBarColor(pred), probability: prob, agreement: consensus.agreement };
-}
-
-function isPredictionCorrect(match: PredictionMatch): boolean | null {
-    const consensus = match.predictions.consensus as ConsensusPrediction;
-    if (!consensus?.prediction || match.status !== "finished" || !match.actual_result) return null;
-    return consensus.prediction === match.actual_result;
 }
 
 function FavoriteTeamButton({
@@ -96,12 +91,14 @@ export default function MatchCard({
     onToggleAwayTeamFavorite,
 }: MatchCardProps) {
     const { t } = useLanguage();
-    const isFinished = match.status === "finished";
+    const resultState = resolvePredictionMatchResult(match);
+    const isFinished = resultState.isFinished;
     const prediction = getPredictionLabel(match, t);
     const drawWatch = getDrawWatchSignalFromPredictions(match.predictions);
-    const score = match.actual_score?.split("-").map((s) => s.trim());
-    const penaltyScore = match.actual_penalty_score?.split("-").map((s) => s.trim());
-    const correct = isPredictionCorrect(match);
+    const score = resultState.regularScore;
+    const penaltyScore = resultState.penaltyScore;
+    const consensus = match.predictions.consensus as ConsensusPrediction;
+    const correct = predictionCorrectness(consensus?.prediction, match);
 
     const borderColor = correct === null
         ? "border-gray-200 dark:border-gray-700"
@@ -115,17 +112,23 @@ export default function MatchCard({
         : correct
             ? "bg-emerald-500/15 text-emerald-500"
             : "bg-rose-500/15 text-rose-400";
+    const hoverClassName = !href
+        ? "cursor-not-allowed opacity-80"
+        : correct === true
+            ? "hover:-translate-y-1 hover:border-emerald-400/50 hover:shadow-xl hover:shadow-emerald-950/10 dark:hover:bg-gray-900"
+            : correct === false
+                ? "hover:-translate-y-1 hover:border-red-400/60 hover:shadow-xl hover:shadow-red-950/10 dark:hover:bg-gray-900"
+                : "hover:-translate-y-1 hover:border-gray-400/60 hover:shadow-xl hover:shadow-slate-900/10 dark:hover:bg-gray-900";
 
     const cardClassName = `group relative flex min-h-[190px] w-full flex-col overflow-hidden rounded-3xl border ${borderColor} bg-white/90 p-4 shadow-sm shadow-slate-900/5 transition-all dark:bg-gray-900/70 dark:shadow-black/10 ${
-        href ? "hover:-translate-y-1 hover:border-emerald-400/50 hover:shadow-xl hover:shadow-emerald-950/10 dark:hover:bg-gray-900" : "cursor-not-allowed opacity-80"
+        hoverClassName
     }`;
 
     const content = (
         <>
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
             <div className="mb-4 flex items-center justify-between">
                 <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${statusTone}`}>
-                    {isFinished ? t("ft") : match.status === "postponed" ? t("postponed") : match.start_time || "TBD"}
+                    {isFinished ? t("ft") : resultState.displayStatus === "postponed" ? t("postponed") : match.start_time || "TBD"}
                 </span>
                 {correct !== null && (
                     <span className={`text-xs font-bold ${correct ? "text-emerald-400" : "text-rose-400"}`}>
@@ -165,15 +168,15 @@ export default function MatchCard({
                     {isFinished && score ? (
                         <>
                             <span className="rounded-2xl bg-gray-950 px-3 py-2 text-xl font-black text-white dark:bg-black/60">
-                                {score[0]} - {score[1]}
+                                {score.home} - {score.away}
                             </span>
                             {penaltyScore && (
                                 <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
-                                    {t("penalties")} {penaltyScore[0]} - {penaltyScore[1]}
+                                    {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
                                 </span>
                             )}
                         </>
-                    ) : match.status === "postponed" ? (
+                    ) : resultState.displayStatus === "postponed" ? (
                         <>
                             <span className="text-sm font-semibold text-amber-400">
                                 {t("postponed")}
