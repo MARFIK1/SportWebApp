@@ -1,4 +1,5 @@
 import { getMatchPrediction } from "@/app/util/data/predictionService";
+import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 import type { AnalysisGoalsSide, AnalysisMatch, MatchResult, PredictionMatch, PredictionReport } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 
@@ -21,71 +22,17 @@ export function findPredictionMatch(
     return getMatchPrediction(report, eventId) ?? report.matches.find((m) => m.home_team === homeTeam && m.away_team === awayTeam);
 }
 
-export function parseActualScore(score: string | null | undefined): { home: number; away: number } | null {
-    const match = score?.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/);
-    if (!match) return null;
-    return { home: Number(match[1]), away: Number(match[2]) };
-}
-
-export function resultFromScore(home: number | null | undefined, away: number | null | undefined): MatchResult | null {
-    if (home == null || away == null) return null;
-    if (home > away) return "HOME";
-    if (away > home) return "AWAY";
-    return "DRAW";
-}
-
-function deriveBaseScore(
-    score: { home: number; away: number } | null,
-    penaltyScore: { home: number; away: number } | null
-): { home: number; away: number } | null {
-    if (!score) return null;
-    if (
-        penaltyScore &&
-        (penaltyScore.home !== 0 || penaltyScore.away !== 0) &&
-        score.home >= penaltyScore.home &&
-        score.away >= penaltyScore.away &&
-        (score.home > penaltyScore.home || score.away > penaltyScore.away)
-    ) {
-        return {
-            home: score.home - penaltyScore.home,
-            away: score.away - penaltyScore.away,
-        };
-    }
-    return score;
-}
-
 export function resolveMatchDisplayState(match: SofascoreMatch, predMatch: PredictionMatch | null | undefined): MatchDisplayState {
-    const reportScore = parseActualScore(predMatch?.actual_score);
-    const reportPenaltyScore = parseActualScore(predMatch?.actual_penalty_score);
-    const rawPenaltyScore = match.home_score_pen != null && match.away_score_pen != null
-        ? { home: match.home_score_pen, away: match.away_score_pen }
-        : null;
-    const penaltyScore = reportPenaltyScore ?? rawPenaltyScore;
-    const rawMatchScore = match.home_score != null && match.away_score != null
-        ? { home: match.home_score, away: match.away_score }
-        : null;
-    const baseScore = deriveBaseScore(reportScore ?? rawMatchScore, penaltyScore);
-    const reportFinished = predMatch?.status === "finished" && baseScore !== null;
-    const displayStatus = reportFinished ? "finished" : match.status;
-    const displayScore = displayStatus === "finished" ? baseScore : rawMatchScore;
-    const displayHomeScore = displayScore?.home ?? null;
-    const displayAwayScore = displayScore?.away ?? null;
-    const decidedByPenalties = Boolean(
-        predMatch?.decided_by_penalties ??
-        (penaltyScore && penaltyScore.home !== penaltyScore.away)
-    );
-    const penaltyResult = decidedByPenalties && penaltyScore ? resultFromScore(penaltyScore.home, penaltyScore.away) : null;
-    const actualResult = predMatch?.actual_result ?? penaltyResult ?? resultFromScore(displayHomeScore, displayAwayScore);
-    const isFinished = displayStatus === "finished" && actualResult !== null;
+    const state = resolveSofascoreMatchResult(match, predMatch);
 
     return {
-        displayStatus,
-        displayHomeScore,
-        displayAwayScore,
-        penaltyScore,
-        decidedByPenalties,
-        actualResult,
-        isFinished,
+        displayStatus: state.displayStatus,
+        displayHomeScore: state.regularScore?.home ?? null,
+        displayAwayScore: state.regularScore?.away ?? null,
+        penaltyScore: state.penaltyScore,
+        decidedByPenalties: state.decidedByPenalties,
+        actualResult: state.actualResult,
+        isFinished: state.isFinished,
     };
 }
 
@@ -170,8 +117,9 @@ function buildRecentTeamAnalysis(teamId: number, matches: SofascoreMatch[]): Rec
         const isAway = match.away_team_id === teamId;
         if (!isHome && !isAway) continue;
 
-        const goalsFor = isHome ? match.home_score : match.away_score;
-        const goalsAgainst = isHome ? match.away_score : match.home_score;
+        const result = resolveSofascoreMatchResult(match, null);
+        const goalsFor = isHome ? result.regularScore?.home : result.regularScore?.away;
+        const goalsAgainst = isHome ? result.regularScore?.away : result.regularScore?.home;
         if (goalsFor == null || goalsAgainst == null) continue;
 
         scored.push(goalsFor);

@@ -18,6 +18,7 @@ import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
+import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 
 interface StatDefinition {
     label: string;
@@ -68,6 +69,7 @@ interface PageProps {
 }
 
 function toHistoryItem(match: SofascoreMatch): MatchHistoryItem {
+    const result = resolveSofascoreMatchResult(match, null);
     return {
         eventId: match.event_id,
         date: match.date,
@@ -75,8 +77,8 @@ function toHistoryItem(match: SofascoreMatch): MatchHistoryItem {
         homeTeam: match.home_team,
         awayTeamId: match.away_team_id,
         awayTeam: match.away_team,
-        homeScore: match.home_score,
-        awayScore: match.away_score,
+        homeScore: result.regularScore?.home ?? match.home_score,
+        awayScore: result.regularScore?.away ?? match.away_score,
     };
 }
 
@@ -165,7 +167,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     const result = findMatchInCompetitions(eventId, getAllCompetitions());
     if (!result) return { title: "Match" };
     const { match } = result;
-    const score = match.home_score != null && match.away_score != null ? ` ${match.home_score}-${match.away_score}` : "";
+    const matchResult = resolveSofascoreMatchResult(match, null);
+    const score = matchResult.regularScore ? ` ${matchResult.regularScore.home}-${matchResult.regularScore.away}` : "";
     return {
         title: `${match.home_team} vs ${match.away_team}${score}`,
         description: `${match.home_team} vs ${match.away_team} - match statistics, predictions, and head-to-head`,
@@ -247,13 +250,14 @@ export default async function Match({ params, searchParams }: PageProps) {
     const h2hStats = { homeWins: 0, draws: 0, awayWins: 0 };
     for (const m of h2h) {
         const homeIsHome = m.home_team_id === match.home_team_id;
-        if (m.home_score! > m.away_score!) {
+        const result = resolveSofascoreMatchResult(m, null).actualResult;
+        if (result === "HOME") {
             if (homeIsHome) h2hStats.homeWins++;
             else h2hStats.awayWins++;
-        } else if (m.home_score! < m.away_score!) {
+        } else if (result === "AWAY") {
             if (homeIsHome) h2hStats.awayWins++;
             else h2hStats.homeWins++;
-        } else {
+        } else if (result === "DRAW") {
             h2hStats.draws++;
         }
     }
