@@ -92,6 +92,23 @@ function readSideNumber(match: SofascoreMatch, isHome: boolean, homeKeys: string
     return readNumber(match, isHome ? homeKeys : awayKeys);
 }
 
+function hasAnalysisMatchShape(analysis: AnalysisMatch | null | undefined): analysis is AnalysisMatch {
+    const candidate = analysis as Partial<AnalysisMatch> | null | undefined;
+    return Boolean(
+        candidate?.goals?.home &&
+        candidate.goals.away &&
+        candidate.corners?.home &&
+        candidate.corners.away &&
+        candidate.cards?.home &&
+        candidate.cards.away &&
+        candidate.shots?.home &&
+        candidate.shots.away &&
+        candidate.form &&
+        typeof candidate.form.home === "string" &&
+        typeof candidate.form.away === "string"
+    );
+}
+
 function resultLetter(goalsFor: number, goalsAgainst: number): "W" | "D" | "L" {
     if (goalsFor > goalsAgainst) return "W";
     if (goalsFor < goalsAgainst) return "L";
@@ -271,7 +288,7 @@ export function repairMatchAnalysis(
     homeRecent: SofascoreMatch[],
     awayRecent: SofascoreMatch[]
 ): AnalysisMatch | null {
-    if (!analysis) return null;
+    if (!hasAnalysisMatchShape(analysis)) return null;
 
     const homeRecentAnalysis = buildRecentTeamAnalysis(match.home_team_id, homeRecent);
     const awayRecentAnalysis = buildRecentTeamAnalysis(match.away_team_id, awayRecent);

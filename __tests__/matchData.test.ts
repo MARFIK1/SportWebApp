@@ -163,6 +163,8 @@ describe("match page data contracts", () => {
             displayStatus: "finished",
             displayHomeScore: 2,
             displayAwayScore: 1,
+            penaltyScore: null,
+            decidedByPenalties: false,
             actualResult: "HOME",
             isFinished: true,
         });
@@ -261,5 +263,11 @@ describe("match page data contracts", () => {
         expect(repaired?.shots.home.avg_shots_on_target).toBeCloseTo(5.5);
         expect(repaired?.shots.home.avg_possession).toBeCloseTo(57);
         expect(repaired?.form.home).toBe("WW");
+    });
+
+    it("ignores empty analysis objects from generated reports", () => {
+        const repaired = repairMatchAnalysis({} as AnalysisMatch, sofascoreMatch(), [], []);
+
+        expect(repaired).toBeNull();
     });
 });
