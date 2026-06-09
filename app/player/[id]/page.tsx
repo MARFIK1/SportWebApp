@@ -7,6 +7,7 @@ import type { SofascoreMatch } from "@/types/sofascore";
 import { playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
+import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 
 interface PageProps {
     params: Promise<{ id: string }>;
@@ -176,23 +177,30 @@ export default async function PlayerPage({ params }: PageProps) {
                     <div className="space-y-2">
                         {uniqueRecent.map((m) => {
                             const isHome = m.home_team_id === teamId;
-                            const teamScore = isHome ? m.home_score : m.away_score;
-                            const opponentScore = isHome ? m.away_score : m.home_score;
-                            const won = teamScore !== null && opponentScore !== null && teamScore > opponentScore;
-                            const drew = teamScore !== null && opponentScore !== null && teamScore === opponentScore;
+                            const result = resolveSofascoreMatchResult(m, null);
+                            const won = (isHome && result.actualResult === "HOME") || (!isHome && result.actualResult === "AWAY");
+                            const drew = result.actualResult === "DRAW";
+                            const resultLabel = result.actualResult == null ? "-" : won ? "W" : drew ? "D" : "L";
 
                             return (
                                 <Link key={m.event_id} href={`/match/${m.event_id}`} prefetch={false} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
                                     <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                                        won ? "bg-emerald-600" : drew ? "bg-gray-600" : "bg-red-600"
+                                        result.actualResult == null ? "bg-gray-500" : won ? "bg-emerald-600" : drew ? "bg-gray-600" : "bg-red-600"
                                     }`}>
-                                        {won ? "W" : drew ? "D" : "L"}
+                                        {resultLabel}
                                     </span>
                                     <div className="flex items-center gap-2 flex-1">
                                         <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         <span className="text-sm truncate">{m.home_team}</span>
                                     </div>
-                                    <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
+                                    <span className="flex flex-col items-center px-2 text-sm font-bold">
+                                        <span>{result.regularScore ? `${result.regularScore.home} - ${result.regularScore.away}` : "-"}</span>
+                                        {result.penaltyScore && (
+                                            <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
+                                                {t("penalties")} {result.penaltyScore.home} - {result.penaltyScore.away}
+                                            </span>
+                                        )}
+                                    </span>
                                     <div className="flex items-center gap-2 flex-1 justify-end">
                                         <span className="text-sm truncate text-right">{m.away_team}</span>
                                         <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />

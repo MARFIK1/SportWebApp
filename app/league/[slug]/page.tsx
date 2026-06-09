@@ -5,6 +5,7 @@ import { loadAllSeasons, computeStandings, resolveLeagueTableContext, type Stand
 import type { SofascoreMatch } from "@/types/sofascore";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
+import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 
 interface PageProps {
     params: Promise<{ slug: string }>;
@@ -108,6 +109,24 @@ function StandingsTable({ standings, t }: { standings: StandingRow[]; t: (key: s
                 </tbody>
             </table>
         </div>
+    );
+}
+
+function MatchScoreBadge({ match, t }: { match: SofascoreMatch; t: (key: string) => string }) {
+    const result = resolveSofascoreMatchResult(match, null);
+    if (match.status !== "finished" || !result.regularScore) {
+        return <span className="text-sm text-gray-400 dark:text-gray-500 px-2">vs</span>;
+    }
+
+    return (
+        <span className="flex flex-col items-center px-2 text-sm font-bold">
+            <span>{result.regularScore.home} - {result.regularScore.away}</span>
+            {result.penaltyScore && (
+                <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
+                    {t("penalties")} {result.penaltyScore.home} - {result.penaltyScore.away}
+                </span>
+            )}
+        </span>
     );
 }
 
@@ -225,11 +244,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                                             <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                             <span className="text-sm truncate">{m.home_team}</span>
                                         </div>
-                                        {m.status === "finished" ? (
-                                            <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
-                                        ) : (
-                                            <span className="text-sm text-gray-400 dark:text-gray-500 px-2">vs</span>
-                                        )}
+                                        <MatchScoreBadge match={m} t={t} />
                                         <div className="flex items-center gap-2 flex-1 justify-end">
                                             <span className="text-sm truncate text-right">{m.away_team}</span>
                                             <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
@@ -283,7 +298,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
                                         <TeamLogo teamId={m.home_team_id} alt={m.home_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
                                         <span className="text-sm truncate">{m.home_team}</span>
                                     </div>
-                                    <span className="text-sm font-bold px-2">{m.home_score} - {m.away_score}</span>
+                                    <MatchScoreBadge match={m} t={t} />
                                     <div className="flex items-center gap-2 flex-1 justify-end">
                                         <span className="text-sm truncate text-right">{m.away_team}</span>
                                             <TeamLogo teamId={m.away_team_id} alt={m.away_team} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
