@@ -31,6 +31,13 @@ const matchIndexCache = new Map<string, Map<number, { match: SofascoreMatch; com
 const searchDataCache = new Map<string, { teams: SearchTeam[]; players: SearchPlayer[] }>();
 const matchLookupCache = new Map<string, MatchLookupMaps>();
 
+function upcomingToMatch(match: SofascoreUpcomingMatch): SofascoreMatch {
+    return {
+        ...match,
+        season: match.date.slice(0, 4),
+    } as unknown as SofascoreMatch;
+}
+
 function getMatchIndex(competitions: Competition[]): Map<number, { match: SofascoreMatch; competition: Competition }> {
     const key = competitionsCacheKey(competitions);
     const cached = matchIndexCache.get(key);
@@ -41,6 +48,11 @@ function getMatchIndex(competitions: Competition[]): Map<number, { match: Sofasc
         for (const match of loadAllSeasons(comp)) {
             if (!index.has(match.event_id)) {
                 index.set(match.event_id, { match, competition: comp });
+            }
+        }
+        for (const match of loadUpcomingMatches(comp)) {
+            if (!index.has(match.event_id)) {
+                index.set(match.event_id, { match: upcomingToMatch(match), competition: comp });
             }
         }
     }

@@ -1,6 +1,6 @@
 jest.mock("fs");
 import fs from "fs";
-import { buildMatchLookupMaps } from "@/app/util/data/dataService";
+import { buildMatchLookupMaps, findMatchInCompetitions } from "@/app/util/data/dataService";
 import type { Competition } from "@/app/util/league/leagueRegistry";
 import type { SofascoreMatch, SofascoreUpcomingMatch } from "@/types/sofascore";
 
@@ -80,5 +80,14 @@ describe("match lookup data contract", () => {
         expect(maps.eventIds["Future Home_vs_Future Away_2026-05-07"]).toBe(999);
         expect(maps.teamIds["Future Home"]).toBe(11);
         expect(maps.teamIds["Future Away"]).toBe(22);
+    });
+
+    it("finds upcoming fixtures by event id for match pages", () => {
+        const result = findMatchInCompetitions(999, [competition]);
+
+        expect(result?.match.home_team).toBe("Future Home");
+        expect(result?.match.away_team).toBe("Future Away");
+        expect(result?.match.season).toBe("2026");
+        expect(result?.competition.slug).toBe("test-league");
     });
 });

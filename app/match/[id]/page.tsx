@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
-import { computeStandings, findMatchInCompetitions, loadAllSeasons, resolveLeagueTableContext } from "@/app/util/data/dataService";
-import { loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
+import { getAllCompetitions, resolveCompetitionByDataPath, type Competition } from "@/app/util/league/leagueRegistry";
+import { buildMatchLookupMaps, computeStandings, findMatchInCompetitions, loadAllSeasons, resolveLeagueTableContext } from "@/app/util/data/dataService";
+import { getMatchPrediction, loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
+import type { PredictionReport } from "@/types/predictions";
 import CompactLeagueTable from "./CompactLeagueTable";
 import MatchPredictions from "./MatchPredictions";
 import TeamLogo from "@/app/components/common/TeamLogo";
@@ -18,7 +19,7 @@ import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
-import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
+import { parseScorePair, resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 
 interface StatDefinition {
     label: string;
@@ -66,6 +67,51 @@ function buildMatchStats(m: SofascoreMatch): { type: string; homeValue: number; 
 interface PageProps {
     params: Promise<{ id: string }>;
     searchParams: Promise<{ date?: string }>;
+}
+
+function reportMatchDate(reportDate: string, startTime: string | null | undefined): string {
+    if (startTime?.includes("T")) return startTime;
+    if (startTime && /^\d{1,2}:\d{2}$/.test(startTime)) {
+        return `${reportDate}T${startTime.padStart(5, "0")}:00+00:00`;
+    }
+    return reportDate;
+}
+
+function reportOnlyMatch(
+    eventId: number,
+    report: PredictionReport | null,
+    reportDate: string | null,
+): { match: SofascoreMatch; competition: Competition } | null {
+    if (!report || !reportDate) return null;
+
+    const predMatch = getMatchPrediction(report, eventId);
+    if (!predMatch) return null;
+
+    const competition = resolveCompetitionByDataPath(`${predMatch.comp_type}/${predMatch.league}`);
+    if (!competition) return null;
+
+    const teamIds = buildMatchLookupMaps([competition]).teamIds;
+    const score = parseScorePair(predMatch.actual_score);
+    const date = reportMatchDate(reportDate, predMatch.start_time);
+
+    return {
+        competition,
+        match: {
+            event_id: eventId,
+            date,
+            round: 0,
+            home_team_id: teamIds[predMatch.home_team] ?? 0,
+            home_team: predMatch.home_team,
+            away_team_id: teamIds[predMatch.away_team] ?? 0,
+            away_team: predMatch.away_team,
+            home_score: score?.home ?? null,
+            away_score: score?.away ?? null,
+            home_score_ht: null,
+            away_score_ht: null,
+            status: predMatch.status,
+            season: date.slice(0, 4),
+        } as SofascoreMatch,
+    };
 }
 
 function toHistoryItem(match: SofascoreMatch): MatchHistoryItem {
@@ -180,7 +226,11 @@ export default async function Match({ params, searchParams }: PageProps) {
     const resolvedSearchParams = await searchParams;
     const eventId = parseInt(resolvedParams.id, 10);
     const competitions = getAllCompetitions();
-    const result = Number.isFinite(eventId) ? findMatchInCompetitions(eventId, competitions) : null;
+    const requestedDate = normalizeReportDate(resolvedSearchParams.date);
+    const indexedResult = Number.isFinite(eventId) ? findMatchInCompetitions(eventId, competitions) : null;
+    const initialDate = requestedDate || indexedResult?.match.date.slice(0, 10) || null;
+    const predReport = initialDate ? loadPredictionReport(initialDate) : null;
+    const result = indexedResult ?? (Number.isFinite(eventId) ? reportOnlyMatch(eventId, predReport, initialDate) : null);
 
     const t = await getServerT();
 
@@ -193,7 +243,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     }
 
     const { match, competition } = result;
-    const date = normalizeReportDate(resolvedSearchParams.date) || match.date.slice(0, 10);
+    const date = initialDate || match.date.slice(0, 10);
     const competitionMatches = loadAllSeasons(competition);
     const sameSeasonMatches = resolveSeasonMatches(match, competitionMatches);
     const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(sameSeasonMatches) : null;
@@ -204,7 +254,6 @@ export default async function Match({ params, searchParams }: PageProps) {
         ? resolvePlayoffContextMatches(match, sameSeasonMatches, leagueTableContext.regularTeamIds)
         : [];
 
-    const predReport = loadPredictionReport(date);
     const analysisReport = loadAnalysisReport(date);
     const predMatch = predReport ? findPredictionMatch(predReport, eventId, match.home_team, match.away_team) : null;
 
@@ -268,8 +317,12 @@ export default async function Match({ params, searchParams }: PageProps) {
                 <Link href="/" prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{t("home")}</Link>
                 <span>/</span>
                 <Link href={`/?date=${date}`} prefetch={false} className="hover:text-gray-900 dark:hover:text-white transition-colors">{competition.name}</Link>
-                <span>/</span>
-                <span className="text-gray-700 dark:text-gray-300">{t("round_label")} {match.round}</span>
+                {match.round > 0 && (
+                    <>
+                        <span>/</span>
+                        <span className="text-gray-700 dark:text-gray-300">{t("round_label")} {match.round}</span>
+                    </>
+                )}
             </div>
 
             <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">

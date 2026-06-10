@@ -59,6 +59,19 @@ function addDailyDateWindow(expandedDates: Set<string>, anchor: string) {
     }
 }
 
+function addDateRange(expandedDates: Set<string>, startDate: string, endDate: string, todayIso: string) {
+    const startTime = parseDateUtc(startDate);
+    const endTime = parseDateUtc(endDate);
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) return;
+
+    for (let time = startTime; time <= endTime; time += MS_PER_DAY) {
+        const date = formatDateUtc(time);
+        if (isInReportDateWindow(date, todayIso)) {
+            expandedDates.add(date);
+        }
+    }
+}
+
 function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
     if (requestedDate && isInReportDateWindow(requestedDate, todayIso)) {
         return requestedDate;
@@ -68,7 +81,11 @@ function selectReportDate(dates: string[], requestedDate: string | null, todayIs
 }
 
 function getDatePickerDates(dates: string[], todayIso: string): string[] {
-    const expandedDates = new Set(dates.filter((date) => isInReportDateWindow(date, todayIso)));
+    const reportDates = dates.filter((date) => isInReportDateWindow(date, todayIso));
+    const expandedDates = new Set(reportDates);
+    if (reportDates.length > 0) {
+        addDateRange(expandedDates, reportDates[0], reportDates[reportDates.length - 1], todayIso);
+    }
     addDailyDateWindow(expandedDates, todayIso);
 
     return Array.from(expandedDates).sort((a, b) => a.localeCompare(b));
