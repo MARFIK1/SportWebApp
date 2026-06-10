@@ -734,9 +734,7 @@ export function computeAccuracyOverTime(dates?: string[]): AccuracyOverTimePoint
     const points: AccuracyOverTimePoint[] = [];
     const running: Record<string, { correct: number; total: number }> = {};
 
-    const reportDates = dates ?? listAllReportDates();
-
-    if (!dates && reportDates.length === 0) {
+    if (!dates) {
         const history = loadAccuracyHistory();
         if (history?.dates?.length) {
             for (const row of history.dates) {
@@ -748,6 +746,8 @@ export function computeAccuracyOverTime(dates?: string[]): AccuracyOverTimePoint
             return points;
         }
     }
+
+    const reportDates = dates ?? listAllReportDates();
 
     for (const date of reportDates) {
         const report = loadPredictionReport(date);
@@ -812,9 +812,7 @@ export function computeResultTypeAccuracy(dates: string[]): ResultTypeBreakdown[
 
 export function aggregateAccuracy(dates?: string[]): Record<string, ModelAccuracy> {
     const totals = new Map<string, ModelAccuracy>();
-    const reportDates = dates ?? listAllReportDates();
-
-    const history = !dates && reportDates.length === 0 ? loadAccuracyHistory() : null;
+    const history = !dates ? loadAccuracyHistory() : null;
     if (history?.dates?.length) {
         for (const row of history.dates) {
             for (const [model, acc] of Object.entries(row.models)) {
@@ -828,20 +826,21 @@ export function aggregateAccuracy(dates?: string[]): Record<string, ModelAccurac
                 }
             }
         }
-    }
+    } else {
+        const reportDates = dates ?? listAllReportDates();
+        for (const date of reportDates) {
+            const report = loadPredictionReport(date);
+            if (!report) continue;
 
-    for (const date of reportDates) {
-        const report = loadPredictionReport(date);
-        if (!report) continue;
-
-        for (const [model, acc] of Object.entries(getModelAccuracySummary(report))) {
-            const existing = totals.get(model);
-            if (existing) {
-                existing.correct += acc.correct;
-                existing.incorrect += acc.incorrect;
-                existing.total += acc.total;
-            } else {
-                totals.set(model, { ...acc });
+            for (const [model, acc] of Object.entries(getModelAccuracySummary(report))) {
+                const existing = totals.get(model);
+                if (existing) {
+                    existing.correct += acc.correct;
+                    existing.incorrect += acc.incorrect;
+                    existing.total += acc.total;
+                } else {
+                    totals.set(model, { ...acc });
+                }
             }
         }
     }

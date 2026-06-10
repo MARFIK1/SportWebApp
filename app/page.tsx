@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { listReportDates, loadPredictionReport } from "./util/data/predictionService";
-import { resolveCompetitionByDataPath } from "./util/league/leagueRegistry";
+import { getCompetitionDisplayGroup, isFeaturedCompetition, resolveCompetitionByDataPath } from "./util/league/leagueRegistry";
 import { buildMatchLookupMaps } from "./util/data/dataService";
 import DatePicker from "./components/home/DatePicker";
 import HomeLeagueList from "./components/home/HomeLeagueList";
@@ -25,7 +25,7 @@ function getConsensusConfidence(match: PredictionMatch): number {
 }
 
 const REPORT_DAYS_PAST = 30;
-const REPORT_DAYS_FUTURE = 1;
+const REPORT_DAYS_FUTURE = 2;
 const DAILY_DATE_WINDOW_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -130,11 +130,7 @@ export default async function Home({ searchParams }: PageProps) {
     const leagueSections = Object.entries(matchesByLeague).map(([dataPath, matches]) => {
         const comp = resolveCompetitionByDataPath(dataPath);
         const priority = comp?.priority ?? 999;
-        const sectionGroup = comp?.compType === "european"
-            ? 0
-            : comp?.compType === "league" && priority <= 5
-                ? 1
-                : 2;
+        const sectionGroup = getCompetitionDisplayGroup(comp);
 
         return {
             dataPath,
@@ -142,7 +138,7 @@ export default async function Home({ searchParams }: PageProps) {
             slug: comp?.slug ?? dataPath,
             priority,
             sectionGroup,
-            defaultOpen: sectionGroup <= 1,
+            defaultOpen: isFeaturedCompetition(comp),
             matches,
         };
     }).sort((a, b) => {

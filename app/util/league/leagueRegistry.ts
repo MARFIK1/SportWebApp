@@ -113,3 +113,18 @@ export function getTopLeagues(): Competition[] {
         .filter((c) => c.compType === "league" && c.priority <= 5)
         .sort((a, b) => a.priority - b.priority);
 }
+
+export function getCompetitionDisplayGroup(comp: Competition | undefined): number {
+    if (!comp) return 3;
+    if (comp.compType === "european" || comp.slug === "fifa-world-cup") return 0;
+    if (comp.compType === "league" && comp.priority <= 5) return 1;
+    return 2;
+}
+
+export function getCompetitionDisplayPriority(comp: Competition | undefined): number {
+    return getCompetitionDisplayGroup(comp) * 1000 + (comp?.priority ?? 999);
+}
+
+export function isFeaturedCompetition(comp: Competition | undefined): boolean {
+    return getCompetitionDisplayGroup(comp) <= 1;
+}

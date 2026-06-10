@@ -87,6 +87,13 @@ function report(date: string, accuracy: Record<string, ModelAccuracy>, matches: 
     };
 }
 
+function modelResultMatches(model: string, correct: number, total: number): Array<{ actual: MatchResult; predictions: Record<string, string> }> {
+    return Array.from({ length: total }, (_, index) => ({
+        actual: "HOME" as MatchResult,
+        predictions: { [model]: index < correct ? "HOME" : "AWAY" },
+    }));
+}
+
 beforeEach(() => {
     jest.resetAllMocks();
     mockedFs.existsSync.mockReturnValue(true);
@@ -100,10 +107,10 @@ describe("aggregateAccuracy", () => {
     it("sums correct/incorrect/total across dates and recomputes pct", () => {
         const r1 = report("2025-01-01", {
             LightGBM: { correct: 5, incorrect: 5, total: 10, accuracy_pct: 50 },
-        });
+        }, modelResultMatches("LightGBM", 5, 10));
         const r2 = report("2025-01-02", {
             LightGBM: { correct: 8, incorrect: 2, total: 10, accuracy_pct: 80 },
-        });
+        }, modelResultMatches("LightGBM", 8, 10));
         mockedFs.readFileSync.mockImplementation((fp: unknown) => {
             const s = String(fp);
             if (s.includes("2025-01-01")) return JSON.stringify(r1);
@@ -127,16 +134,39 @@ describe("aggregateAccuracy", () => {
         const result = aggregateAccuracy(["2025-01-01"]);
         expect(Object.keys(result)).toHaveLength(0);
     });
+
+    it("uses compact accuracy history for all-time totals when dates are omitted", () => {
+        mockedFs.readFileSync.mockImplementation((fp: unknown) => {
+            const s = String(fp);
+            if (s.includes("accuracy_history.json")) {
+                return JSON.stringify({
+                    dates: [
+                        { date: "2025-01-01", models: { LightGBM: { correct: 5, incorrect: 5, total: 10 } } },
+                        { date: "2025-01-02", models: { LightGBM: { correct: 10, incorrect: 0, total: 10 } } },
+                    ],
+                });
+            }
+            throw new Error("reports should not be read");
+        });
+
+        const result = aggregateAccuracy();
+        expect(result.LightGBM).toMatchObject({
+            correct: 15,
+            incorrect: 5,
+            total: 20,
+            accuracy_pct: 75,
+        });
+    });
 });
 
 describe("computeAccuracyOverTime", () => {
     it("returns cumulative accuracy per model per date", () => {
         const r1 = report("2025-01-01", {
             LightGBM: { correct: 5, incorrect: 5, total: 10, accuracy_pct: 50 },
-        });
+        }, modelResultMatches("LightGBM", 5, 10));
         const r2 = report("2025-01-02", {
             LightGBM: { correct: 10, incorrect: 0, total: 10, accuracy_pct: 100 },
-        });
+        }, modelResultMatches("LightGBM", 10, 10));
         mockedFs.readFileSync.mockImplementation((fp: unknown) => {
             const s = String(fp);
             if (s.includes("2025-01-01")) return JSON.stringify(r1);

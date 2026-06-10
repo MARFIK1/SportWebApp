@@ -9,7 +9,7 @@ import {
     computeConsensusAccuracy,
     getModelAccuracySummary,
 } from "../util/data/predictionService";
-import { resolveCompetitionByDataPath } from "../util/league/leagueRegistry";
+import { getCompetitionDisplayPriority, resolveCompetitionByDataPath } from "../util/league/leagueRegistry";
 import { buildMatchLookupMaps } from "../util/data/dataService";
 import DatePicker from "../components/home/DatePicker";
 import PredictionsClient from "./PredictionsClient";
@@ -78,7 +78,7 @@ export default async function PredictionsDashboard({
             dataPath: dp,
             name: comp?.name ?? dp,
             slug: comp?.slug ?? dp,
-            priority: comp?.priority ?? 999,
+            priority: getCompetitionDisplayPriority(comp),
             count: matchCountByLeague[dp] ?? 0,
         };
     }).sort((a, b) => a.priority - b.priority);
