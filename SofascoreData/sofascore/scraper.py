@@ -173,6 +173,20 @@ class SofascoreSeleniumScraper:
             all_matches.extend(matches)
             time.sleep(0.3 + random.random() * 0.4)
         return all_matches
+
+    def get_team_previous_events(self, team_id, page=0):
+        data = self.get_api_data(f"/team/{team_id}/events/last/{page}")
+        return data.get('events', []) if data else []
+
+    def get_all_team_previous_events(self, team_id, max_pages=4):
+        all_matches = []
+        for page in range(max_pages):
+            matches = self.get_team_previous_events(team_id, page)
+            if not matches:
+                break
+            all_matches.extend(matches)
+            time.sleep(0.3 + random.random() * 0.4)
+        return all_matches
     
     def get_match_odds(self, event_id):
         """Get pre-match odds for a match (1X2, Over/Under, BTTS)"""
