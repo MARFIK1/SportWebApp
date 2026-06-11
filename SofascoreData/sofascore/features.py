@@ -870,10 +870,12 @@ class MLFeatureGenerator:
         }
 
     def generate_match_features(self, match, all_matches, player_stats=None, elo_table=None,
-                                lineups=None, club_stats_index=None):
+                                lineups=None, club_stats_index=None,
+                                team_history_matches=None):
         home_team = match.get('home_team')
         away_team = match.get('away_team')
         match_date = match.get('date')
+        recent_matches = team_history_matches if team_history_matches is not None else all_matches
         
         features = {
             'event_id': match.get('event_id'),
@@ -883,30 +885,30 @@ class MLFeatureGenerator:
             'away_team': away_team,
         }
         
-        home_rest = self.compute_rest_days(home_team, all_matches, match_date)
+        home_rest = self.compute_rest_days(home_team, recent_matches, match_date)
         features['home_rest_days'] = home_rest['rest_days']
         features['home_is_congested'] = home_rest['is_congested']
         
-        away_rest = self.compute_rest_days(away_team, all_matches, match_date)
+        away_rest = self.compute_rest_days(away_team, recent_matches, match_date)
         features['away_rest_days'] = away_rest['rest_days']
         features['away_is_congested'] = away_rest['is_congested']
         
         features['rest_days_diff'] = home_rest['rest_days'] - away_rest['rest_days']
         
-        home_form = self.compute_form(home_team, all_matches, match_date, n_matches=5)
+        home_form = self.compute_form(home_team, recent_matches, match_date, n_matches=5)
         for k, v in home_form.items():
             features[f'home_{k}'] = v
         
-        away_form = self.compute_form(away_team, all_matches, match_date, n_matches=5)
+        away_form = self.compute_form(away_team, recent_matches, match_date, n_matches=5)
         for k, v in away_form.items():
             features[f'away_{k}'] = v
         
-        home_form10 = self.compute_form(home_team, all_matches, match_date, n_matches=10)
+        home_form10 = self.compute_form(home_team, recent_matches, match_date, n_matches=10)
         for k, v in home_form10.items():
             new_key = k.replace('form_', 'form10_')
             features[f'home_{new_key}'] = v
         
-        away_form10 = self.compute_form(away_team, all_matches, match_date, n_matches=10)
+        away_form10 = self.compute_form(away_team, recent_matches, match_date, n_matches=10)
         for k, v in away_form10.items():
             new_key = k.replace('form_', 'form10_')
             features[f'away_{new_key}'] = v
@@ -927,34 +929,34 @@ class MLFeatureGenerator:
         features['ppg_diff'] = features['home_table_ppg'] - features['away_table_ppg']
         features['xg_form_diff'] = features['home_form_xg_for'] - features['away_form_xg_for']
         
-        h2h = self.get_h2h_stats(home_team, away_team, all_matches, match_date)
+        h2h = self.get_h2h_stats(home_team, away_team, recent_matches, match_date)
         features.update(h2h)
 
-        home_momentum = self.compute_momentum(home_team, all_matches, match_date)
+        home_momentum = self.compute_momentum(home_team, recent_matches, match_date)
         for k, v in home_momentum.items():
             features[f'home_{k}'] = v
         
-        away_momentum = self.compute_momentum(away_team, all_matches, match_date)
+        away_momentum = self.compute_momentum(away_team, recent_matches, match_date)
         for k, v in away_momentum.items():
             features[f'away_{k}'] = v
         
         features['momentum_diff'] = features['home_momentum_points'] - features['away_momentum_points']
         
-        home_venue_form = self.compute_home_away_form(home_team, all_matches, match_date, is_home=True)
+        home_venue_form = self.compute_home_away_form(home_team, recent_matches, match_date, is_home=True)
         for k, v in home_venue_form.items():
             features[f'home_{k}'] = v
         
-        away_venue_form = self.compute_home_away_form(away_team, all_matches, match_date, is_home=False)
+        away_venue_form = self.compute_home_away_form(away_team, recent_matches, match_date, is_home=False)
         for k, v in away_venue_form.items():
             features[f'away_{k}'] = v
         
         features['venue_ppg_diff'] = features['home_venue_form_ppg'] - features['away_venue_form_ppg']
         
-        home_fatigue = self.compute_fatigue(home_team, all_matches, match_date)
+        home_fatigue = self.compute_fatigue(home_team, recent_matches, match_date)
         for k, v in home_fatigue.items():
             features[f'home_{k}'] = v
         
-        away_fatigue = self.compute_fatigue(away_team, all_matches, match_date)
+        away_fatigue = self.compute_fatigue(away_team, recent_matches, match_date)
         for k, v in away_fatigue.items():
             features[f'away_{k}'] = v
         
@@ -970,19 +972,19 @@ class MLFeatureGenerator:
         
         features['sos_diff'] = features['home_sos_avg_position'] - features['away_sos_avg_position']
         
-        home_patterns = self.compute_scoring_patterns(home_team, all_matches, match_date)
+        home_patterns = self.compute_scoring_patterns(home_team, recent_matches, match_date)
         for k, v in home_patterns.items():
             features[f'home_{k}'] = v
         
-        away_patterns = self.compute_scoring_patterns(away_team, all_matches, match_date)
+        away_patterns = self.compute_scoring_patterns(away_team, recent_matches, match_date)
         for k, v in away_patterns.items():
             features[f'away_{k}'] = v
         
-        home_corner_form = self.compute_corner_form(home_team, all_matches, match_date)
+        home_corner_form = self.compute_corner_form(home_team, recent_matches, match_date)
         for k, v in home_corner_form.items():
             features[f'home_{k}'] = v
 
-        away_corner_form = self.compute_corner_form(away_team, all_matches, match_date)
+        away_corner_form = self.compute_corner_form(away_team, recent_matches, match_date)
         for k, v in away_corner_form.items():
             features[f'away_{k}'] = v
 
@@ -991,11 +993,11 @@ class MLFeatureGenerator:
             features.get('away_corner_form_avg_for', 0)
         )
 
-        home_card_form = self.compute_card_form(home_team, all_matches, match_date)
+        home_card_form = self.compute_card_form(home_team, recent_matches, match_date)
         for k, v in home_card_form.items():
             features[f'home_{k}'] = v
 
-        away_card_form = self.compute_card_form(away_team, all_matches, match_date)
+        away_card_form = self.compute_card_form(away_team, recent_matches, match_date)
         for k, v in away_card_form.items():
             features[f'away_{k}'] = v
 
@@ -1004,11 +1006,11 @@ class MLFeatureGenerator:
             features.get('away_card_form_avg', 0)
         )
 
-        home_stats = self.compute_detailed_stats_form(home_team, all_matches, match_date)
+        home_stats = self.compute_detailed_stats_form(home_team, recent_matches, match_date)
         for k, v in home_stats.items():
             features[f'home_{k}'] = v
 
-        away_stats = self.compute_detailed_stats_form(away_team, all_matches, match_date)
+        away_stats = self.compute_detailed_stats_form(away_team, recent_matches, match_date)
         for k, v in away_stats.items():
             features[f'away_{k}'] = v
 
@@ -1044,11 +1046,11 @@ class MLFeatureGenerator:
         features['away_elo'] = away_elo
         features['elo_diff'] = round(home_elo - away_elo, 1)
 
-        home_wform = self.compute_weighted_form(home_team, all_matches, match_date)
+        home_wform = self.compute_weighted_form(home_team, recent_matches, match_date)
         for k, v in home_wform.items():
             features[f'home_{k}'] = v
 
-        away_wform = self.compute_weighted_form(away_team, all_matches, match_date)
+        away_wform = self.compute_weighted_form(away_team, recent_matches, match_date)
         for k, v in away_wform.items():
             features[f'away_{k}'] = v
 
