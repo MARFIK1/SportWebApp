@@ -1,6 +1,9 @@
 import os
 
-BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+BASE_DIR = os.environ.get(
+    "SOFASCORE_DATA_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"),
+)
 
 # Structure: type -> country -> league -> {tournament_id, seasons}
 # To add a new league: fill seasons dict or leave empty {} (will fetch from API)
