@@ -16,6 +16,7 @@ for (const dir of [stableData, stableReports]) {
 }
 
 const nextBin = path.join(repoRoot, "node_modules", "next", "dist", "bin", "next");
+const forwardedArgs = process.argv.slice(2);
 const env = {
     ...process.env,
     SOFASCORE_DATA_DIR: stableData,
@@ -25,7 +26,7 @@ const env = {
 console.log(`Using stable data: ${stableData}`);
 console.log(`Using stable reports: ${stableReports}`);
 
-const child = spawn(process.execPath, [nextBin, "dev", "--webpack"], {
+const child = spawn(process.execPath, [nextBin, "dev", "--webpack", ...forwardedArgs], {
     cwd: repoRoot,
     env,
     stdio: "inherit",
