@@ -29,11 +29,14 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, 'reconfigure'):
         stream.reconfigure(encoding='utf-8', errors='replace')
 
-sys.path.insert(0, str(Path(__file__).parent))
+SCRIPT_DIR = Path(__file__).parent
+DATA_DIR = Path(os.environ.get('SOFASCORE_DATA_DIR', SCRIPT_DIR / 'data')).resolve()
+REPORTS_DIR = Path(os.environ.get('SOFASCORE_REPORTS_DIR', SCRIPT_DIR / 'reports')).resolve()
+
+sys.path.insert(0, str(SCRIPT_DIR))
 
 from sofascore.features import MLFeatureGenerator
 
-REPORTS_DIR = Path(__file__).parent / 'reports'
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MODEL_VARIANT_CONFIG = {
     'without_odds': {
@@ -55,6 +58,11 @@ ODDS_KEYS = BASE_ODDS_KEYS + OPTIONAL_ODDS_KEYS
 ODDS_REQUIREMENTS_BY_TARGET = {
     '__all__': BASE_ODDS_KEYS,
 }
+TEAM_HISTORY_DIR = DATA_DIR / 'team_history'
+try:
+    TEAM_HISTORY_MAX_PAGES = max(1, int(os.environ.get('SOFASCORE_TEAM_HISTORY_PAGES', '6')))
+except ValueError:
+    TEAM_HISTORY_MAX_PAGES = 6
 
 
 def validate_target_date(target_date: str) -> str:
@@ -100,7 +108,7 @@ def _load_predictor_module():
 
     spec = importlib.util.spec_from_file_location(
         "predictor",
-        str(Path(__file__).parent / "sofascore" / "predictor.py")
+        str(SCRIPT_DIR / "sofascore" / "predictor.py")
     )
     predictor_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(predictor_module)
@@ -121,7 +129,7 @@ def load_models(variant_names: Optional[List[str]] = None):
     predictor_module = _load_predictor_module()
     UniversalPredictor = predictor_module.UniversalPredictor
 
-    data_dir = Path(__file__).parent / "data"
+    data_dir = DATA_DIR
     predictors = {}
     selected_variants = set(variant_names) if variant_names else None
 
@@ -157,7 +165,7 @@ COMP_TYPES = ['league', 'cups', 'european', 'international']
 
 def iter_competition_dirs(base_dir=None):
     if base_dir is None:
-        base_dir = Path(__file__).parent / 'data'
+        base_dir = DATA_DIR
     else:
         base_dir = Path(base_dir)
     
@@ -277,8 +285,7 @@ def _base_score_pair(match: Dict):
         home_score is not None and away_score is not None and
         home_pen is not None and away_pen is not None and
         (home_pen != 0 or away_pen != 0) and
-        home_score >= home_pen and away_score >= away_pen and
-        (home_score > home_pen or away_score > away_pen)
+        home_score >= home_pen and away_score >= away_pen
     ):
         return home_score - home_pen, away_score - away_pen
 
@@ -309,8 +316,8 @@ def _penalty_score_text_from_match(match: Dict) -> Optional[str]:
     return _score_text(home_pen, away_pen)
 
 
-def _looks_like_unverified_shootout_score(match: Dict) -> bool:
-    if match.get('status') != 'finished':
+def _looks_like_unverified_shootout_score(match: Dict, status: Optional[str] = None) -> bool:
+    if (status or match.get('status')) != 'finished':
         return False
     if match.get('home_score_pen') is not None or match.get('away_score_pen') is not None:
         return False
@@ -323,8 +330,15 @@ def _looks_like_unverified_shootout_score(match: Dict) -> bool:
 
 
 def _first_score_value(score_obj: Dict, keys: List[str]):
+    if not isinstance(score_obj, dict):
+        return None
     for key in keys:
         value = score_obj.get(key)
+        if value is not None:
+            return value
+    normalized = {str(key).lower(): value for key, value in score_obj.items()}
+    for key in keys:
+        value = normalized.get(str(key).lower())
         if value is not None:
             return value
     return None
@@ -334,8 +348,8 @@ def _apply_api_score_fields(match: Dict, api_match: Dict) -> bool:
     home_score_obj = api_match.get('homeScore') or {}
     away_score_obj = api_match.get('awayScore') or {}
 
-    home_score = _first_score_value(home_score_obj, ['display', 'normaltime', 'current'])
-    away_score = _first_score_value(away_score_obj, ['display', 'normaltime', 'current'])
+    home_score = _first_score_value(home_score_obj, ['display', 'normaltime', 'normalTime', 'regularTime', 'current'])
+    away_score = _first_score_value(away_score_obj, ['display', 'normaltime', 'normalTime', 'regularTime', 'current'])
     if home_score is not None:
         match['home_score'] = home_score
     if away_score is not None:
@@ -348,20 +362,112 @@ def _apply_api_score_fields(match: Dict, api_match: Dict) -> bool:
     if away_ht is not None:
         match['away_score_ht'] = away_ht
 
-    home_et = _first_score_value(home_score_obj, ['overtime', 'extraTime'])
-    away_et = _first_score_value(away_score_obj, ['overtime', 'extraTime'])
+    home_et = _first_score_value(home_score_obj, ['overtime', 'extraTime', 'afterExtraTime'])
+    away_et = _first_score_value(away_score_obj, ['overtime', 'extraTime', 'afterExtraTime'])
     if home_et is not None:
         match['home_score_et'] = home_et
     if away_et is not None:
         match['away_score_et'] = away_et
 
-    home_pen = _first_score_value(home_score_obj, ['penalties'])
-    away_pen = _first_score_value(away_score_obj, ['penalties'])
+    home_pen = _first_score_value(home_score_obj, ['penalties', 'penalty', 'penaltyScore', 'shootout', 'penaltyShootout'])
+    away_pen = _first_score_value(away_score_obj, ['penalties', 'penalty', 'penaltyScore', 'shootout', 'penaltyShootout'])
     if home_pen is not None or away_pen is not None:
         match['home_score_pen'] = home_pen
         match['away_score_pen'] = away_pen
 
     return home_score is not None and away_score is not None
+
+
+def _penalty_score_from_incidents(incidents) -> tuple:
+    if not incidents:
+        return None, None
+
+    home_score = None
+    away_score = None
+    home_scored = 0
+    away_scored = 0
+    saw_shootout = False
+
+    for incident in incidents:
+        if not isinstance(incident, dict):
+            continue
+
+        incident_type = str(incident.get('incidentType') or incident.get('type') or '').lower()
+        incident_class = str(incident.get('incidentClass') or incident.get('class') or '').lower()
+        period = str(incident.get('period') or incident.get('incidentPeriod') or '').lower()
+        is_shootout = (
+            'shootout' in incident_type or
+            'shootout' in period or
+            'penalt' in period or
+            bool(incident.get('isPenaltyShootout'))
+        )
+
+        if not is_shootout:
+            continue
+
+        saw_shootout = True
+        incident_home_score = _score_number(_first_score_value(incident, ['homeScore', 'home_score']))
+        incident_away_score = _score_number(_first_score_value(incident, ['awayScore', 'away_score']))
+        if incident_home_score is not None and incident_away_score is not None:
+            home_score = max(home_score or 0, incident_home_score)
+            away_score = max(away_score or 0, incident_away_score)
+            continue
+
+        if any(token in incident_class for token in ('scored', 'goal', 'converted')):
+            if incident.get('isHome'):
+                home_scored += 1
+            else:
+                away_scored += 1
+
+    if home_score is not None and away_score is not None:
+        return home_score, away_score
+    if saw_shootout and (home_scored or away_scored):
+        return home_scored, away_scored
+    return None, None
+
+
+def _apply_penalty_score_from_incidents(match: Dict, incidents) -> bool:
+    home_pen, away_pen = _penalty_score_from_incidents(incidents)
+    if home_pen is None or away_pen is None:
+        return False
+
+    match['home_score_pen'] = home_pen
+    match['away_score_pen'] = away_pen
+    return True
+
+
+def _refresh_score_details_if_needed(scraper, match: Dict, api_match: Dict, api_status: str) -> bool:
+    if not _looks_like_unverified_shootout_score(match, api_status):
+        return False
+
+    event_id = api_match.get('id') or match.get('event_id')
+    if not event_id:
+        return False
+
+    changed = False
+    event_details = scraper.get_event_details(event_id)
+    if event_details:
+        before = (
+            match.get('home_score'),
+            match.get('away_score'),
+            match.get('home_score_pen'),
+            match.get('away_score_pen'),
+        )
+        _apply_api_score_fields(match, event_details)
+        after = (
+            match.get('home_score'),
+            match.get('away_score'),
+            match.get('home_score_pen'),
+            match.get('away_score_pen'),
+        )
+        changed = changed or before != after
+
+    if _looks_like_unverified_shootout_score(match, api_status):
+        incidents = scraper.get_match_incidents(event_id)
+        if incidents:
+            changed = _apply_penalty_score_from_incidents(match, incidents) or changed
+
+    return changed
 
 
 def _source_status_rank(match: Dict) -> int:
@@ -511,7 +617,7 @@ def _strip_internal_match_fields(match: Dict) -> Dict:
 
 
 def find_matches_for_date(target_date: str) -> list:
-    base_dir = Path(__file__).parent / 'data'
+    base_dir = DATA_DIR
     seen_matches = {}  # match_key -> match data
     canonical_events = _build_canonical_raw_event_index(base_dir)
     
@@ -705,6 +811,7 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
 
         processed = []
         features = []
+        team_history_cache = {}
         for event in events:
             match_data = extract_match_data(event)
             event_id = event.get('id')
@@ -722,7 +829,25 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
                     match_data.update(referee_data)
 
             processed.append(match_data)
-            feature_data = fg.generate_match_features(match_data, finished_matches + [match_data])
+            history_context = finished_matches + [match_data]
+            feature_history = _team_history_for_match(
+                {
+                    'comp_type': comp_type,
+                    'home': match_data.get('home_team'),
+                    'away': match_data.get('away_team'),
+                    'home_team_id': match_data.get('home_team_id'),
+                    'away_team_id': match_data.get('away_team_id'),
+                },
+                history_context,
+                team_history_cache,
+                scraper=scraper,
+                force_fetch=True,
+            )
+            feature_data = fg.generate_match_features(
+                match_data,
+                history_context,
+                team_history_matches=feature_history,
+            )
             feature_data['result'] = None
             feature_data['label_result'] = None
             feature_data['label_result_int'] = None
@@ -802,6 +927,7 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
 
                 api_status = api_match.get('status', {}).get('type', '')
                 has_score = _apply_api_score_fields(match, api_match)
+                _refresh_score_details_if_needed(scraper, match, api_match, api_status)
 
                 if api_status == 'finished' and has_score:
                     match['status'] = 'finished'
@@ -967,7 +1093,7 @@ def update_match_results(target_date: str):
     print(f"UPDATING RESULTS FOR {target_date}")
     print("="*70)
     
-    base_dir = Path(__file__).parent / 'data'
+    base_dir = DATA_DIR
     
     comps_to_check = _collect_competitions_requiring_update(base_dir, target_date)
     
@@ -1084,6 +1210,7 @@ def update_match_results(target_date: str):
                         if api_home_id == home_id and api_away_id == away_id:
                             api_status = api_m.get('status', {}).get('type', '')
                             has_score = _apply_api_score_fields(match, api_m)
+                            _refresh_score_details_if_needed(scraper, match, api_m, api_status)
 
                             if api_status == 'finished' and has_score:
                                 match['status'] = 'finished'
@@ -1100,6 +1227,7 @@ def update_match_results(target_date: str):
 
                                         incidents = scraper.get_match_incidents(event_id)
                                         if incidents:
+                                            _apply_penalty_score_from_incidents(match, incidents)
                                             match['home_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and i.get('isHome'))
                                             match['away_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and not i.get('isHome'))
                                             match['home_red_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'red' and i.get('isHome'))
@@ -1142,9 +1270,9 @@ def update_match_results(target_date: str):
 
 
 def load_historical_matches(comp_type: str, country: str, league: str) -> list:
-    base_dir = Path(__file__).parent / 'data'
+    base_dir = DATA_DIR
     
-    if comp_type == 'european':
+    if comp_type in ('european', 'international'):
         league_dir = base_dir / comp_type / league
     else:
         league_dir = base_dir / comp_type / country / league
@@ -1191,8 +1319,154 @@ def load_historical_matches(comp_type: str, country: str, league: str) -> list:
     return unique_matches
 
 
+def _historical_match_key(match: Dict) -> str:
+    event_id = match.get('event_id')
+    if event_id not in (None, ''):
+        return f"event:{event_id}"
+    return "|".join(str(match.get(key) or '') for key in (
+        'date', 'home_team_id', 'away_team_id', 'home_team', 'away_team'
+    ))
+
+
+def _dedupe_historical_matches(matches: List[Dict]) -> List[Dict]:
+    deduped = {}
+    for match in matches:
+        key = _historical_match_key(match)
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = match
+            continue
+
+        existing_score = existing.get('home_score') is not None and existing.get('away_score') is not None
+        candidate_score = match.get('home_score') is not None and match.get('away_score') is not None
+        if candidate_score and not existing_score:
+            deduped[key] = {**match, **{k: v for k, v in existing.items() if match.get(k) in (None, '')}}
+
+    return list(deduped.values())
+
+
+def _team_history_cache_path(team_id) -> Path:
+    return TEAM_HISTORY_DIR / f"{team_id}.json"
+
+
+def _load_cached_team_history(team_id) -> List[Dict]:
+    if team_id in (None, ''):
+        return []
+
+    path = _team_history_cache_path(team_id)
+    if not path.exists():
+        return []
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('matches', []) if isinstance(data, dict) else []
+    except Exception:
+        return []
+
+
+def _save_cached_team_history(team_id, team_name: str, matches: List[Dict]):
+    if team_id in (None, ''):
+        return
+
+    TEAM_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    path = _team_history_cache_path(team_id)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'metadata': {
+                'team_id': team_id,
+                'team_name': team_name,
+                'source': 'sofascore_team_events_last',
+                'pages': TEAM_HISTORY_MAX_PAGES,
+                'scraped_at': datetime.now().isoformat(),
+                'total_matches': len(matches),
+            },
+            'matches': matches,
+        }, f, ensure_ascii=False, indent=2)
+
+
+def _normalize_team_history_events(events: List[Dict]) -> List[Dict]:
+    from sofascore.utils import extract_match_data
+
+    matches = []
+    for event in events or []:
+        try:
+            match_data = extract_match_data(event)
+        except Exception:
+            continue
+
+        if match_data.get('home_score') is None or match_data.get('away_score') is None:
+            continue
+
+        tournament = event.get('tournament') or {}
+        unique_tournament = tournament.get('uniqueTournament') or event.get('uniqueTournament') or {}
+        if unique_tournament.get('name') or tournament.get('name'):
+            match_data['source_competition'] = unique_tournament.get('name') or tournament.get('name')
+        matches.append(match_data)
+
+    return _dedupe_historical_matches(matches)
+
+
+def _load_or_fetch_team_history(scraper, team_id, team_name: str, force: bool = False) -> List[Dict]:
+    cached = _load_cached_team_history(team_id)
+    if cached and not force:
+        return cached
+
+    if scraper is None or team_id in (None, ''):
+        return cached
+
+    try:
+        events = scraper.get_all_team_previous_events(team_id, max_pages=TEAM_HISTORY_MAX_PAGES)
+    except Exception as exc:
+        print(f"  [WARN] Team history fetch failed for {team_name or team_id}: {exc}")
+        return cached
+
+    matches = _normalize_team_history_events(events)
+    if matches:
+        _save_cached_team_history(team_id, team_name, matches)
+        print(f"  Team history cached: {team_name or team_id} ({len(matches)} matches)")
+        return matches
+
+    return cached
+
+
+def _team_history_for_match(match: Dict, competition_history: List[Dict],
+                            cache: Dict, scraper=None, force_fetch: bool = False) -> Optional[List[Dict]]:
+    if match.get('comp_type') != 'international':
+        return None
+
+    combined = list(competition_history or [])
+    found_team_history = False
+
+    for side in ('home', 'away'):
+        team_id = match.get(f'{side}_team_id')
+        team_name = match.get(side) or match.get(f'{side}_team')
+        if team_id in (None, ''):
+            continue
+
+        cache_key = str(team_id)
+        if cache_key not in cache:
+            cache[cache_key] = _load_or_fetch_team_history(
+                scraper,
+                team_id,
+                team_name,
+                force=force_fetch,
+            )
+
+        team_matches = cache.get(cache_key) or []
+        if team_matches:
+            found_team_history = True
+            combined.extend(team_matches)
+
+    if not found_team_history:
+        return None
+
+    return _dedupe_historical_matches(combined)
+
+
 def compute_features_for_upcoming(match: dict, historical_matches: list,
-                                  lineups=None, club_stats_index=None) -> dict:
+                                  lineups=None, club_stats_index=None,
+                                  team_history_matches=None) -> dict:
     fg = MLFeatureGenerator()
 
     upcoming_match = {
@@ -1201,6 +1475,8 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
         'round': 0,
         'home_team': match['home'],
         'away_team': match['away'],
+        'home_team_id': match.get('home_team_id'),
+        'away_team_id': match.get('away_team_id'),
     }
     for odds_key in ['odds_home_win', 'odds_draw', 'odds_away_win',
                      'odds_over_2_5', 'odds_under_2_5',
@@ -1210,7 +1486,8 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
 
     features = fg.generate_match_features(upcoming_match, historical_matches,
                                           lineups=lineups,
-                                          club_stats_index=club_stats_index)
+                                          club_stats_index=club_stats_index,
+                                          team_history_matches=team_history_matches)
     return features
 
 
@@ -1649,6 +1926,7 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
     variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
     historical_cache = {}
     lineups_cache = {}
+    team_history_cache = {}
     club_stats_index = None
     variant_by_key = {}
 
@@ -1680,11 +1958,17 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
             match_lineups = lineups_cache[cache_key]
 
         if match.get('status') == 'upcoming' or match.get('features') is None:
+            team_history = _team_history_for_match(
+                match,
+                historical_cache[cache_key],
+                team_history_cache,
+            )
             features = compute_features_for_upcoming(
                 match,
                 historical_cache[cache_key],
                 lineups=match_lineups,
-                club_stats_index=club_stats_index)
+                club_stats_index=club_stats_index,
+                team_history_matches=team_history)
         else:
             features = match['features']
 
@@ -1839,6 +2123,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
 
     historical_cache = {}
     lineups_cache = {}
+    team_history_cache = {}
     club_stats_index = None
 
     has_intl = any(m.get('comp_type') in ('european', 'international') for m in matches)
@@ -1867,10 +2152,17 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
                 lineups_cache[cache_key] = load_lineups(comp_path)
             match_lineups = lineups_cache[cache_key]
 
+        team_history = _team_history_for_match(
+            match,
+            historical_cache[cache_key],
+            team_history_cache,
+        )
+
         if match.get('status') == 'upcoming' or match.get('features') is None:
             features = compute_features_for_upcoming(
                 match, historical_cache[cache_key],
-                lineups=match_lineups, club_stats_index=club_stats_index)
+                lineups=match_lineups, club_stats_index=club_stats_index,
+                team_history_matches=team_history)
         else:
             features = match['features']
         
@@ -1924,7 +2216,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
         default_variant = DEFAULT_PREDICTION_VARIANT if DEFAULT_PREDICTION_VARIANT in prediction_variants else next(iter(prediction_variants))
         default_payload = prediction_variants[default_variant]
 
-        hist = historical_cache.get(cache_key, [])
+        hist = team_history or historical_cache.get(cache_key, [])
         match_analysis = compute_match_analysis(match, hist)
 
         results.append({
@@ -2272,7 +2564,7 @@ def _find_by_keys(index: Dict[str, Dict], keys: List[str]) -> Optional[Dict]:
 
 
 def _drop_stale_rescheduled_report_entries(report: Dict, target_date: str) -> int:
-    canonical_events = _build_canonical_raw_event_index(Path(__file__).parent / 'data')
+    canonical_events = _build_canonical_raw_event_index(DATA_DIR)
     kept = []
     removed = 0
 
