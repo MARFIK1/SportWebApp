@@ -10,14 +10,29 @@ import random
 from datetime import datetime
 
 
+def _first_score_value(score_obj, keys):
+    if not isinstance(score_obj, dict):
+        return None
+    for key in keys:
+        value = score_obj.get(key)
+        if value is not None:
+            return value
+    normalized = {str(key).lower(): value for key, value in score_obj.items()}
+    for key in keys:
+        value = normalized.get(str(key).lower())
+        if value is not None:
+            return value
+    return None
+
+
 def extract_match_data(match):
     status_type = match.get('status', {}).get('type', '')
     home_score_obj = match.get('homeScore', {})
     away_score_obj = match.get('awayScore', {})
 
     # Use 'display' if available (excludes penalties), fallback to 'normaltime', then 'current'
-    home_score = home_score_obj.get('display') or home_score_obj.get('normaltime') or home_score_obj.get('current')
-    away_score = away_score_obj.get('display') or away_score_obj.get('normaltime') or away_score_obj.get('current')
+    home_score = _first_score_value(home_score_obj, ['display', 'normaltime', 'normalTime', 'regularTime', 'current'])
+    away_score = _first_score_value(away_score_obj, ['display', 'normaltime', 'normalTime', 'regularTime', 'current'])
 
     data = {
         'event_id': match.get('id'),
@@ -36,10 +51,10 @@ def extract_match_data(match):
     }
 
     # Extra time and penalties (only present for knockout matches)
-    home_ot = home_score_obj.get('overtime')
-    away_ot = away_score_obj.get('overtime')
-    home_pen = home_score_obj.get('penalties')
-    away_pen = away_score_obj.get('penalties')
+    home_ot = _first_score_value(home_score_obj, ['overtime', 'extraTime', 'afterExtraTime'])
+    away_ot = _first_score_value(away_score_obj, ['overtime', 'extraTime', 'afterExtraTime'])
+    home_pen = _first_score_value(home_score_obj, ['penalties', 'penalty', 'penaltyScore', 'shootout', 'penaltyShootout'])
+    away_pen = _first_score_value(away_score_obj, ['penalties', 'penalty', 'penaltyScore', 'shootout', 'penaltyShootout'])
 
     if home_ot is not None or away_ot is not None:
         data['home_score_et'] = home_ot
