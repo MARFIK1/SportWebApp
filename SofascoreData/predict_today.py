@@ -776,6 +776,21 @@ def _load_finished_matches_for_features(raw_dir: Path) -> list:
     return []
 
 
+def _print_sofascore_api_blocked(scraper) -> bool:
+    if not getattr(scraper, 'api_blocked', False):
+        return False
+
+    error = getattr(scraper, 'last_api_error', None) or {}
+    endpoint = error.get('endpoint') or 'unknown endpoint'
+    code = error.get('code') or 'unknown code'
+    reason = error.get('reason') or 'unknown reason'
+    print("\n[ERROR] Sofascore API is blocked for this session.")
+    print(f"Endpoint: {endpoint}")
+    print(f"Response: {code} {reason}")
+    print("Scrape cannot continue until Sofascore stops returning the anti-bot challenge.")
+    return True
+
+
 def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, base_dir: Path) -> bool:
     from sofascore import FootballDataManager
     from sofascore.utils import extract_match_data, extract_referee_data, extract_odds
@@ -1010,6 +1025,8 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
             if _scrape_scheduled_upcoming(scraper, target_date, COMPETITIONS, Path(BASE_DIR)):
                 print("\n[OK] Fetching complete")
                 return
+            if _print_sofascore_api_blocked(scraper):
+                return
 
         for comp_type in COMP_TYPES:
             type_config = COMPETITIONS.get(comp_type, {})
@@ -1051,6 +1068,8 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
                     
                     seasons = scraper.get_seasons(tournament_id)
                     if not seasons:
+                        if _print_sofascore_api_blocked(scraper):
+                            return
                         print("  Failed to fetch seasons")
                         continue
 
@@ -1116,6 +1135,8 @@ def update_match_results(target_date: str):
     
     try:
         scheduled_updated_count = _update_results_from_scheduled_events(scraper, target_date, base_dir)
+        if scheduled_updated_count is None and _print_sofascore_api_blocked(scraper):
+            return
         if scheduled_updated_count is not None:
             remaining = _collect_competitions_requiring_update(base_dir, target_date)
             if not remaining:
@@ -1143,6 +1164,8 @@ def update_match_results(target_date: str):
             
             seasons = scraper.get_seasons(tournament_id)
             if not seasons:
+                if _print_sofascore_api_blocked(scraper):
+                    return
                 print("  Failed to fetch seasons")
                 continue
             

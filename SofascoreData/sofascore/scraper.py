@@ -77,12 +77,34 @@ def create_stealth_driver(headless=False):
     })
     
     driver.set_script_timeout(30)
+    driver.set_page_load_timeout(30)
     return driver, user_agent
 
 
 class SofascoreSeleniumScraper:
     def __init__(self, driver):
         self.driver = driver
+        self.last_api_error = None
+        self.api_blocked = False
+
+    def _record_api_error(self, endpoint, data):
+        if not isinstance(data, dict) or not isinstance(data.get('error'), dict):
+            return
+
+        error = data.get('error') or {}
+        code = error.get('code')
+        reason = error.get('reason')
+        self.last_api_error = {
+            'endpoint': endpoint,
+            'code': code,
+            'reason': reason,
+        }
+        if code == 403 or str(reason).lower() in ('challenge', 'forbidden'):
+            self.api_blocked = True
+
+    def _has_api_error(self, endpoint, data):
+        self._record_api_error(endpoint, data)
+        return isinstance(data, dict) and isinstance(data.get('error'), dict)
 
     def _read_json_from_page(self):
         try:
@@ -118,22 +140,31 @@ class SofascoreSeleniumScraper:
         try:
             data = self.driver.execute_async_script(script, url)
             if data:
+                self._record_api_error(endpoint, data)
                 return data
         except Exception:
             pass
 
         try:
             self.driver.get(url)
-            return self._read_json_from_page()
+            data = self._read_json_from_page()
+            self._record_api_error(endpoint, data)
+            return data
         except Exception:
             return None
     
     def get_seasons(self, tournament_id):
-        data = self.get_api_data(f"/unique-tournament/{tournament_id}/seasons")
+        endpoint = f"/unique-tournament/{tournament_id}/seasons"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return []
         return data.get('seasons', []) if data else []
     
     def get_season_matches(self, tournament_id, season_id, page=0):
-        data = self.get_api_data(f"/unique-tournament/{tournament_id}/season/{season_id}/events/last/{page}")
+        endpoint = f"/unique-tournament/{tournament_id}/season/{season_id}/events/last/{page}"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return []
         return data.get('events', []) if data else []
     
     def get_all_season_matches(self, tournament_id, season_id, max_pages=100):
@@ -161,7 +192,10 @@ class SofascoreSeleniumScraper:
         return data.get('incidents', []) if data else None
     
     def get_upcoming_matches(self, tournament_id, season_id, page=0):
-        data = self.get_api_data(f"/unique-tournament/{tournament_id}/season/{season_id}/events/next/{page}")
+        endpoint = f"/unique-tournament/{tournament_id}/season/{season_id}/events/next/{page}"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return []
         return data.get('events', []) if data else []
     
     def get_all_upcoming_matches(self, tournament_id, season_id, max_pages=10):
@@ -175,7 +209,10 @@ class SofascoreSeleniumScraper:
         return all_matches
 
     def get_team_previous_events(self, team_id, page=0):
-        data = self.get_api_data(f"/team/{team_id}/events/last/{page}")
+        endpoint = f"/team/{team_id}/events/last/{page}"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return []
         return data.get('events', []) if data else []
 
     def get_all_team_previous_events(self, team_id, max_pages=4):
@@ -194,11 +231,19 @@ class SofascoreSeleniumScraper:
         return data.get('markets', []) if data and isinstance(data, dict) else None
 
     def get_event_details(self, event_id):
-        data = self.get_api_data(f"/event/{event_id}")
+        endpoint = f"/event/{event_id}"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return None
         return data.get('event', data) if data and isinstance(data, dict) else None
 
     def get_scheduled_events(self, date_ymd):
-        data = self.get_api_data(f"/sport/football/scheduled-events/{date_ymd}")
+        endpoint = f"/sport/football/scheduled-events/{date_ymd}"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            error = data.get('error') or {}
+            print(f"[WARN] scheduled-events {date_ymd}: Sofascore API error {error.get('code')} {error.get('reason')}")
+            return None
         if not data or not isinstance(data, dict):
             return None
         events = data.get('events', [])
