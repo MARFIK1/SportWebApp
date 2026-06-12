@@ -862,10 +862,19 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
                 scraper=scraper,
                 force_fetch=TEAM_HISTORY_FORCE_REFRESH,
             )
+            feature_source_history = _history_for_feature_generation(
+                {
+                    'comp_type': comp_type,
+                    'home': match_data.get('home_team'),
+                    'away': match_data.get('away_team'),
+                },
+                history_context,
+                feature_history,
+            )
             feature_data = fg.generate_match_features(
                 match_data,
                 history_context,
-                team_history_matches=feature_history,
+                team_history_matches=feature_source_history,
             )
             feature_data['result'] = None
             feature_data['label_result'] = None
@@ -1491,6 +1500,20 @@ def _team_history_for_match(match: Dict, competition_history: List[Dict],
     return _dedupe_historical_matches(combined)
 
 
+def _history_for_feature_generation(match: Dict, competition_history: List[Dict],
+                                    team_history: Optional[List[Dict]]) -> List[Dict]:
+    if match.get('comp_type') != 'international':
+        return competition_history or []
+    if team_history is not None:
+        return team_history
+
+    safe_print(
+        f"[WARN] Missing team history cache for {match.get('home', '?')} vs {match.get('away', '?')}; "
+        "skipping tournament-only international form."
+    )
+    return []
+
+
 def compute_features_for_upcoming(match: dict, historical_matches: list,
                                   lineups=None, club_stats_index=None,
                                   team_history_matches=None) -> dict:
@@ -1990,12 +2013,17 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
                 historical_cache[cache_key],
                 team_history_cache,
             )
+            feature_history = _history_for_feature_generation(
+                match,
+                historical_cache[cache_key],
+                team_history,
+            )
             features = compute_features_for_upcoming(
                 match,
                 historical_cache[cache_key],
                 lineups=match_lineups,
                 club_stats_index=club_stats_index,
-                team_history_matches=team_history)
+                team_history_matches=feature_history)
         else:
             features = match['features']
 
@@ -2184,12 +2212,17 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
             historical_cache[cache_key],
             team_history_cache,
         )
+        feature_history = _history_for_feature_generation(
+            match,
+            historical_cache[cache_key],
+            team_history,
+        )
 
         if match.get('status') == 'upcoming' or match.get('features') is None:
             features = compute_features_for_upcoming(
                 match, historical_cache[cache_key],
                 lineups=match_lineups, club_stats_index=club_stats_index,
-                team_history_matches=team_history)
+                team_history_matches=feature_history)
         else:
             features = match['features']
         
@@ -2243,7 +2276,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
         default_variant = DEFAULT_PREDICTION_VARIANT if DEFAULT_PREDICTION_VARIANT in prediction_variants else next(iter(prediction_variants))
         default_payload = prediction_variants[default_variant]
 
-        hist = team_history or historical_cache.get(cache_key, [])
+        hist = feature_history
         match_analysis = compute_match_analysis(match, hist)
 
         results.append({

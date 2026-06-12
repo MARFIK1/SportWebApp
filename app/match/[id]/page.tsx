@@ -267,16 +267,17 @@ export default async function Match({ params, searchParams }: PageProps) {
     const actualXgHome = readStatValue(rawMatch, ["home_expectedgoals", "home_xg"]);
     const actualXgAway = readStatValue(rawMatch, ["away_expectedgoals", "away_xg"]);
 
-    const finishedMatches: SofascoreMatch[] = [];
+    const isInternationalMatch = competition.compType === "international";
+    const competitionFinishedMatches: SofascoreMatch[] = [];
     for (const comp of competitions) {
         const allMatches = comp.dataPath === competition.dataPath ? competitionMatches : loadAllSeasons(comp);
-        finishedMatches.push(...allMatches.filter((m) =>
+        competitionFinishedMatches.push(...allMatches.filter((m) =>
             m.status === "finished" &&
             m.event_id !== eventId &&
             m.date < match.date
         ));
     }
-    finishedMatches.push(
+    const teamHistoryMatches = [
         ...loadTeamHistory(match.home_team_id).filter((m) =>
             m.status === "finished" &&
             m.event_id !== eventId &&
@@ -286,19 +287,23 @@ export default async function Match({ params, searchParams }: PageProps) {
             m.status === "finished" &&
             m.event_id !== eventId &&
             m.date < match.date
-        )
-    );
+        ),
+    ];
     const uniqueFinishedMatches = Array.from(
-        finishedMatches.reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values()
+        [...competitionFinishedMatches, ...teamHistoryMatches].reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values()
     ).sort((a, b) => b.date.localeCompare(a.date));
+    const recentHistoryMatches = isInternationalMatch
+        ? Array.from(teamHistoryMatches.reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values())
+            .sort((a, b) => b.date.localeCompare(a.date))
+        : uniqueFinishedMatches;
     const h2h = uniqueFinishedMatches.filter((m) =>
         (m.home_team_id === match.home_team_id && m.away_team_id === match.away_team_id) ||
         (m.home_team_id === match.away_team_id && m.away_team_id === match.home_team_id)
     ).slice(0, 10);
-    const homeRecent = uniqueFinishedMatches.filter((m) =>
+    const homeRecent = recentHistoryMatches.filter((m) =>
         m.home_team_id === match.home_team_id || m.away_team_id === match.home_team_id
     ).slice(0, 10);
-    const awayRecent = uniqueFinishedMatches.filter((m) =>
+    const awayRecent = recentHistoryMatches.filter((m) =>
         m.home_team_id === match.away_team_id || m.away_team_id === match.away_team_id
     ).slice(0, 10);
     const analysis = repairMatchAnalysis(rawAnalysis, match, homeRecent, awayRecent);
