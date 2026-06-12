@@ -30,6 +30,7 @@ function competitionsCacheKey(competitions: Competition[]): string {
 const matchIndexCache = new Map<string, Map<number, { match: SofascoreMatch; competition: Competition }>>();
 const searchDataCache = new Map<string, { teams: SearchTeam[]; players: SearchPlayer[] }>();
 const matchLookupCache = new Map<string, MatchLookupMaps>();
+const teamHistoryIndexCache = new Map<string, Map<number, SofascoreMatch>>();
 
 function upcomingToMatch(match: SofascoreUpcomingMatch): SofascoreMatch {
     return {
@@ -87,6 +88,97 @@ export function loadUpcomingMatches(competition: Competition): SofascoreUpcoming
     }
 
     return allUpcoming;
+}
+
+function readNumericId(value: unknown): number | null {
+    const parsed = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeTeamHistoryMatch(match: Partial<SofascoreMatch>): SofascoreMatch | null {
+    const eventId = readNumericId(match.event_id);
+    const homeTeamId = readNumericId(match.home_team_id);
+    const awayTeamId = readNumericId(match.away_team_id);
+    const date = typeof match.date === "string" ? match.date : "";
+    const homeTeam = typeof match.home_team === "string" ? match.home_team : "";
+    const awayTeam = typeof match.away_team === "string" ? match.away_team : "";
+
+    if (eventId == null || homeTeamId == null || awayTeamId == null || !date || !homeTeam || !awayTeam) {
+        return null;
+    }
+
+    return {
+        ...match,
+        event_id: eventId,
+        date,
+        round: typeof match.round === "number" ? match.round : 0,
+        home_team_id: homeTeamId,
+        home_team: homeTeam,
+        away_team_id: awayTeamId,
+        away_team: awayTeam,
+        home_score: match.home_score ?? null,
+        away_score: match.away_score ?? null,
+        home_score_ht: match.home_score_ht ?? null,
+        away_score_ht: match.away_score_ht ?? null,
+        status: match.status ?? "finished",
+        season: match.season ?? date.slice(0, 4),
+    } as SofascoreMatch;
+}
+
+export const loadTeamHistory = cache((teamId: number): SofascoreMatch[] => {
+    if (!Number.isFinite(teamId) || teamId <= 0) return [];
+
+    const filePath = path.join(DATA_DIR, "team_history", `${teamId}.json`);
+    const data = readJson<{ matches?: Partial<SofascoreMatch>[] }>(filePath);
+    return (data?.matches ?? [])
+        .map(normalizeTeamHistoryMatch)
+        .filter((match): match is SofascoreMatch => match !== null);
+});
+
+function getTeamHistoryIndex(): Map<number, SofascoreMatch> {
+    const key = `${DATA_DIR}::team_history`;
+    const cached = teamHistoryIndexCache.get(key);
+    if (cached) return cached;
+
+    const index = new Map<number, SofascoreMatch>();
+    const teamHistoryDir = path.join(DATA_DIR, "team_history");
+    if (fs.existsSync(teamHistoryDir)) {
+        for (const fileName of fs.readdirSync(teamHistoryDir).filter((name) => name.endsWith(".json"))) {
+            const teamId = Number.parseInt(fileName.replace(/\.json$/, ""), 10);
+            if (!Number.isFinite(teamId)) continue;
+            for (const match of loadTeamHistory(teamId)) {
+                if (!index.has(match.event_id)) {
+                    index.set(match.event_id, match);
+                }
+            }
+        }
+    }
+
+    teamHistoryIndexCache.set(key, index);
+    return index;
+}
+
+function teamHistoryCompetition(match: SofascoreMatch): Competition {
+    const sourceCompetition = (match as unknown as { source_competition?: unknown }).source_competition;
+    const name = typeof sourceCompetition === "string" && sourceCompetition.trim()
+        ? sourceCompetition
+        : "International";
+
+    return {
+        slug: "international-team-history",
+        name,
+        country: "world",
+        compType: "international",
+        tournamentId: 0,
+        dataPath: "team_history",
+        priority: 999,
+    };
+}
+
+export function findMatchInTeamHistory(eventId: number): { match: SofascoreMatch; competition: Competition } | null {
+    const match = getTeamHistoryIndex().get(eventId);
+    if (!match) return null;
+    return { match, competition: teamHistoryCompetition(match) };
 }
 
 export function listSeasonFiles(competition: Competition): string[] {

@@ -25,7 +25,7 @@ const MATCH_FIELDS = new Set([
     "event_id", "home_team", "away_team", "home_team_id", "away_team_id",
     "home_score", "away_score", "home_score_ht", "away_score_ht",
     "home_score_pen", "away_score_pen", "home_score_et", "away_score_et",
-    "status", "date", "time", "round", "season",
+    "status", "date", "time", "round", "season", "source_competition",
     "odds_home_win", "odds_draw", "odds_away_win",
     "odds_home_prob", "odds_draw_prob", "odds_away_prob", "odds_overround",
     "odds_over_2_5", "odds_under_2_5", "odds_over_2_5_prob",
@@ -192,6 +192,34 @@ function copyUpcomingFiles(srcRawDir, destRawDir) {
             matches: trimmedMatches,
         });
         fs.writeFileSync(path.join(destUpcomingDir, fileName), json);
+
+        files++;
+        matches += trimmedMatches.length;
+        bytes += Buffer.byteLength(json);
+    }
+
+    return { files, matches, bytes };
+}
+
+function copyTeamHistoryFiles(srcDataDir, destDataDir) {
+    const srcTeamHistoryDir = path.join(srcDataDir, "team_history");
+    if (!fs.existsSync(srcTeamHistoryDir)) return { files: 0, matches: 0, bytes: 0 };
+
+    const destTeamHistoryDir = path.join(destDataDir, "team_history");
+    ensureDir(destTeamHistoryDir);
+
+    let files = 0;
+    let matches = 0;
+    let bytes = 0;
+
+    for (const fileName of fs.readdirSync(srcTeamHistoryDir).filter((name) => name.endsWith(".json")).sort()) {
+        const raw = JSON.parse(fs.readFileSync(path.join(srcTeamHistoryDir, fileName), "utf-8"));
+        const trimmedMatches = (raw.matches || []).map(trimMatch);
+        const json = JSON.stringify({
+            metadata: raw.metadata || {},
+            matches: trimmedMatches,
+        });
+        fs.writeFileSync(path.join(destTeamHistoryDir, fileName), json);
 
         files++;
         matches += trimmedMatches.length;
@@ -540,6 +568,16 @@ for (const dataPath of COMPETITIONS) {
         ? ", " + upcoming.matches + " upcoming in " + upcoming.files + " files"
         : "";
     console.log("ok " + dataPath + " (" + trimmed.length + " matches" + upcomingSummary + ")");
+}
+
+console.log("\nteam history:");
+const teamHistory = copyTeamHistoryFiles(SOURCE_DATA, OUT_DIR);
+totalMatches += teamHistory.matches;
+matchBytes += teamHistory.bytes;
+if (teamHistory.files > 0) {
+    console.log("copied " + teamHistory.files + " team files (" + teamHistory.matches + " matches)");
+} else {
+    console.log("no team_history cache");
 }
 
 console.log("\nprediction reports:");

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions, resolveCompetitionByDataPath, type Competition } from "@/app/util/league/leagueRegistry";
-import { buildMatchLookupMaps, computeStandings, findMatchInCompetitions, loadAllSeasons, resolveLeagueTableContext } from "@/app/util/data/dataService";
+import { buildMatchLookupMaps, computeStandings, findMatchInCompetitions, findMatchInTeamHistory, loadAllSeasons, loadTeamHistory, resolveLeagueTableContext } from "@/app/util/data/dataService";
 import { getMatchPrediction, loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import type { PredictionReport } from "@/types/predictions";
@@ -210,7 +210,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     const resolvedParams = await params;
     const eventId = parseInt(resolvedParams.id, 10);
     if (!Number.isFinite(eventId)) return { title: "Match" };
-    const result = findMatchInCompetitions(eventId, getAllCompetitions());
+    const result = findMatchInCompetitions(eventId, getAllCompetitions()) ?? findMatchInTeamHistory(eventId);
     if (!result) return { title: "Match" };
     const { match } = result;
     const matchResult = resolveSofascoreMatchResult(match, null);
@@ -228,9 +228,10 @@ export default async function Match({ params, searchParams }: PageProps) {
     const competitions = getAllCompetitions();
     const requestedDate = normalizeReportDate(resolvedSearchParams.date);
     const indexedResult = Number.isFinite(eventId) ? findMatchInCompetitions(eventId, competitions) : null;
-    const initialDate = requestedDate || indexedResult?.match.date.slice(0, 10) || null;
+    const teamHistoryResult = !indexedResult && Number.isFinite(eventId) ? findMatchInTeamHistory(eventId) : null;
+    const initialDate = requestedDate || indexedResult?.match.date.slice(0, 10) || teamHistoryResult?.match.date.slice(0, 10) || null;
     const predReport = initialDate ? loadPredictionReport(initialDate) : null;
-    const result = indexedResult ?? (Number.isFinite(eventId) ? reportOnlyMatch(eventId, predReport, initialDate) : null);
+    const result = indexedResult ?? teamHistoryResult ?? (Number.isFinite(eventId) ? reportOnlyMatch(eventId, predReport, initialDate) : null);
 
     const t = await getServerT();
 
@@ -275,6 +276,18 @@ export default async function Match({ params, searchParams }: PageProps) {
             m.date < match.date
         ));
     }
+    finishedMatches.push(
+        ...loadTeamHistory(match.home_team_id).filter((m) =>
+            m.status === "finished" &&
+            m.event_id !== eventId &&
+            m.date < match.date
+        ),
+        ...loadTeamHistory(match.away_team_id).filter((m) =>
+            m.status === "finished" &&
+            m.event_id !== eventId &&
+            m.date < match.date
+        )
+    );
     const uniqueFinishedMatches = Array.from(
         finishedMatches.reduce((map, m) => { map.set(m.event_id, m); return map; }, new Map<number, SofascoreMatch>()).values()
     ).sort((a, b) => b.date.localeCompare(a.date));
