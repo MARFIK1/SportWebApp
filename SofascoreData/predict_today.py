@@ -59,6 +59,10 @@ ODDS_REQUIREMENTS_BY_TARGET = {
     '__all__': BASE_ODDS_KEYS,
 }
 TEAM_HISTORY_DIR = DATA_DIR / 'team_history'
+TEAM_HISTORY_FORCE_REFRESH = (
+    str(os.environ.get('SOFASCORE_TEAM_HISTORY_FORCE_REFRESH', '')).strip().lower()
+    in {'1', 'true', 'yes', 'on'}
+)
 try:
     TEAM_HISTORY_MAX_PAGES = max(1, int(os.environ.get('SOFASCORE_TEAM_HISTORY_PAGES', '6')))
 except ValueError:
@@ -856,7 +860,7 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
                 history_context,
                 team_history_cache,
                 scraper=scraper,
-                force_fetch=True,
+                force_fetch=TEAM_HISTORY_FORCE_REFRESH,
             )
             feature_data = fg.generate_match_features(
                 match_data,
