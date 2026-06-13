@@ -62,6 +62,7 @@ next-env.d.ts
 # SofascoreData - large data files (models, scraped data, reports)
 SofascoreData/data/
 SofascoreData/reports/
+SofascoreData/.chrome-profile/
 SofascoreData/top_picks/*.json
 SofascoreData/**/__pycache__/
 SofascoreData/*.db

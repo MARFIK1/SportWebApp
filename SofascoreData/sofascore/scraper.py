@@ -6,6 +6,7 @@ import json
 import os
 import time
 import random
+from pathlib import Path
 
 from selenium import webdriver
 
@@ -27,20 +28,43 @@ VIEWPORTS = [
 ]
 
 
+def _truthy_env(name):
+    return os.environ.get(name, '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 def create_stealth_driver(headless=False):
     """Creates Chrome WebDriver with anti-detection measures. Returns (driver, user_agent)."""
-    env_headless = os.environ.get('SOFASCORE_HEADLESS', '').lower() in ('1', 'true', 'yes')
+    env_headless = _truthy_env('SOFASCORE_HEADLESS')
     ci_without_display = os.environ.get('CI', '').lower() == 'true' and not os.environ.get('DISPLAY')
     headless = headless or env_headless or ci_without_display
 
     options = webdriver.ChromeOptions()
-    
-    user_agent = random.choice(USER_AGENTS)
-    options.add_argument(f'--user-agent={user_agent}')
+
+    profile_dir = os.environ.get('SOFASCORE_CHROME_USER_DATA_DIR')
+    if profile_dir is None:
+        profile_dir = str(Path(__file__).resolve().parents[1] / '.chrome-profile')
+    if profile_dir.strip().lower() not in ('', '0', 'false', 'off', 'none'):
+        Path(profile_dir).mkdir(parents=True, exist_ok=True)
+        options.add_argument(f'--user-data-dir={profile_dir}')
+
+    profile_name = os.environ.get('SOFASCORE_CHROME_PROFILE_DIRECTORY')
+    if profile_name:
+        options.add_argument(f'--profile-directory={profile_name}')
+
+    user_agent = os.environ.get('SOFASCORE_USER_AGENT')
+    if user_agent:
+        options.add_argument(f'--user-agent={user_agent}')
+    elif _truthy_env('SOFASCORE_RANDOM_USER_AGENT'):
+        user_agent = random.choice(USER_AGENTS)
+        options.add_argument(f'--user-agent={user_agent}')
+    else:
+        user_agent = 'browser-default'
 
     width, height = random.choice(VIEWPORTS)
     options.add_argument(f'--window-size={width},{height}')
 
+    options.add_argument('--no-first-run')
+    options.add_argument('--no-default-browser-check')
     options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_argument('--disable-infobars')
     options.add_argument('--disable-dev-shm-usage')
