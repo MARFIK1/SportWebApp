@@ -229,11 +229,13 @@ def _configured_current_season(comp_data: Dict) -> Optional[Dict]:
 
 def _resolve_current_season(scraper, comp_data: Dict, tournament_id, comp_name: str) -> Optional[Dict]:
     configured_season = _configured_current_season(comp_data)
-    if getattr(scraper, 'api_blocked', False) and configured_season:
-        print(f"[CONFIG] API blocked, using configured season {configured_season['name']} (ID: {configured_season['id']})")
-        return configured_season
+    if getattr(scraper, 'api_blocked', False):
+        return None
 
     seasons = scraper.get_seasons(tournament_id)
+    if getattr(scraper, 'api_blocked', False):
+        return None
+
     if seasons:
         current_season = seasons[0]
         season_id = current_season.get('id')
@@ -832,7 +834,7 @@ def _print_sofascore_api_blocked(scraper) -> bool:
     print("\n[ERROR] Sofascore API is blocked for this session.")
     print(f"Endpoint: {endpoint}")
     print(f"Response: {code} {reason}")
-    print("Scrape cannot continue until Sofascore stops returning the anti-bot challenge.")
+    print("Live Sofascore fetch/update cannot continue until Sofascore stops returning the anti-bot challenge.")
     return True
 
 
@@ -948,7 +950,7 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
     return True
 
 
-def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: Path) -> Optional[int]:
+def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: Path) -> Optional[Dict]:
     scheduled_events = scraper.get_scheduled_events(target_date)
     if scheduled_events is None:
         print("Scheduled events endpoint unavailable; falling back to season lookup.")
@@ -966,6 +968,7 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
             events_by_teams[(home_id, away_id)] = event
 
     updated_count = 0
+    matched_count = 0
     for _comp_type, _country, _comp_name, comp_dir in iter_competition_dirs(base_dir):
         raw_dir = comp_dir / 'raw'
         if not raw_dir.exists():
@@ -994,6 +997,7 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
                 if not api_match:
                     continue
 
+                matched_count += 1
                 api_status = api_match.get('status', {}).get('type', '')
                 has_score = _apply_api_score_fields(match, api_match)
                 _refresh_score_details_if_needed(scraper, match, api_match, api_status)
@@ -1004,6 +1008,16 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
                         match['event_id'] = api_match.get('id')
                     modified = True
                     updated_count += 1
+                elif api_status == 'postponed':
+                    match['status'] = 'postponed'
+                    if api_match.get('id') and not match.get('event_id'):
+                        match['event_id'] = api_match.get('id')
+                    modified = True
+                elif api_status == 'inprogress':
+                    match['status'] = 'inprogress'
+                    if api_match.get('id') and not match.get('event_id'):
+                        match['event_id'] = api_match.get('id')
+                    modified = True
 
             if modified:
                 if data.get('metadata'):
@@ -1011,8 +1025,12 @@ def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: P
                 with open(raw_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
 
-    print(f"[OK] Updated {updated_count} matches from scheduled events")
-    return updated_count
+    print(f"[OK] Matched {matched_count}, updated {updated_count} matches from scheduled events")
+    return {
+        'source_ok': matched_count > 0,
+        'matched_count': matched_count,
+        'updated_count': updated_count,
+    }
 
 
 def _collect_competitions_requiring_update(base_dir: Path, target_date: str):
@@ -1078,9 +1096,10 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
         if target_date:
             if _scrape_scheduled_upcoming(scraper, target_date, COMPETITIONS, Path(BASE_DIR)):
                 print("\n[OK] Fetching complete")
-                return
+                return True
             if getattr(scraper, 'api_blocked', False):
-                print("Scheduled events are blocked; trying configured-season fallback.")
+                _print_sofascore_api_blocked(scraper)
+                return False
 
         for comp_type in COMP_TYPES:
             type_config = COMPETITIONS.get(comp_type, {})
@@ -1127,7 +1146,7 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
                     current_season = _resolve_current_season(scraper, comp_data, tournament_id, comp_name)
                     if not current_season:
                         if _print_sofascore_api_blocked(scraper):
-                            continue
+                            return False
                         print("  Failed to fetch seasons")
                         continue
 
@@ -1139,6 +1158,8 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
                     upcoming = scrape_upcoming_matches(
                         scraper, dm, fg, tournament_id, season_id, season_name
                     )
+                    if _print_sofascore_api_blocked(scraper):
+                        return False
                     
                     if target_date and upcoming:
                         matches_for_date = [m for m in upcoming
@@ -1150,6 +1171,7 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
         driver.quit()
     
     print("\n[OK] Fetching complete")
+    return True
 
 
 def update_match_results(target_date: str):
@@ -1171,7 +1193,12 @@ def update_match_results(target_date: str):
     
     if not comps_to_check:
         print("No matches requiring update found.")
-        return
+        return {
+            'source_ok': True,
+            'api_blocked': False,
+            'matched_count': 0,
+            'updated_count': 0,
+        }
     
     print(f"Competitions to check: {len(comps_to_check)}")
     for ct, c, l in sorted(comps_to_check):
@@ -1185,15 +1212,28 @@ def update_match_results(target_date: str):
     time.sleep(3)
     
     updated_count = 0
+    matched_count = 0
     
     try:
-        scheduled_updated_count = _update_results_from_scheduled_events(scraper, target_date, base_dir)
-        if scheduled_updated_count is None and _print_sofascore_api_blocked(scraper):
-            return
-        if scheduled_updated_count is not None:
+        scheduled_update = _update_results_from_scheduled_events(scraper, target_date, base_dir)
+        if scheduled_update is None and _print_sofascore_api_blocked(scraper):
+            return {
+                'source_ok': False,
+                'api_blocked': True,
+                'matched_count': matched_count,
+                'updated_count': updated_count,
+            }
+        if scheduled_update is not None:
+            matched_count += scheduled_update.get('matched_count', 0)
+            updated_count += scheduled_update.get('updated_count', 0)
             remaining = _collect_competitions_requiring_update(base_dir, target_date)
             if not remaining:
-                return
+                return {
+                    'source_ok': matched_count > 0,
+                    'api_blocked': False,
+                    'matched_count': matched_count,
+                    'updated_count': updated_count,
+                }
             comps_to_check = remaining
             print(f"Remaining competitions after scheduled update: {len(comps_to_check)}")
             for ct, c, l in sorted(comps_to_check):
@@ -1218,7 +1258,12 @@ def update_match_results(target_date: str):
             current_season = _resolve_current_season(scraper, comp_config, tournament_id, comp_name)
             if not current_season:
                 if _print_sofascore_api_blocked(scraper):
-                    continue
+                    return {
+                        'source_ok': False,
+                        'api_blocked': True,
+                        'matched_count': matched_count,
+                        'updated_count': updated_count,
+                    }
                 print("  Failed to fetch seasons")
                 continue
 
@@ -1228,6 +1273,13 @@ def update_match_results(target_date: str):
             print(f"  Season: {season_name}")
 
             all_api_matches = scraper.get_all_season_matches(tournament_id, season_id)
+            if _print_sofascore_api_blocked(scraper):
+                return {
+                    'source_ok': False,
+                    'api_blocked': True,
+                    'matched_count': matched_count,
+                    'updated_count': updated_count,
+                }
             
             date_matches = []
             for m in all_api_matches:
@@ -1243,7 +1295,7 @@ def update_match_results(target_date: str):
             
             updated_matches = set()
             
-            if comp_type == 'european':
+            if comp_type in ('european', 'international'):
                 raw_dir = base_dir / comp_type / comp_name / 'raw'
             else:
                 raw_dir = base_dir / comp_type / country / comp_name / 'raw'
@@ -1279,6 +1331,7 @@ def update_match_results(target_date: str):
                         api_away_id = api_m.get('awayTeam', {}).get('id')
 
                         if api_home_id == home_id and api_away_id == away_id:
+                            matched_count += 1
                             api_status = api_m.get('status', {}).get('type', '')
                             has_score = _apply_api_score_fields(match, api_m)
                             _refresh_score_details_if_needed(scraper, match, api_m, api_status)
@@ -1337,7 +1390,13 @@ def update_match_results(target_date: str):
     finally:
         driver.quit()
     
-    print(f"\n[OK] Updated {updated_count} matches")
+    print(f"\n[OK] Matched {matched_count}, updated {updated_count} matches")
+    return {
+        'source_ok': matched_count > 0,
+        'api_blocked': False,
+        'matched_count': matched_count,
+        'updated_count': updated_count,
+    }
 
 
 def load_historical_matches(comp_type: str, country: str, league: str) -> list:
@@ -3176,6 +3235,9 @@ def main():
         predictors = load_models()
         print(f"\nRe-predicting {len(matches)} matches...")
         results = predict_matches(matches, predictors)
+        if not results:
+            print("\nNo predictions were produced; existing report was left unchanged.")
+            sys.exit(1)
 
         results_by_key = {}
         for r in results:
@@ -3210,7 +3272,10 @@ def main():
         return
 
     if args.update:
-        update_match_results(target_date)
+        update_state = update_match_results(target_date)
+        if not update_state.get('source_ok'):
+            print("\nUpdate did not confirm any saved matches from Sofascore; existing report was left unchanged.")
+            sys.exit(1)
 
         existing_report = load_existing_report(target_date)
         if existing_report:
@@ -3262,7 +3327,10 @@ def main():
         return
 
     if args.scrape:
-        scrape_upcoming(target_date, force=args.force)
+        scrape_ok = scrape_upcoming(target_date, force=args.force)
+        if scrape_ok is False:
+            print("\nScrape did not complete; existing data and report were left unchanged.")
+            sys.exit(1)
 
         existing_report = load_existing_report(target_date)
         if existing_report:
@@ -3287,6 +3355,9 @@ def main():
     
     print("\nMaking predictions...")
     results = predict_matches(matches, predictors)
+    if not results:
+        print("\nNo predictions were produced; report was left unchanged.")
+        sys.exit(1)
     
     if not args.no_report:
         print("\n" + "="*70)
