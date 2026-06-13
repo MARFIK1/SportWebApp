@@ -133,8 +133,25 @@ class SofascoreSeleniumScraper:
         var callback = arguments[arguments.length - 1];
         var url = arguments[0];
         fetch(url)
-            .then(r => r.json())
-            .then(data => callback(data))
+            .then(async r => {
+                const text = await r.text();
+                let data = null;
+                try {
+                    data = text ? JSON.parse(text) : null;
+                } catch (e) {
+                    data = null;
+                }
+                if (!r.ok) {
+                    callback(data && data.error ? data : {
+                        error: {
+                            code: r.status,
+                            reason: r.statusText || (text || '').slice(0, 120) || 'http_error'
+                        }
+                    });
+                    return;
+                }
+                callback(data);
+            })
             .catch(() => callback(null));
         """
         try:
