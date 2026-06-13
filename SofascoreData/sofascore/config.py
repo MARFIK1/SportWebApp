@@ -219,28 +219,112 @@ COMPETITIONS = {
     },
 
     'international': {
+        'world': {
+            'int_friendly_games': {
+                'tournament_id': 851,
+                'seasons': {'2026': 87155}
+            },
+            'arab_cup': {
+                'tournament_id': 17034,
+                'seasons': {'2025': 76482}
+            },
+        },
         'fifa': {
             'world_cup': {
                 'tournament_id': 16,
-                'seasons': {}
+                'seasons': {'2026': 58210}
             },
             'world_cup_qualifiers_europe': {
                 'tournament_id': 11,
-                'seasons': {}
+                'seasons': {'2026': 69427}
+            },
+            'world_cup_qualifiers_conmebol': {
+                'tournament_id': 295,
+                'seasons': {'2026': 53820}
+            },
+            'world_cup_qualifiers_concacaf': {
+                'tournament_id': 14,
+                'seasons': {'2026': 58146}
+            },
+            'world_cup_qualifiers_caf': {
+                'tournament_id': 13,
+                'seasons': {'2026': 56249}
+            },
+            'world_cup_qualifiers_afc': {
+                'tournament_id': 308,
+                'seasons': {'2026': 53508}
+            },
+            'world_cup_qualifiers_ofc': {
+                'tournament_id': 309,
+                'seasons': {'2026': 64335}
             },
         },
         'uefa': {
             'euro': {
                 'tournament_id': 1,
-                'seasons': {}
+                'seasons': {'2024': 56953}
             },
             'euro_qualifiers': {
                 'tournament_id': 27,
-                'seasons': {}
+                'seasons': {'2024': 46599}
             },
             'nations_league': {
                 'tournament_id': 10783,
-                'seasons': {}
+                'seasons': {'2026': 89945}
+            },
+        },
+        'conmebol': {
+            'copa_america': {
+                'tournament_id': 133,
+                'seasons': {'2024': 57114}
+            },
+        },
+        'concacaf': {
+            'concacaf_gold_cup': {
+                'tournament_id': 140,
+                'seasons': {'2025': 72840}
+            },
+            'concacaf_nations_league': {
+                'tournament_id': 14100,
+                'seasons': {'2026': 61662}
+            },
+        },
+        'caf': {
+            'africa_cup_of_nations': {
+                'tournament_id': 270,
+                'seasons': {'2025': 71636}
+            },
+            'africa_cup_of_nations_qualifiers': {
+                'tournament_id': 1848,
+                'seasons': {'2025': 90940}
+            },
+            'cosafa_cup': {
+                'tournament_id': 2076,
+                'seasons': {'2025': 75887}
+            },
+        },
+        'afc': {
+            'afc_asian_cup': {
+                'tournament_id': 246,
+                'seasons': {'2027': 94444}
+            },
+            'afc_asian_cup_qualifiers': {
+                'tournament_id': 28,
+                'seasons': {'2027': 60998}
+            },
+            'gulf_cup': {
+                'tournament_id': 622,
+                'seasons': {'2024': 68876}
+            },
+            'saff_championship': {
+                'tournament_id': 2354,
+                'seasons': {'2023': 51556}
+            },
+        },
+        'ofc': {
+            'ofc_nations_cup': {
+                'tournament_id': 22716,
+                'seasons': {'2024': 61582}
             },
         },
     },
