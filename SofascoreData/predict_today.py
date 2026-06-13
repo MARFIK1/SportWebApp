@@ -214,6 +214,47 @@ def _validate_season_name(comp_name: str, season_name: str) -> bool:
     return False
 
 
+def _configured_current_season(comp_data: Dict) -> Optional[Dict]:
+    seasons = comp_data.get('seasons') or {}
+    if not isinstance(seasons, dict) or not seasons:
+        return None
+
+    season_name, season_id = next(iter(seasons.items()))
+    return {
+        'id': season_id,
+        'name': str(season_name),
+        '_configured': True,
+    }
+
+
+def _resolve_current_season(scraper, comp_data: Dict, tournament_id, comp_name: str) -> Optional[Dict]:
+    configured_season = _configured_current_season(comp_data)
+    if getattr(scraper, 'api_blocked', False) and configured_season:
+        print(f"[CONFIG] API blocked, using configured season {configured_season['name']} (ID: {configured_season['id']})")
+        return configured_season
+
+    seasons = scraper.get_seasons(tournament_id)
+    if seasons:
+        current_season = seasons[0]
+        season_id = current_season.get('id')
+        season_name = current_season.get('name', f"Season {season_id}")
+        if _validate_season_name(comp_name, season_name):
+            return current_season
+
+        if configured_season:
+            print(f"[CONFIG] API returned '{season_name}', using configured season {configured_season['name']}")
+            return configured_season
+
+        print(f"[SKIP] API returned wrong season: '{season_name}' (expected: {comp_name})")
+        return None
+
+    if configured_season:
+        print(f"[CONFIG] Using configured season {configured_season['name']} (ID: {configured_season['id']})")
+        return configured_season
+
+    return None
+
+
 def _is_scraped_today(comp_dir: Path) -> bool:
     upcoming_dir = comp_dir / 'raw' / 'upcoming'
     if not upcoming_dir.exists():
@@ -1038,8 +1079,8 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
             if _scrape_scheduled_upcoming(scraper, target_date, COMPETITIONS, Path(BASE_DIR)):
                 print("\n[OK] Fetching complete")
                 return
-            if _print_sofascore_api_blocked(scraper):
-                return
+            if getattr(scraper, 'api_blocked', False):
+                print("Scheduled events are blocked; trying configured-season fallback.")
 
         for comp_type in COMP_TYPES:
             type_config = COMPETITIONS.get(comp_type, {})
@@ -1078,21 +1119,20 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
                         continue
                     
                     fg = MLFeatureGenerator(dm)
-                    
-                    seasons = scraper.get_seasons(tournament_id)
-                    if not seasons:
+
+                    if getattr(scraper, 'api_blocked', False) and not comp_data.get('seasons'):
+                        print("[SKIP] API blocked and no configured season")
+                        continue
+
+                    current_season = _resolve_current_season(scraper, comp_data, tournament_id, comp_name)
+                    if not current_season:
                         if _print_sofascore_api_blocked(scraper):
-                            return
+                            continue
                         print("  Failed to fetch seasons")
                         continue
 
-                    current_season = seasons[0]
                     season_id = current_season['id']
                     season_name = current_season.get('name', f"Season {season_id}")
-
-                    if not _validate_season_name(comp_name, season_name):
-                        print(f"  [SKIP] API returned wrong season: '{season_name}' (expected: {comp_name})")
-                        continue
 
                     print(f"  Season: {season_name} (ID: {season_id})")
                     
@@ -1175,20 +1215,15 @@ def update_match_results(target_date: str):
             
             print(f"\n[{comp_type}/{country}/{comp_name}]")
             
-            seasons = scraper.get_seasons(tournament_id)
-            if not seasons:
+            current_season = _resolve_current_season(scraper, comp_config, tournament_id, comp_name)
+            if not current_season:
                 if _print_sofascore_api_blocked(scraper):
-                    return
+                    continue
                 print("  Failed to fetch seasons")
                 continue
-            
-            current_season = seasons[0]
+
             season_id = current_season['id']
             season_name = current_season.get('name', f"Season {season_id}")
-
-            if not _validate_season_name(comp_name, season_name):
-                print(f"  [SKIP] API returned wrong season: '{season_name}' (expected: {comp_name})")
-                continue
 
             print(f"  Season: {season_name}")
 
