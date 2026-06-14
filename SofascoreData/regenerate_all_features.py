@@ -31,6 +31,8 @@ sys.path.insert(0, os.getcwd())
 from sofascore.features import MLFeatureGenerator
 
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.environ.get('SOFASCORE_DATA_DIR', os.path.join(SCRIPT_DIR, 'data'))
 
 
 def create_generator():
@@ -48,8 +50,11 @@ def is_match_finished(match):
     return match.get('home_score') is not None
 
 
-def load_all_league_player_stats(data_dir='data'):
+def load_all_league_player_stats(data_dir=None):
     """Load player_stats from ALL league competitions, indexed by player_id."""
+    if data_dir is None:
+        data_dir = DEFAULT_DATA_DIR
+
     index = {}
     league_dir = os.path.join(data_dir, 'league')
     if not os.path.exists(league_dir):

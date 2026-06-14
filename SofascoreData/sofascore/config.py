@@ -222,7 +222,8 @@ COMPETITIONS = {
         'world': {
             'int_friendly_games': {
                 'tournament_id': 851,
-                'seasons': {'2026': 87155}
+                'seasons': {'2026': 87155},
+                'include_in_daily': False,
             },
             'arab_cup': {
                 'tournament_id': 17034,

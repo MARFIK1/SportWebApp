@@ -669,6 +669,8 @@ def find_matches_for_date(target_date: str) -> list:
     canonical_events = _build_canonical_raw_event_index(base_dir)
     
     for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
+        if not _include_competition_path_in_daily(comp_type, country, comp_name):
+            continue
         
         raw_dir = comp_dir / 'raw'
         if raw_dir.exists():
@@ -806,16 +808,37 @@ def _competition_lookup_by_tournament_id(competitions: dict) -> dict:
     for comp_type, countries in competitions.items():
         for country, comps in countries.items():
             for comp_name, comp_data in comps.items():
+                if not _include_competition_in_daily(comp_data):
+                    continue
                 tournament_id = comp_data.get('tournament_id')
                 if tournament_id:
                     lookup[tournament_id] = (comp_type, country, comp_name)
     return lookup
 
 
+def _include_competition_in_daily(comp_data: Optional[Dict]) -> bool:
+    return not isinstance(comp_data, dict) or comp_data.get('include_in_daily', True) is not False
+
+
+def _competition_config(comp_type: str, country: str, comp_name: str) -> Dict:
+    try:
+        from sofascore.config import COMPETITIONS
+    except Exception:
+        return {}
+
+    return COMPETITIONS.get(comp_type, {}).get(country, {}).get(comp_name, {})
+
+
+def _include_competition_path_in_daily(comp_type: str, country: str, comp_name: str) -> bool:
+    return _include_competition_in_daily(_competition_config(comp_type, country, comp_name))
+
+
 def _iter_competition_configs(competitions: dict):
     for comp_type, countries in competitions.items():
         for country, comps in countries.items():
             for comp_name, comp_data in comps.items():
+                if not _include_competition_in_daily(comp_data):
+                    continue
                 tournament_id = comp_data.get('tournament_id')
                 if tournament_id:
                     yield comp_type, country, comp_name, comp_data, tournament_id
@@ -1188,6 +1211,9 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
             
             for country, country_comps in type_config.items():
                 for comp_name, comp_data in country_comps.items():
+                    if not _include_competition_in_daily(comp_data):
+                        continue
+
                     tournament_id = comp_data.get('tournament_id')
                     if not tournament_id:
                         continue
@@ -2154,7 +2180,7 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
     if has_intl:
         from regenerate_all_features import load_all_league_player_stats, load_lineups
         print("Loading club player stats for squad features...")
-        club_stats_index = load_all_league_player_stats()
+        club_stats_index = load_all_league_player_stats(str(DATA_DIR))
         print(f"Loaded stats for {len(club_stats_index)} players")
 
     total = len(matches)
@@ -2355,7 +2381,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
     if has_intl:
         from regenerate_all_features import load_all_league_player_stats, load_lineups
         print("  Loading club player stats for squad features...")
-        club_stats_index = load_all_league_player_stats()
+        club_stats_index = load_all_league_player_stats(str(DATA_DIR))
         print(f"  Loaded stats for {len(club_stats_index)} players")
 
     for i, match in enumerate(matches, 1):
@@ -2821,6 +2847,38 @@ def _drop_stale_rescheduled_report_entries(report: Dict, target_date: str) -> in
     return removed
 
 
+def _report_match_included_in_daily(match: Dict) -> bool:
+    league_path = match.get('league') or ''
+    if '/' not in league_path:
+        return True
+    country, comp_name = league_path.split('/', 1)
+    return _include_competition_path_in_daily(
+        match.get('comp_type', 'league'),
+        country,
+        comp_name,
+    )
+
+
+def _drop_excluded_daily_report_entries(report: Dict) -> int:
+    kept = []
+    removed = 0
+
+    for match in report.get('matches', []):
+        if _report_match_included_in_daily(match):
+            kept.append(match)
+            continue
+
+        removed += 1
+        safe_print(
+            f"[FILTER] Removed {match.get('home_team')} vs {match.get('away_team')} "
+            f"from disabled daily competition {match.get('league')}."
+        )
+
+    if removed:
+        report['matches'] = kept
+    return removed
+
+
 def calculate_model_accuracy(matches: List[Dict]) -> Dict:
     accuracy = {}
     
@@ -2867,6 +2925,26 @@ def calculate_model_accuracy(matches: List[Dict]) -> Dict:
     return accuracy
 
 
+def _refresh_report_summary_counts(report: Dict):
+    matches = report.get('matches', [])
+    total = len(matches)
+    finished = sum(1 for m in matches if m.get('status') == 'finished')
+    postponed = sum(1 for m in matches if m.get('status') == 'postponed')
+    inprogress = sum(1 for m in matches if m.get('status') == 'inprogress')
+    unknown = sum(1 for m in matches if m.get('status') == 'unknown')
+    pending = total - finished - postponed - unknown
+
+    summary = report.setdefault('summary', {})
+    summary['total_matches'] = total
+    summary['finished_matches'] = finished
+    summary['postponed_matches'] = postponed
+    summary['inprogress_matches'] = inprogress
+    summary['unknown_matches'] = unknown
+    summary['pending_matches'] = pending
+    summary['model_accuracy'] = calculate_model_accuracy(matches)
+    report['status'] = 'finished' if pending == 0 and inprogress == 0 and total > 0 else 'unfinished'
+
+
 def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
     matches = []
     
@@ -2906,6 +2984,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         matches.append(match_entry)
 
     tmp_report = {'matches': matches}
+    _drop_excluded_daily_report_entries(tmp_report)
     _drop_stale_rescheduled_report_entries(tmp_report, target_date)
     matches = tmp_report['matches']
 
@@ -3032,6 +3111,7 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
         new_entry.update(_serialize_result_prediction_data(r, actual_result))
         report['matches'].append(new_entry)
     report_date = report.get('date', '')
+    _drop_excluded_daily_report_entries(report)
     if report_date:
         _drop_stale_rescheduled_report_entries(report, report_date)
 
@@ -3342,7 +3422,8 @@ def main():
             if match_entry.get('actual_result'):
                 _mark_match_prediction_correctness(match_entry, match_entry['actual_result'])
 
-        existing_report['summary']['model_accuracy'] = calculate_model_accuracy(existing_report['matches'])
+        _drop_excluded_daily_report_entries(existing_report)
+        _refresh_report_summary_counts(existing_report)
         report_path = save_report(existing_report, target_date)
         print(f"Report updated: {report_path}")
         return
@@ -3373,6 +3454,7 @@ def main():
                 _mark_match_prediction_correctness(match_entry, actual_result)
 
             _drop_stale_rescheduled_report_entries(existing_report, target_date)
+            _drop_excluded_daily_report_entries(existing_report)
 
             from datetime import datetime as _dt
             if _dt.strptime(target_date, '%Y-%m-%d').date() < _dt.now().date():
