@@ -111,6 +111,13 @@ class SofascoreSeleniumScraper:
         self.last_api_error = None
         self.api_blocked = False
 
+    def _is_endpoint_optional_for_fallback(self, endpoint):
+        endpoint = str(endpoint or '')
+        return (
+            endpoint.startswith('/sport/football/scheduled-events/') or
+            (endpoint.startswith('/unique-tournament/') and '/scheduled-events/' in endpoint)
+        )
+
     def _record_api_error(self, endpoint, data):
         if not isinstance(data, dict) or not isinstance(data.get('error'), dict):
             return
@@ -123,6 +130,9 @@ class SofascoreSeleniumScraper:
             'code': code,
             'reason': reason,
         }
+        if self._is_endpoint_optional_for_fallback(endpoint):
+            return
+
         if code == 403 or str(reason).lower() in ('challenge', 'forbidden'):
             self.api_blocked = True
 
@@ -291,3 +301,14 @@ class SofascoreSeleniumScraper:
         if not events:
             print(f"[DEBUG] scheduled-events {date_ymd}: keys={list(data.keys())}")
         return events
+
+    def get_tournament_scheduled_events(self, tournament_id, date_ymd):
+        endpoint = f"/unique-tournament/{tournament_id}/scheduled-events/{date_ymd}"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            error = data.get('error') or {}
+            print(f"[WARN] tournament scheduled-events {tournament_id}/{date_ymd}: Sofascore API error {error.get('code')} {error.get('reason')}")
+            return None
+        if not data or not isinstance(data, dict):
+            return None
+        return data.get('events', [])

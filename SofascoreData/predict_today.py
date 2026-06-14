@@ -812,6 +812,44 @@ def _competition_lookup_by_tournament_id(competitions: dict) -> dict:
     return lookup
 
 
+def _iter_competition_configs(competitions: dict):
+    for comp_type, countries in competitions.items():
+        for country, comps in countries.items():
+            for comp_name, comp_data in comps.items():
+                tournament_id = comp_data.get('tournament_id')
+                if tournament_id:
+                    yield comp_type, country, comp_name, comp_data, tournament_id
+
+
+def _fetch_tournament_scheduled_events_by_comp(
+    scraper,
+    target_date: str,
+    competitions: dict,
+    only_comp_keys=None,
+):
+    events_by_comp = {}
+    total_events = 0
+
+    only_comp_keys = set(only_comp_keys or [])
+    for comp_type, country, comp_name, _comp_data, tournament_id in _iter_competition_configs(competitions):
+        comp_key = (comp_type, country, comp_name)
+        if only_comp_keys and comp_key not in only_comp_keys:
+            continue
+
+        events = scraper.get_tournament_scheduled_events(tournament_id, target_date)
+        if events is None:
+            if _print_sofascore_api_blocked(scraper):
+                return None, total_events
+            continue
+        if not events:
+            continue
+
+        events_by_comp[comp_key] = events
+        total_events += len(events)
+
+    return events_by_comp, total_events
+
+
 def _load_finished_matches_for_features(raw_dir: Path) -> list:
     all_seasons_path = raw_dir / 'all_seasons.json'
     if all_seasons_path.exists():
@@ -843,22 +881,35 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
     from sofascore.utils import extract_match_data, extract_referee_data, extract_odds
 
     scheduled_events = scraper.get_scheduled_events(target_date)
-    if scheduled_events is None:
-        print("Scheduled events endpoint unavailable; falling back to season lookup.")
-        return False
-    if not scheduled_events:
-        print("Scheduled events endpoint returned 0 events; falling back to season lookup.")
-        return False
-
-    competition_lookup = _competition_lookup_by_tournament_id(competitions)
     events_by_comp = {}
-    for event in scheduled_events:
-        comp_key = competition_lookup.get(_event_unique_tournament_id(event))
-        if comp_key:
-            events_by_comp.setdefault(comp_key, []).append(event)
+    total_events = 0
+
+    if scheduled_events:
+        competition_lookup = _competition_lookup_by_tournament_id(competitions)
+        for event in scheduled_events:
+            comp_key = competition_lookup.get(_event_unique_tournament_id(event))
+            if comp_key:
+                events_by_comp.setdefault(comp_key, []).append(event)
+        total_events = len(scheduled_events)
+    else:
+        if scheduled_events is None:
+            print("Scheduled events endpoint unavailable; trying tournament scheduled-events.")
+        else:
+            print("Scheduled events endpoint returned 0 events; trying tournament scheduled-events.")
+
+        events_by_comp, total_events = _fetch_tournament_scheduled_events_by_comp(
+            scraper,
+            target_date,
+            competitions,
+        )
+        if events_by_comp is None:
+            return False
+        if not events_by_comp:
+            print("Tournament scheduled-events returned 0 tracked events; falling back to season lookup.")
+            return False
 
     tracked_count = sum(len(v) for v in events_by_comp.values())
-    print(f"Scheduled events for {target_date}: {len(scheduled_events)} total, {tracked_count} tracked")
+    print(f"Scheduled events for {target_date}: {total_events} total, {tracked_count} tracked")
 
     for comp_type, country, comp_name in sorted(events_by_comp):
         events = events_by_comp[(comp_type, country, comp_name)]
@@ -950,14 +1001,38 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
     return True
 
 
-def _update_results_from_scheduled_events(scraper, target_date: str, base_dir: Path) -> Optional[Dict]:
+def _update_results_from_scheduled_events(
+    scraper,
+    target_date: str,
+    base_dir: Path,
+    competitions: Optional[dict] = None,
+) -> Optional[Dict]:
     scheduled_events = scraper.get_scheduled_events(target_date)
-    if scheduled_events is None:
-        print("Scheduled events endpoint unavailable; falling back to season lookup.")
-        return None
     if not scheduled_events:
-        print("Scheduled events endpoint returned 0 events; falling back to season lookup.")
-        return None
+        if scheduled_events is None:
+            print("Scheduled events endpoint unavailable; trying tournament scheduled-events.")
+        else:
+            print("Scheduled events endpoint returned 0 events; trying tournament scheduled-events.")
+
+        comps_to_check = _collect_competitions_requiring_update(base_dir, target_date)
+        if competitions and comps_to_check:
+            events_by_comp, _total_events = _fetch_tournament_scheduled_events_by_comp(
+                scraper,
+                target_date,
+                competitions,
+                only_comp_keys=comps_to_check,
+            )
+            if events_by_comp is None:
+                return None
+            scheduled_events = [
+                event
+                for events in events_by_comp.values()
+                for event in events
+            ]
+
+        if not scheduled_events:
+            print("Tournament scheduled-events returned 0 update candidates; falling back to season lookup.")
+            return None
 
     events_by_id = {event.get('id'): event for event in scheduled_events if event.get('id')}
     events_by_teams = {}
@@ -1215,7 +1290,7 @@ def update_match_results(target_date: str):
     matched_count = 0
     
     try:
-        scheduled_update = _update_results_from_scheduled_events(scraper, target_date, base_dir)
+        scheduled_update = _update_results_from_scheduled_events(scraper, target_date, base_dir, COMPETITIONS)
         if scheduled_update is None and _print_sofascore_api_blocked(scraper):
             return {
                 'source_ok': False,
