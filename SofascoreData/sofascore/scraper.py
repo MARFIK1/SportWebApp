@@ -19,6 +19,8 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
 ]
 
+DEFAULT_API_BASE_URL = 'https://www.sofascore.com/api/v1'
+
 VIEWPORTS = [
     (1920, 1080),
     (1366, 768),
@@ -30,6 +32,10 @@ VIEWPORTS = [
 
 def _truthy_env(name):
     return os.environ.get(name, '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _api_base_url():
+    return os.environ.get('SOFASCORE_API_BASE_URL', DEFAULT_API_BASE_URL).rstrip('/')
 
 
 def create_stealth_driver(headless=False):
@@ -162,7 +168,7 @@ class SofascoreSeleniumScraper:
             return None
     
     def get_api_data(self, endpoint):
-        url = f"https://api.sofascore.com/api/v1{endpoint}"
+        url = f"{_api_base_url()}{endpoint}"
         script = """
         var callback = arguments[arguments.length - 1];
         var url = arguments[0];
