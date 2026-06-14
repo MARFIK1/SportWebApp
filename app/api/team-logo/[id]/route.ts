@@ -6,11 +6,16 @@ const SOFASCORE_IMAGE_URLS = [
     "https://img.sofascore.com/api/v1/team/{id}/image/small",
     "https://api.sofascore.app/api/v1/team/{id}/image/small",
 ];
+const FOTMOB_IMAGE_URLS = [
+    "https://images.fotmob.com/image_resources/logo/teamlogo/{id}.png",
+    "https://images.fotmob.com/image_resources/logo/teamlogo/{id}_small.png",
+];
 const IMAGE_CACHE_CONTROL = "public, max-age=604800, s-maxage=2592000, stale-while-revalidate=2592000";
 const FALLBACK_CACHE_CONTROL = "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
 const IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FALLBACK_CACHE_TTL_MS = 60 * 1000;
-const BROWSER_LOGO_CACHE_CONTROL = "public, max-age=300, s-maxage=300";
+const FOTMOB_SEARCH_URL = "https://www.fotmob.com/api/data/search/suggest";
+const SPORTSDB_SEARCH_URL = "https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=";
 
 const IMAGE_REQUEST_HEADER_VARIANTS: Record<string, string>[] = [
     {
@@ -40,6 +45,7 @@ type CachedLogo = {
     contentType: string;
     expiresAt: number;
     fallback: boolean;
+    source: string;
 };
 
 const logoCache = new Map<string, CachedLogo>();
@@ -71,6 +77,7 @@ function fallbackLogoEntry(id: string): CachedLogo {
         contentType: "image/svg+xml; charset=utf-8",
         expiresAt: Date.now() + FALLBACK_CACHE_TTL_MS,
         fallback: true,
+        source: "fallback",
     };
 }
 
@@ -81,104 +88,288 @@ function logoResponse(entry: CachedLogo, cacheState: "hit" | "miss" | "pending")
             "Content-Type": entry.contentType,
             "Cache-Control": entry.cacheControl,
             "X-Team-Logo-Cache": cacheState,
+            "X-Team-Logo-Source": entry.source,
             ...(entry.fallback ? { "X-Team-Logo-Fallback": "1" } : {}),
         },
     });
 }
 
-function browserLogoResponse(id: string, cacheState: "hit" | "miss" | "pending"): Response {
-    return new Response(null, {
-        status: 307,
-        headers: {
-            Location: `https://img.sofascore.com/api/v1/team/${id}/image`,
-            "Cache-Control": BROWSER_LOGO_CACHE_CONTROL,
-            "X-Team-Logo-Cache": cacheState,
-            "X-Team-Logo-Redirect": "1",
-        },
-    });
+function normalizeTeamName(name: string): string {
+    return name
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
 }
 
-async function fetchLogo(id: string): Promise<CachedLogo> {
-    for (const template of SOFASCORE_IMAGE_URLS) {
-        for (const headers of IMAGE_REQUEST_HEADER_VARIANTS) {
-            try {
-                const response = await fetch(template.replace("{id}", id), {
-                    cache: "no-store",
-                    headers,
-                    redirect: "follow",
-                });
+function searchTerms(teamName: string): string[] {
+    const trimmed = teamName.trim();
+    if (!trimmed) {
+        return [];
+    }
 
-                if (!response.ok) {
-                    continue;
-                }
+    const normalized = normalizeTeamName(trimmed);
+    const withoutDash = trimmed.replace(/-/g, " ");
+    const compact = normalized && normalized !== trimmed ? normalized : "";
+    return [...new Set([trimmed, withoutDash, compact].filter(Boolean))];
+}
 
-                const contentType = response.headers.get("content-type") || "";
-                if (!contentType.toLowerCase().startsWith("image/")) {
-                    continue;
-                }
+function teamNameScore(candidateName: string, targetName: string): number {
+    const candidate = normalizeTeamName(candidateName);
+    const target = normalizeTeamName(targetName);
+    if (!candidate || !target) {
+        return 0;
+    }
 
-                const image = await response.arrayBuffer();
-                if (image.byteLength === 0) {
-                    continue;
-                }
+    if (candidate === target) {
+        return 1;
+    }
 
-                return {
-                    body: image,
-                    cacheControl: IMAGE_CACHE_CONTROL,
-                    contentType,
-                    expiresAt: Date.now() + IMAGE_CACHE_TTL_MS,
-                    fallback: false,
-                };
-            } catch {
+    const candidateTokens = new Set(candidate.split(" ").filter(Boolean));
+    const targetTokens = new Set(target.split(" ").filter(Boolean));
+    const overlap = [...targetTokens].filter((token) => candidateTokens.has(token)).length;
+    const overlapScore = overlap / Math.max(candidateTokens.size, targetTokens.size, 1);
+    const containsScore = candidate.includes(target) || target.includes(candidate) ? 0.7 : 0;
+    return Math.max(overlapScore, containsScore);
+}
+
+function isDevelopmentTeamName(name: string, targetName: string): boolean {
+    const candidate = normalizeTeamName(name);
+    const target = normalizeTeamName(targetName);
+    if (target.includes(" u") || target.includes(" women") || target.includes(" w ")) {
+        return false;
+    }
+    return /\b(u\d{2}|ii|b|women|w)\b/.test(candidate);
+}
+
+async function fetchImageFromUrl(
+    url: string,
+    source: string,
+    headerVariants: Record<string, string>[] = IMAGE_REQUEST_HEADER_VARIANTS,
+): Promise<CachedLogo | null> {
+    for (const headers of headerVariants) {
+        try {
+            const response = await fetch(url, {
+                cache: "no-store",
+                headers,
+                redirect: "follow",
+            });
+
+            if (!response.ok) {
                 continue;
             }
+
+            const contentType = response.headers.get("content-type") || "";
+            if (!contentType.toLowerCase().startsWith("image/")) {
+                continue;
+            }
+
+            const image = await response.arrayBuffer();
+            if (image.byteLength === 0) {
+                continue;
+            }
+
+            return {
+                body: image,
+                cacheControl: IMAGE_CACHE_CONTROL,
+                contentType,
+                expiresAt: Date.now() + IMAGE_CACHE_TTL_MS,
+                fallback: false,
+                source,
+            };
+        } catch {
+            continue;
         }
+    }
+
+    return null;
+}
+
+async function fetchImageTemplates(id: string, templates: string[], source: string): Promise<CachedLogo | null> {
+    for (const template of templates) {
+        const entry = await fetchImageFromUrl(template.replace("{id}", id), source);
+        if (entry) {
+            return entry;
+        }
+    }
+
+    return null;
+}
+
+async function fetchFotMobLogoByName(teamName: string): Promise<CachedLogo | null> {
+    const terms = searchTerms(teamName);
+    for (const term of terms) {
+        try {
+            const url = new URL(FOTMOB_SEARCH_URL);
+            url.searchParams.set("hits", "20");
+            url.searchParams.set("lang", "en");
+            url.searchParams.set("term", term);
+
+            const response = await fetch(url, {
+                cache: "no-store",
+                headers: {
+                    Accept: "application/json",
+                    "User-Agent": "Mozilla/5.0",
+                },
+            });
+
+            if (!response.ok) {
+                continue;
+            }
+
+            const payload = (await response.json()) as {
+                suggestions?: {
+                    id?: string;
+                    name?: string;
+                    type?: string;
+                }[];
+            }[];
+
+            const candidates = payload
+                .flatMap((group) => group.suggestions ?? [])
+                .filter((candidate) => candidate.type === "team" && candidate.id && candidate.name)
+                .map((candidate) => ({
+                    id: candidate.id as string,
+                    name: candidate.name as string,
+                    score: teamNameScore(candidate.name ?? "", teamName),
+                    development: isDevelopmentTeamName(candidate.name ?? "", teamName),
+                }))
+                .filter((candidate) => candidate.score >= 0.5)
+                .sort((a, b) => {
+                    if (a.development !== b.development) {
+                        return a.development ? 1 : -1;
+                    }
+                    return b.score - a.score;
+                });
+
+            const best = candidates[0];
+            if (!best) {
+                continue;
+            }
+
+            const entry = await fetchImageTemplates(best.id, FOTMOB_IMAGE_URLS, "fotmob-search");
+            if (entry) {
+                return entry;
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    return null;
+}
+
+async function fetchSportsDbLogo(teamName: string): Promise<CachedLogo | null> {
+    const terms = searchTerms(teamName);
+    for (const term of terms) {
+        try {
+            const response = await fetch(`${SPORTSDB_SEARCH_URL}${encodeURIComponent(term)}`, {
+                cache: "no-store",
+                headers: {
+                    Accept: "application/json",
+                    "User-Agent": "Mozilla/5.0",
+                },
+            });
+
+            if (!response.ok) {
+                continue;
+            }
+
+            const payload = (await response.json()) as {
+                teams?: {
+                    strBadge?: string;
+                    strSport?: string;
+                    strTeam?: string;
+                }[] | null;
+            };
+            const team = (payload.teams ?? [])
+                .filter((candidate) => candidate.strSport === "Soccer" && candidate.strBadge)
+                .map((candidate) => ({
+                    ...candidate,
+                    score: teamNameScore(candidate.strTeam ?? "", teamName),
+                }))
+                .filter((candidate) => candidate.score >= 0.5)
+                .sort((a, b) => b.score - a.score)[0];
+
+            if (!team?.strBadge) {
+                continue;
+            }
+
+            const entry = await fetchImageFromUrl(team.strBadge, "thesportsdb", [
+                {
+                    Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "User-Agent": "Mozilla/5.0",
+                },
+            ]);
+            if (entry) {
+                return entry;
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    return null;
+}
+
+async function fetchLogo(id: string, teamName: string): Promise<CachedLogo> {
+    const sofascore = await fetchImageTemplates(id, SOFASCORE_IMAGE_URLS, "sofascore");
+    if (sofascore) {
+        return sofascore;
+    }
+
+    const fotmob = await fetchImageTemplates(id, FOTMOB_IMAGE_URLS, "fotmob");
+    if (fotmob) {
+        return fotmob;
+    }
+
+    const fotmobSearch = await fetchFotMobLogoByName(teamName);
+    if (fotmobSearch) {
+        return fotmobSearch;
+    }
+
+    const sportsDb = await fetchSportsDbLogo(teamName);
+    if (sportsDb) {
+        return sportsDb;
     }
 
     return fallbackLogoEntry(id);
 }
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
     const params = await Promise.resolve(context.params);
     const id = params?.id ?? "";
+    const url = new URL(request.url);
+    const teamName = url.searchParams.get("name")?.trim() ?? "";
+    const cacheKey = `${id}:${normalizeTeamName(teamName)}`;
 
     if (!/^\d+$/.test(id)) {
         return logoResponse(fallbackLogoEntry(id), "miss");
     }
 
-    const cached = logoCache.get(id);
+    const cached = logoCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
-        if (cached.fallback) {
-            logoCache.delete(id);
-            return browserLogoResponse(id, "hit");
-        }
         return logoResponse(cached, "hit");
     }
 
-    const pending = pendingLogoRequests.get(id);
+    const pending = pendingLogoRequests.get(cacheKey);
     if (pending) {
         const entry = await pending;
-        if (entry.fallback) {
-            return browserLogoResponse(id, "pending");
-        }
         return logoResponse(entry, "pending");
     }
 
-    const request = fetchLogo(id)
+    const logoRequest = fetchLogo(id, teamName)
         .then((entry) => {
-            if (!entry.fallback) {
-                logoCache.set(id, entry);
-            }
+            logoCache.set(cacheKey, entry);
             return entry;
         })
         .finally(() => {
-            pendingLogoRequests.delete(id);
+            pendingLogoRequests.delete(cacheKey);
         });
 
-    pendingLogoRequests.set(id, request);
-    const entry = await request;
-    if (entry.fallback) {
-        return browserLogoResponse(id, "miss");
-    }
+    pendingLogoRequests.set(cacheKey, logoRequest);
+    const entry = await logoRequest;
     return logoResponse(entry, "miss");
 }

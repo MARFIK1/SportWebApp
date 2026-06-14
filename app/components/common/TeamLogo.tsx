@@ -24,7 +24,7 @@ export default function TeamLogo({
     style,
     width,
 }: TeamLogoProps) {
-    const sources = teamLogoUrls(teamId);
+    const sources = teamLogoUrls(teamId, alt);
     const [fallbackState, setFallbackState] = useState({ teamId, sourceIndex: 0 });
     const sourceIndex = fallbackState.teamId === teamId ? fallbackState.sourceIndex : 0;
     const src = sources[Math.min(sourceIndex, sources.length - 1)];
@@ -37,7 +37,7 @@ export default function TeamLogo({
             height={height ?? size}
             loading={loading}
             decoding="async"
-            referrerPolicy="origin"
+            referrerPolicy="no-referrer"
             className={className}
             style={style}
             onError={() => {
