@@ -320,11 +320,6 @@ async function fetchLogo(id: string, teamName: string): Promise<CachedLogo> {
         return sofascore;
     }
 
-    const fotmob = await fetchImageTemplates(id, FOTMOB_IMAGE_URLS, "fotmob");
-    if (fotmob) {
-        return fotmob;
-    }
-
     const fotmobSearch = await fetchFotMobLogoByName(teamName);
     if (fotmobSearch) {
         return fotmobSearch;

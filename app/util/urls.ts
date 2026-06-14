@@ -7,11 +7,9 @@ export function teamLogoUrl(teamId: number): string {
 
 export function teamLogoUrls(teamId: number, teamName?: string): string[] {
     return [
-        teamLogoFallbackUrl(teamId, teamName),
-        `${SOFASCORE_API}/team/${teamId}/image`,
-        `https://www.sofascore.com/api/v1/team/${teamId}/image`,
         `${SOFASCORE_IMAGE_CDN}/team/${teamId}/image`,
         `${SOFASCORE_IMAGE_CDN}/team/${teamId}/image/small`,
+        teamLogoFallbackUrl(teamId, teamName),
     ];
 }
 
