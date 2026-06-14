@@ -167,11 +167,16 @@ function normalizePredictionMatch(match: RawPredictionMatch): PredictionMatch {
     });
 }
 
+function isDailyReportMatchEnabled(match: RawPredictionMatch): boolean {
+    const competitionKey = `${match.comp_type}/${match.league}`.toLowerCase().replace(/\\/g, "/");
+    return !competitionKey.includes("/int_friendly_games");
+}
+
 function normalizePredictionReport(report: RawPredictionReport | null): PredictionReport | null {
     if (!report) return null;
     return {
         ...report,
-        matches: report.matches.map(normalizePredictionMatch),
+        matches: report.matches.filter(isDailyReportMatchEnabled).map(normalizePredictionMatch),
     };
 }
 

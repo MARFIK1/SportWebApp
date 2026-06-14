@@ -826,7 +826,17 @@ def _competition_config(comp_type: str, country: str, comp_name: str) -> Dict:
     except Exception:
         return {}
 
-    return COMPETITIONS.get(comp_type, {}).get(country, {}).get(comp_name, {})
+    countries = COMPETITIONS.get(comp_type, {})
+    exact = countries.get(country, {}).get(comp_name)
+    if isinstance(exact, dict):
+        return exact
+
+    for comps in countries.values():
+        candidate = comps.get(comp_name)
+        if isinstance(candidate, dict):
+            return candidate
+
+    return {}
 
 
 def _include_competition_path_in_daily(comp_type: str, country: str, comp_name: str) -> bool:
