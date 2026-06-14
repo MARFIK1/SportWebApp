@@ -10,6 +10,7 @@ const IMAGE_CACHE_CONTROL = "public, max-age=604800, s-maxage=2592000, stale-whi
 const FALLBACK_CACHE_CONTROL = "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
 const IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FALLBACK_CACHE_TTL_MS = 60 * 1000;
+const BROWSER_LOGO_CACHE_CONTROL = "public, max-age=300, s-maxage=300";
 
 const IMAGE_REQUEST_HEADER_VARIANTS: Record<string, string>[] = [
     {
@@ -85,6 +86,18 @@ function logoResponse(entry: CachedLogo, cacheState: "hit" | "miss" | "pending")
     });
 }
 
+function browserLogoResponse(id: string, cacheState: "hit" | "miss" | "pending"): Response {
+    return new Response(null, {
+        status: 307,
+        headers: {
+            Location: `https://img.sofascore.com/api/v1/team/${id}/image`,
+            "Cache-Control": BROWSER_LOGO_CACHE_CONTROL,
+            "X-Team-Logo-Cache": cacheState,
+            "X-Team-Logo-Redirect": "1",
+        },
+    });
+}
+
 async function fetchLogo(id: string): Promise<CachedLogo> {
     for (const template of SOFASCORE_IMAGE_URLS) {
         for (const headers of IMAGE_REQUEST_HEADER_VARIANTS) {
@@ -135,18 +148,27 @@ export async function GET(_request: Request, context: RouteContext) {
 
     const cached = logoCache.get(id);
     if (cached && cached.expiresAt > Date.now()) {
+        if (cached.fallback) {
+            logoCache.delete(id);
+            return browserLogoResponse(id, "hit");
+        }
         return logoResponse(cached, "hit");
     }
 
     const pending = pendingLogoRequests.get(id);
     if (pending) {
         const entry = await pending;
+        if (entry.fallback) {
+            return browserLogoResponse(id, "pending");
+        }
         return logoResponse(entry, "pending");
     }
 
     const request = fetchLogo(id)
         .then((entry) => {
-            logoCache.set(id, entry);
+            if (!entry.fallback) {
+                logoCache.set(id, entry);
+            }
             return entry;
         })
         .finally(() => {
@@ -155,5 +177,8 @@ export async function GET(_request: Request, context: RouteContext) {
 
     pendingLogoRequests.set(id, request);
     const entry = await request;
+    if (entry.fallback) {
+        return browserLogoResponse(id, "miss");
+    }
     return logoResponse(entry, "miss");
 }

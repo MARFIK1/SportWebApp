@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { teamLogoFallbackUrl, teamLogoUrl } from "@/app/util/urls";
+import { teamLogoUrls } from "@/app/util/urls";
 
 interface TeamLogoProps {
     teamId: number;
@@ -24,10 +24,10 @@ export default function TeamLogo({
     style,
     width,
 }: TeamLogoProps) {
-    const primarySrc = teamLogoUrl(teamId);
-    const fallbackSrc = teamLogoFallbackUrl(teamId);
-    const [failedPrimarySrc, setFailedPrimarySrc] = useState<string | null>(null);
-    const src = failedPrimarySrc === primarySrc ? fallbackSrc : primarySrc;
+    const sources = teamLogoUrls(teamId);
+    const [fallbackState, setFallbackState] = useState({ teamId, sourceIndex: 0 });
+    const sourceIndex = fallbackState.teamId === teamId ? fallbackState.sourceIndex : 0;
+    const src = sources[Math.min(sourceIndex, sources.length - 1)];
 
     return (
         <img
@@ -37,13 +37,18 @@ export default function TeamLogo({
             height={height ?? size}
             loading={loading}
             decoding="async"
-            referrerPolicy="no-referrer"
+            referrerPolicy="origin"
             className={className}
             style={style}
             onError={() => {
-                if (failedPrimarySrc !== primarySrc) {
-                    setFailedPrimarySrc(primarySrc);
-                }
+                setFallbackState((current) => {
+                    const currentIndex = current.teamId === teamId ? current.sourceIndex : 0;
+                    const nextIndex = Math.min(currentIndex + 1, sources.length - 1);
+                    if (current.teamId === teamId && current.sourceIndex === nextIndex) {
+                        return current;
+                    }
+                    return { teamId, sourceIndex: nextIndex };
+                });
             }}
         />
     );
