@@ -1163,7 +1163,8 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
     driver, user_agent = create_stealth_driver(headless=False)
     scraper = SofascoreSeleniumScraper(driver)
     
-    driver.get("https://www.sofascore.com")
+    start_url = f"https://www.sofascore.com/football/{target_date}" if target_date else "https://www.sofascore.com"
+    driver.get(start_url)
     import time
     time.sleep(3)
     
@@ -1282,7 +1283,7 @@ def update_match_results(target_date: str):
     driver, user_agent = create_stealth_driver(headless=False)
     scraper = SofascoreSeleniumScraper(driver)
     
-    driver.get("https://www.sofascore.com")
+    driver.get(f"https://www.sofascore.com/football/{target_date}")
     import time
     time.sleep(3)
     

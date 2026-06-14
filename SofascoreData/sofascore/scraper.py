@@ -20,6 +20,7 @@ USER_AGENTS = [
 ]
 
 DEFAULT_API_BASE_URL = 'https://www.sofascore.com/api/v1'
+DEFAULT_X_REQUESTED_WITH = 'fa4944'
 
 VIEWPORTS = [
     (1920, 1080),
@@ -36,6 +37,14 @@ def _truthy_env(name):
 
 def _api_base_url():
     return os.environ.get('SOFASCORE_API_BASE_URL', DEFAULT_API_BASE_URL).rstrip('/')
+
+
+def _api_request_headers():
+    requested_with = os.environ.get('SOFASCORE_X_REQUESTED_WITH', DEFAULT_X_REQUESTED_WITH).strip()
+    headers = {}
+    if requested_with.lower() not in ('', '0', 'false', 'off', 'none'):
+        headers['x-requested-with'] = requested_with
+    return headers
 
 
 def create_stealth_driver(headless=False):
@@ -169,10 +178,12 @@ class SofascoreSeleniumScraper:
     
     def get_api_data(self, endpoint):
         url = f"{_api_base_url()}{endpoint}"
+        headers = _api_request_headers()
         script = """
         var callback = arguments[arguments.length - 1];
         var url = arguments[0];
-        fetch(url)
+        var headers = arguments[1] || {};
+        fetch(url, { headers, credentials: 'include' })
             .then(async r => {
                 const text = await r.text();
                 let data = null;
@@ -195,7 +206,7 @@ class SofascoreSeleniumScraper:
             .catch(() => callback(null));
         """
         try:
-            data = self.driver.execute_async_script(script, url)
+            data = self.driver.execute_async_script(script, url, headers)
             if data:
                 self._record_api_error(endpoint, data)
                 return data
