@@ -128,10 +128,7 @@ class SofascoreSeleniumScraper:
 
     def _is_endpoint_optional_for_fallback(self, endpoint):
         endpoint = str(endpoint or '')
-        return (
-            endpoint.startswith('/sport/football/scheduled-events/') or
-            (endpoint.startswith('/unique-tournament/') and '/scheduled-events/' in endpoint)
-        )
+        return endpoint.startswith('/sport/football/scheduled-events/')
 
     def _record_api_error(self, endpoint, data):
         if not isinstance(data, dict) or not isinstance(data.get('error'), dict):
