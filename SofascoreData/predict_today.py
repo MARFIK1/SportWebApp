@@ -1747,6 +1747,12 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
     return features
 
 
+def _features_with_source_odds(features: Dict, match: Dict) -> Dict:
+    enriched = dict(features)
+    _copy_positive_odds(enriched, match, overwrite=True)
+    return enriched
+
+
 def _same_team_id(left, right) -> bool:
     return left is not None and right is not None and str(left) == str(right)
 
@@ -2231,7 +2237,7 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
                 club_stats_index=club_stats_index,
                 team_history_matches=feature_history)
         else:
-            features = match['features']
+            features = _features_with_source_odds(match['features'], match)
 
         if features is None:
             print("[SKIP] No features")
@@ -2378,6 +2384,53 @@ def refresh_existing_report_odds(target_date: str, refresh_existing: bool = Fals
     return updated
 
 
+def _report_has_refreshable_odds_variants(
+    report: Dict,
+    source_matches: List[Dict],
+    refresh_existing: bool = False,
+) -> bool:
+    source_by_key = {}
+    for source_match in source_matches:
+        for key in _source_match_keys(source_match):
+            source_by_key.setdefault(key, source_match)
+
+    for match_entry in report.get('matches', []):
+        source_match = _find_by_keys(source_by_key, _report_match_keys(match_entry))
+        if not source_match or not _source_match_has_base_odds(source_match):
+            continue
+
+        existing_variant = (match_entry.get('prediction_variants') or {}).get('with_odds')
+        if not existing_variant:
+            return True
+
+        if refresh_existing and existing_variant.get('source_odds') != _source_match_odds_snapshot(source_match):
+            return True
+
+    return False
+
+
+def refresh_loaded_report_odds_variants(
+    report: Dict,
+    source_matches: List[Dict],
+    refresh_existing: bool = False,
+) -> int:
+    if not _report_has_refreshable_odds_variants(report, source_matches, refresh_existing=refresh_existing):
+        return 0
+
+    predictors = load_models(['with_odds'])
+    predictor = predictors.get('with_odds')
+    if not predictor:
+        print("No with-odds predictor available.")
+        return 0
+
+    return refresh_report_odds_variants(
+        report,
+        source_matches,
+        predictor,
+        refresh_existing=refresh_existing,
+    )
+
+
 def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
     results = []
     total = len(matches)
@@ -2430,7 +2483,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
                 lineups=match_lineups, club_stats_index=club_stats_index,
                 team_history_matches=feature_history)
         else:
-            features = match['features']
+            features = _features_with_source_odds(match['features'], match)
         
         if features is None:
             print(f"    [SKIP] No features")
@@ -3465,6 +3518,11 @@ def main():
 
             _drop_stale_rescheduled_report_entries(existing_report, target_date)
             _drop_excluded_daily_report_entries(existing_report)
+            refresh_loaded_report_odds_variants(
+                existing_report,
+                matches,
+                refresh_existing=args.force,
+            )
 
             from datetime import datetime as _dt
             if _dt.strptime(target_date, '%Y-%m-%d').date() < _dt.now().date():
