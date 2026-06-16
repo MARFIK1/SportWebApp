@@ -35,6 +35,26 @@ def _truthy_env(name):
     return os.environ.get(name, '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+def _float_env(name, default):
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == '':
+        return default
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default
+
+
+def _int_env(name, default, minimum=1):
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == '':
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
 def _api_base_url():
     return os.environ.get('SOFASCORE_API_BASE_URL', DEFAULT_API_BASE_URL).rstrip('/')
 
@@ -125,6 +145,10 @@ class SofascoreSeleniumScraper:
         self.driver = driver
         self.last_api_error = None
         self.api_blocked = False
+        self.api_request_count = 0
+        self.max_api_requests = _int_env('SOFASCORE_MAX_API_REQUESTS', 160, minimum=0)
+        self.api_delay = _float_env('SOFASCORE_API_DELAY', 0.35)
+        self._last_api_request_at = 0.0
 
     def _is_endpoint_optional_for_fallback(self, endpoint):
         endpoint = str(endpoint or '')
@@ -152,6 +176,31 @@ class SofascoreSeleniumScraper:
         self._record_api_error(endpoint, data)
         return isinstance(data, dict) and isinstance(data.get('error'), dict)
 
+    def _can_make_api_request(self, endpoint):
+        if self.api_blocked:
+            return False
+
+        if self.max_api_requests and self.api_request_count >= self.max_api_requests:
+            self.api_blocked = True
+            self.last_api_error = {
+                'endpoint': endpoint,
+                'code': 'request_limit',
+                'reason': f'max_api_requests={self.max_api_requests}',
+            }
+            return False
+
+        return True
+
+    def _wait_before_api_request(self):
+        if self.api_delay <= 0:
+            return
+
+        now = time.time()
+        elapsed = now - self._last_api_request_at
+        if elapsed < self.api_delay:
+            time.sleep(self.api_delay - elapsed)
+        self._last_api_request_at = time.time()
+
     def _read_json_from_page(self):
         try:
             raw = self.driver.execute_script("""
@@ -174,6 +223,12 @@ class SofascoreSeleniumScraper:
             return None
     
     def get_api_data(self, endpoint):
+        if not self._can_make_api_request(endpoint):
+            return None
+
+        self._wait_before_api_request()
+        self.api_request_count += 1
+
         url = f"{_api_base_url()}{endpoint}"
         headers = _api_request_headers()
         script = """
