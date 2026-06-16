@@ -25,8 +25,9 @@ export default function TeamLogo({
     width,
 }: TeamLogoProps) {
     const sources = teamLogoUrls(teamId, alt);
-    const [fallbackState, setFallbackState] = useState({ teamId, sourceIndex: 0 });
-    const sourceIndex = fallbackState.teamId === teamId ? fallbackState.sourceIndex : 0;
+    const sourceKey = `${teamId}:${alt}`;
+    const [fallbackState, setFallbackState] = useState({ sourceKey, sourceIndex: 0 });
+    const sourceIndex = fallbackState.sourceKey === sourceKey ? fallbackState.sourceIndex : 0;
     const src = sources[Math.min(sourceIndex, sources.length - 1)];
 
     return (
@@ -42,12 +43,12 @@ export default function TeamLogo({
             style={style}
             onError={() => {
                 setFallbackState((current) => {
-                    const currentIndex = current.teamId === teamId ? current.sourceIndex : 0;
+                    const currentIndex = current.sourceKey === sourceKey ? current.sourceIndex : 0;
                     const nextIndex = Math.min(currentIndex + 1, sources.length - 1);
-                    if (current.teamId === teamId && current.sourceIndex === nextIndex) {
+                    if (current.sourceKey === sourceKey && current.sourceIndex === nextIndex) {
                         return current;
                     }
-                    return { teamId, sourceIndex: nextIndex };
+                    return { sourceKey, sourceIndex: nextIndex };
                 });
             }}
         />
