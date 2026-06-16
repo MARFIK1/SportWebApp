@@ -67,6 +67,32 @@ try:
     TEAM_HISTORY_MAX_PAGES = max(1, int(os.environ.get('SOFASCORE_TEAM_HISTORY_PAGES', '6')))
 except ValueError:
     TEAM_HISTORY_MAX_PAGES = 6
+TEAM_HISTORY_ENRICH_STATS = (
+    str(os.environ.get('SOFASCORE_TEAM_HISTORY_ENRICH_STATS', '')).strip().lower()
+    in {'1', 'true', 'yes', 'on'}
+)
+try:
+    TEAM_HISTORY_ENRICH_LIMIT = max(1, int(os.environ.get('SOFASCORE_TEAM_HISTORY_ENRICH_LIMIT', '8')))
+except ValueError:
+    TEAM_HISTORY_ENRICH_LIMIT = 8
+try:
+    TEAM_HISTORY_ENRICH_DELAY = max(0.0, float(os.environ.get('SOFASCORE_TEAM_HISTORY_ENRICH_DELAY', '0.3')))
+except ValueError:
+    TEAM_HISTORY_ENRICH_DELAY = 0.3
+TEAM_HISTORY_MODEL_STAT_KEYS = (
+    'home_xg', 'away_xg',
+    'home_expectedgoals', 'away_expectedgoals',
+    'home_expected_goals', 'away_expected_goals',
+    'home_cornerkicks', 'away_cornerkicks',
+    'home_totalshotsongoal', 'away_totalshotsongoal',
+    'home_shotsongoal', 'away_shotsongoal',
+    'home_bigchancecreated', 'away_bigchancecreated',
+    'home_ballpossession', 'away_ballpossession',
+)
+TEAM_HISTORY_DETAIL_KEYS = TEAM_HISTORY_MODEL_STAT_KEYS + (
+    'home_yellow_cards_calc', 'away_yellow_cards_calc',
+    'home_yellowcards', 'away_yellowcards',
+)
 
 
 def validate_target_date(target_date: str) -> str:
@@ -998,9 +1024,13 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
                 history_context,
                 feature_history,
             )
+            elo_table = None
+            if match_data.get('event_id'):
+                elo_table = fg._compute_elo_table([*(feature_source_history or []), match_data])
             feature_data = fg.generate_match_features(
                 match_data,
                 history_context,
+                elo_table=elo_table,
                 team_history_matches=feature_source_history,
             )
             feature_data['result'] = None
@@ -1607,6 +1637,18 @@ def _load_cached_team_history(team_id) -> List[Dict]:
         return []
 
 
+def _has_team_history_detail(match: Dict) -> bool:
+    return any(match.get(key) not in (None, '') for key in TEAM_HISTORY_DETAIL_KEYS)
+
+
+def _has_team_history_model_stats(match: Dict) -> bool:
+    return any(match.get(key) not in (None, '') for key in TEAM_HISTORY_MODEL_STAT_KEYS)
+
+
+def _team_history_detail_count(matches: List[Dict]) -> int:
+    return sum(1 for match in matches or [] if _has_team_history_detail(match))
+
+
 def _save_cached_team_history(team_id, team_name: str, matches: List[Dict]):
     if team_id in (None, ''):
         return
@@ -1622,6 +1664,7 @@ def _save_cached_team_history(team_id, team_name: str, matches: List[Dict]):
                 'pages': TEAM_HISTORY_MAX_PAGES,
                 'scraped_at': datetime.now().isoformat(),
                 'total_matches': len(matches),
+                'detailed_matches': _team_history_detail_count(matches),
             },
             'matches': matches,
         }, f, ensure_ascii=False, indent=2)
@@ -1649,9 +1692,109 @@ def _normalize_team_history_events(events: List[Dict]) -> List[Dict]:
     return _dedupe_historical_matches(matches)
 
 
+def _enrich_team_history_match(scraper, match: Dict) -> bool:
+    event_id = match.get('event_id') or match.get('id')
+    if not event_id:
+        return False
+
+    changed = False
+
+    try:
+        stats = scraper.get_match_statistics(event_id)
+        if stats:
+            from sofascore.utils import extract_statistics
+            stat_data = extract_statistics(stats, period='ALL')
+            for key, value in stat_data.items():
+                if value not in (None, '') and match.get(key) in (None, ''):
+                    match[key] = value
+                    changed = True
+    except Exception as exc:
+        print(f"    [WARN] Team history statistics failed for event {event_id}: {exc}")
+    if getattr(scraper, 'api_blocked', False):
+        return changed
+
+    if TEAM_HISTORY_ENRICH_DELAY:
+        import time
+        time.sleep(TEAM_HISTORY_ENRICH_DELAY)
+
+    try:
+        shotmap = scraper.get_match_shotmap(event_id)
+        if shotmap:
+            home_xg = round(sum(s.get('xg', 0) for s in shotmap if s.get('isHome')), 3)
+            away_xg = round(sum(s.get('xg', 0) for s in shotmap if not s.get('isHome')), 3)
+            if match.get('home_xg') in (None, ''):
+                match['home_xg'] = home_xg
+                changed = True
+            if match.get('away_xg') in (None, ''):
+                match['away_xg'] = away_xg
+                changed = True
+    except Exception as exc:
+        print(f"    [WARN] Team history shotmap failed for event {event_id}: {exc}")
+    if getattr(scraper, 'api_blocked', False):
+        return changed
+
+    if TEAM_HISTORY_ENRICH_DELAY:
+        import time
+        time.sleep(TEAM_HISTORY_ENRICH_DELAY)
+
+    try:
+        incidents = scraper.get_match_incidents(event_id)
+        if incidents:
+            card_values = {
+                'home_yellow_cards_calc': sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and i.get('isHome')),
+                'away_yellow_cards_calc': sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and not i.get('isHome')),
+                'home_red_cards_calc': sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'red' and i.get('isHome')),
+                'away_red_cards_calc': sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'red' and not i.get('isHome')),
+            }
+            for key, value in card_values.items():
+                if match.get(key) in (None, ''):
+                    match[key] = value
+                    changed = True
+    except Exception as exc:
+        print(f"    [WARN] Team history incidents failed for event {event_id}: {exc}")
+
+    if TEAM_HISTORY_ENRICH_DELAY:
+        import time
+        time.sleep(TEAM_HISTORY_ENRICH_DELAY)
+
+    return changed
+
+
+def _enrich_team_history_matches(scraper, matches: List[Dict], team_name: str) -> int:
+    if not TEAM_HISTORY_ENRICH_STATS or scraper is None or not matches:
+        return 0
+
+    indexed = list(enumerate(matches))
+    indexed.sort(key=lambda item: (item[1].get('date') or '', item[1].get('event_id') or 0), reverse=True)
+
+    enriched = 0
+    considered = 0
+    for idx, match in indexed:
+        if considered >= TEAM_HISTORY_ENRICH_LIMIT:
+            break
+        if match.get('home_score') is None or match.get('away_score') is None:
+            continue
+        considered += 1
+        if _has_team_history_model_stats(match):
+            continue
+
+        if _enrich_team_history_match(scraper, match):
+            enriched += 1
+
+        if getattr(scraper, 'api_blocked', False):
+            print(f"  [WARN] Team history stat enrichment stopped for {team_name}: Sofascore API blocked.")
+            break
+
+    if enriched:
+        print(f"  Team history stats enriched: {team_name or '?'} ({enriched}/{considered} recent matches)")
+    return enriched
+
+
 def _load_or_fetch_team_history(scraper, team_id, team_name: str, force: bool = False) -> List[Dict]:
     cached = _load_cached_team_history(team_id)
     if cached and not force:
+        if _enrich_team_history_matches(scraper, cached, team_name):
+            _save_cached_team_history(team_id, team_name, cached)
         return cached
 
     if scraper is None or team_id in (None, ''):
@@ -1665,6 +1808,7 @@ def _load_or_fetch_team_history(scraper, team_id, team_name: str, force: bool = 
 
     matches = _normalize_team_history_events(events)
     if matches:
+        _enrich_team_history_matches(scraper, matches, team_name)
         _save_cached_team_history(team_id, team_name, matches)
         print(f"  Team history cached: {team_name or team_id} ({len(matches)} matches)")
         return matches
@@ -1751,6 +1895,14 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
                                           club_stats_index=club_stats_index,
                                           team_history_matches=team_history_matches)
     return features
+
+
+def _should_compute_fresh_features(match: Dict) -> bool:
+    return (
+        match.get('status') == 'upcoming' or
+        match.get('features') is None or
+        match.get('comp_type') == 'international'
+    )
 
 
 def _features_with_source_odds(features: Dict, match: Dict) -> Dict:
@@ -2225,7 +2377,7 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
                 lineups_cache[cache_key] = load_lineups(comp_path)
             match_lineups = lineups_cache[cache_key]
 
-        if match.get('status') == 'upcoming' or match.get('features') is None:
+        if _should_compute_fresh_features(match):
             team_history = _team_history_for_match(
                 match,
                 historical_cache[cache_key],
@@ -2483,7 +2635,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
             team_history,
         )
 
-        if match.get('status') == 'upcoming' or match.get('features') is None:
+        if _should_compute_fresh_features(match):
             features = compute_features_for_upcoming(
                 match, historical_cache[cache_key],
                 lineups=match_lineups, club_stats_index=club_stats_index,
@@ -3430,10 +3582,20 @@ def main():
                         help='Re-run predictions on existing report (no scraping)')
     parser.add_argument('--refresh-odds', action='store_true',
                         help='Add or refresh with-odds prediction variants on an existing report')
+    parser.add_argument('--enrich-team-history-stats', action='store_true',
+                        help='Fetch detailed stats for recent national-team history matches')
+    parser.add_argument('--team-history-stat-limit', type=int, default=None,
+                        help='Max recent team-history matches per team to enrich with detailed stats')
     parser.add_argument('--no-report', action='store_true',
                         help='Do not save report to file')
     
     args = parser.parse_args()
+    global TEAM_HISTORY_ENRICH_STATS, TEAM_HISTORY_ENRICH_LIMIT
+    if args.enrich_team_history_stats:
+        TEAM_HISTORY_ENRICH_STATS = True
+    if args.team_history_stat_limit is not None:
+        TEAM_HISTORY_ENRICH_LIMIT = max(1, args.team_history_stat_limit)
+
     try:
         target_date = validate_target_date(args.date)
     except ValueError as exc:
@@ -3445,6 +3607,9 @@ def main():
     print("="*70)
     print(f"Data: {target_date}")
     print()
+    if TEAM_HISTORY_ENRICH_STATS:
+        print(f"Team history stat enrichment enabled (limit: {TEAM_HISTORY_ENRICH_LIMIT} matches/team)")
+        print()
     
     if args.repredict:
         existing_report = load_existing_report(target_date)
