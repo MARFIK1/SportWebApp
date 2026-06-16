@@ -1726,7 +1726,7 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
     fg = MLFeatureGenerator()
 
     upcoming_match = {
-        'event_id': None,
+        'event_id': match.get('event_id'),
         'date': match.get('date', datetime.now().strftime('%Y-%m-%d')),
         'round': 0,
         'home_team': match['home'],
@@ -1740,7 +1740,13 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
         if _is_positive_odds(match.get(odds_key)):
             upcoming_match[odds_key] = match[odds_key]
 
+    elo_table = None
+    if upcoming_match.get('event_id'):
+        elo_history = team_history_matches if team_history_matches is not None else historical_matches
+        elo_table = fg._compute_elo_table([*(elo_history or []), upcoming_match])
+
     features = fg.generate_match_features(upcoming_match, historical_matches,
+                                          elo_table=elo_table,
                                           lineups=lineups,
                                           club_stats_index=club_stats_index,
                                           team_history_matches=team_history_matches)
