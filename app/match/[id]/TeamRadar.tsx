@@ -41,6 +41,16 @@ function relativeLower(home: number | null | undefined, away: number | null | un
     return scores ? { home: scores.away, away: scores.home } : null;
 }
 
+function hasMeaningfulPair(home: number | null | undefined, away: number | null | undefined): boolean {
+    return (
+        typeof home === "number" &&
+        typeof away === "number" &&
+        Number.isFinite(home) &&
+        Number.isFinite(away) &&
+        (Math.abs(home) > 0 || Math.abs(away) > 0)
+    );
+}
+
 function formPoints(form: string | null | undefined): number {
     if (!form) return 0;
     return form.split("").reduce((sum, item) => sum + (item === "W" ? 3 : item === "D" ? 1 : 0), 0);
@@ -67,22 +77,49 @@ export default function TeamRadar({ analysis, homeTeam, awayTeam }: TeamRadarPro
     const metrics = useMemo<RadarMetric[]>(() => {
         if (!analysis) return [];
 
-        const candidates = [
+        const hasXgBasis =
+            analysis.data_quality?.goals_source === "xg" ||
+            (analysis.data_quality?.goals_source == null && (
+                hasMeaningfulPair(analysis.goals?.home?.avg_xg_for, analysis.goals?.away?.avg_xg_for) ||
+                hasMeaningfulPair(analysis.goals?.home?.avg_xg_against, analysis.goals?.away?.avg_xg_against)
+            ));
+        const attackHome = hasXgBasis ? analysis.goals?.home?.avg_xg_for : analysis.goals?.home?.avg_scored;
+        const attackAway = hasXgBasis ? analysis.goals?.away?.avg_xg_for : analysis.goals?.away?.avg_scored;
+        const defenseHome = hasXgBasis ? analysis.goals?.home?.avg_xg_against : analysis.goals?.home?.avg_conceded;
+        const defenseAway = hasXgBasis ? analysis.goals?.away?.avg_xg_against : analysis.goals?.away?.avg_conceded;
+
+        const candidates: Array<{
+            key: string;
+            label: string;
+            home: number | null | undefined;
+            away: number | null | undefined;
+            scores: { home: number; away: number } | null;
+            format: (value: number) => string;
+            allowZeroPair?: boolean;
+        }> = [
             {
-                key: "xg_for",
-                label: t("xg_for"),
-                home: analysis.goals?.home?.avg_xg_for,
-                away: analysis.goals?.away?.avg_xg_for,
-                scores: relativeHigher(analysis.goals?.home?.avg_xg_for, analysis.goals?.away?.avg_xg_for),
+                key: hasXgBasis ? "xg_for" : "goals_for",
+                label: hasXgBasis ? t("xg_for") : t("goals_for"),
+                home: attackHome,
+                away: attackAway,
+                scores: relativeHigher(attackHome, attackAway),
                 format: (value: number) => value.toFixed(1),
             },
             {
-                key: "defensive_xg",
-                label: t("defensive_xg"),
-                home: analysis.goals?.home?.avg_xg_against,
-                away: analysis.goals?.away?.avg_xg_against,
-                scores: relativeLower(analysis.goals?.home?.avg_xg_against, analysis.goals?.away?.avg_xg_against),
+                key: hasXgBasis ? "defensive_xg" : "goals_against",
+                label: hasXgBasis ? t("defensive_xg") : t("goals_against"),
+                home: defenseHome,
+                away: defenseAway,
+                scores: relativeLower(defenseHome, defenseAway),
                 format: (value: number) => value.toFixed(1),
+            },
+            {
+                key: "scoring_rate",
+                label: t("scoring_rate"),
+                home: analysis.goals?.home?.score_pct,
+                away: analysis.goals?.away?.score_pct,
+                scores: relativeHigher(analysis.goals?.home?.score_pct, analysis.goals?.away?.score_pct),
+                format: (value: number) => `${value.toFixed(0)}%`,
             },
             {
                 key: "shots_on_target",
@@ -115,6 +152,7 @@ export default function TeamRadar({ analysis, homeTeam, awayTeam }: TeamRadarPro
                 away: formPoints(analysis.form?.away),
                 scores: relativeHigher(formPoints(analysis.form?.home), formPoints(analysis.form?.away)),
                 format: (value: number) => value.toFixed(0),
+                allowZeroPair: true,
             },
         ];
 
@@ -124,7 +162,8 @@ export default function TeamRadar({ analysis, homeTeam, awayTeam }: TeamRadarPro
                 typeof metric.away === "number" &&
                 Number.isFinite(metric.home) &&
                 Number.isFinite(metric.away) &&
-                metric.scores !== null
+                metric.scores !== null &&
+                (metric.allowZeroPair || hasMeaningfulPair(metric.home, metric.away))
             )
             .map((metric) => ({
                 key: metric.key,

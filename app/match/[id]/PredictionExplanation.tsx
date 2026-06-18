@@ -33,6 +33,16 @@ function formScore(form: string | undefined): number | null {
     return score;
 }
 
+function hasMeaningfulPair(home: number | null | undefined, away: number | null | undefined): boolean {
+    return (
+        typeof home === "number" &&
+        typeof away === "number" &&
+        Number.isFinite(home) &&
+        Number.isFinite(away) &&
+        (Math.abs(home) > 0 || Math.abs(away) > 0)
+    );
+}
+
 export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: PredictionExplanationProps) {
     const { t } = useLanguage();
     const { bundle } = useMatchPredictionVariant();
@@ -47,6 +57,15 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
     const awayXg = analysis?.goals?.expected_goals_away;
     const xgDiff = homeXg != null && awayXg != null ? homeXg - awayXg : null;
     const xgEdgeTeam = xgDiff == null || Math.abs(xgDiff) < 0.15 ? null : xgDiff > 0 ? homeTeam : awayTeam;
+    const usesXgBasis =
+        analysis?.data_quality?.goals_source === "xg" ||
+        (analysis?.data_quality?.goals_source == null && hasMeaningfulPair(analysis?.goals?.home?.avg_xg_for, analysis?.goals?.away?.avg_xg_for));
+    const homeSample = usesXgBasis
+        ? analysis?.data_quality?.home_xg_n ?? analysis?.goals?.home?.xg_n
+        : analysis?.data_quality?.home_history_n ?? analysis?.goals?.home?.n;
+    const awaySample = usesXgBasis
+        ? analysis?.data_quality?.away_xg_n ?? analysis?.goals?.away?.xg_n
+        : analysis?.data_quality?.away_history_n ?? analysis?.goals?.away?.n;
     const homeFormScore = formScore(analysis?.form?.home);
     const awayFormScore = formScore(analysis?.form?.away);
     const formDiff = homeFormScore != null && awayFormScore != null ? homeFormScore - awayFormScore : null;
@@ -80,7 +99,7 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                     <div className="rounded-xl bg-white/70 p-3 dark:bg-gray-900/55">
                         <div className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
-                            {t("pre_match_xg_context")}
+                            {usesXgBasis ? t("pre_match_xg_context") : t("pre_match_goal_context")}
                         </div>
                         <div className="mt-1 text-sm font-bold text-gray-900 dark:text-white">
                             {xgEdgeTeam ?? t("balanced")}
@@ -88,6 +107,11 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
                         {xgDiff != null && (
                             <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                                 {homeXg?.toFixed(2)} - {awayXg?.toFixed(2)}
+                            </div>
+                        )}
+                        {(homeSample != null || awaySample != null) && (
+                            <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                {usesXgBasis ? t("xg_basis") : t("recent_goals_basis")} {"\u2022"} {t("history_sample")}: {homeSample ?? "-"} / {awaySample ?? "-"}
                             </div>
                         )}
                     </div>

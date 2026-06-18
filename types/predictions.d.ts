@@ -127,6 +127,7 @@ export interface AnalysisGoalsSide {
     avg_xg_for: number;
     avg_xg_against: number;
     n: number;
+    xg_n?: number;
 }
 
 export interface AnalysisMatch {
@@ -164,6 +165,13 @@ export interface AnalysisMatch {
         away: string;
         home_n: number;
         away_n: number;
+    };
+    data_quality?: {
+        goals_source?: "xg" | "scoreline";
+        home_history_n?: number;
+        away_history_n?: number;
+        home_xg_n?: number;
+        away_xg_n?: number;
     };
 }
 

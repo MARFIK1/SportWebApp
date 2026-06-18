@@ -2010,6 +2010,7 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
             'avg_xg_for': round(_safe_avg(xg_for), 2),
             'avg_xg_against': round(_safe_avg(xg_against), 2),
             'n': n,
+            'xg_n': len(xg_for),
         }
     
     home_goals = _goals_stats(home_matches, home, home_id)
@@ -2018,6 +2019,7 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
     expected_home = home_goals['avg_xg_for'] if home_goals['avg_xg_for'] > 0 else home_goals['avg_scored']
     expected_away = away_goals['avg_xg_for'] if away_goals['avg_xg_for'] > 0 else away_goals['avg_scored']
     expected_total = round(expected_home + expected_away, 2)
+    goals_source = 'xg' if home_goals.get('xg_n', 0) > 0 and away_goals.get('xg_n', 0) > 0 else 'scoreline'
     
     home_scores_pct = home_goals['score_pct'] / 100.0
     away_scores_pct = away_goals['score_pct'] / 100.0
@@ -2151,6 +2153,13 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
         'away': _form_string(away_matches, away, away_id),
         'home_n': len(home_matches),
         'away_n': len(away_matches),
+    }
+    analysis['data_quality'] = {
+        'goals_source': goals_source,
+        'home_history_n': len(home_matches),
+        'away_history_n': len(away_matches),
+        'home_xg_n': home_goals.get('xg_n', 0),
+        'away_xg_n': away_goals.get('xg_n', 0),
     }
     
     return analysis

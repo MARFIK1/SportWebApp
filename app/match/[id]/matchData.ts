@@ -171,6 +171,7 @@ function buildRecentTeamAnalysis(teamId: number, matches: SofascoreMatch[]): Rec
             avg_xg_for: average(xgFor, 2),
             avg_xg_against: average(xgAgainst, 2),
             n: matchCount,
+            xg_n: xgFor.count,
         },
         corners: {
             avg_for: average(cornersFor, 1),
@@ -309,12 +310,14 @@ export function repairMatchAnalysis(
         : analysis.form.away;
     const homeFormCount = homeForm === homeRecentAnalysis.form ? homeRecentAnalysis.formCount : analysis.form.home_n;
     const awayFormCount = awayForm === awayRecentAnalysis.form ? awayRecentAnalysis.formCount : analysis.form.away_n;
+    const goals = homeGoals !== analysis.goals.home || awayGoals !== analysis.goals.away
+        ? rebuildGoalsSection(analysis.goals, homeGoals, awayGoals)
+        : analysis.goals;
+    const goalsSource = (homeGoals.xg_n ?? 0) > 0 && (awayGoals.xg_n ?? 0) > 0 ? "xg" : "scoreline";
 
     return {
         ...analysis,
-        goals: homeGoals !== analysis.goals.home || awayGoals !== analysis.goals.away
-            ? rebuildGoalsSection(analysis.goals, homeGoals, awayGoals)
-            : analysis.goals,
+        goals,
         corners: homeCorners !== analysis.corners.home || awayCorners !== analysis.corners.away
             ? rebuildCornersSection(analysis.corners, homeCorners, awayCorners)
             : analysis.corners,
@@ -330,6 +333,14 @@ export function repairMatchAnalysis(
             away: awayForm,
             home_n: homeFormCount,
             away_n: awayFormCount,
+        },
+        data_quality: {
+            ...analysis.data_quality,
+            goals_source: goalsSource,
+            home_history_n: homeGoals.n,
+            away_history_n: awayGoals.n,
+            home_xg_n: homeGoals.xg_n ?? 0,
+            away_xg_n: awayGoals.xg_n ?? 0,
         },
     };
 }
