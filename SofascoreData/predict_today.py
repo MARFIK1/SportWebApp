@@ -2351,6 +2351,21 @@ def _source_match_odds_snapshot(match: Dict) -> Dict[str, float]:
     }
 
 
+def _source_match_odds_availability(match: Dict) -> Dict:
+    missing_base_odds = [
+        ok for ok in BASE_ODDS_KEYS
+        if not _is_positive_odds(match.get(ok))
+    ]
+    availability = {
+        'has_base_odds': len(missing_base_odds) == 0,
+        'missing_base_odds': missing_base_odds,
+    }
+    source_odds = _source_match_odds_snapshot(match)
+    if source_odds:
+        availability['source_odds'] = source_odds
+    return availability
+
+
 def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predictor) -> Dict[str, Dict]:
     variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
     historical_cache = {}
@@ -3207,6 +3222,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
+            'odds_availability': _source_match_odds_availability(m),
         }
         match_entry.update(actual_fields)
         match_entry.update(_serialize_result_prediction_data(r, actual_result))
@@ -3284,6 +3300,7 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             match['actual_corners'] = m['total_corners']
         if m.get('referee_name'):
             match['referee_name'] = m['referee_name']
+        match['odds_availability'] = _source_match_odds_availability(m)
 
         new_status = m.get('status', 'upcoming')
 
@@ -3336,6 +3353,7 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
+            'odds_availability': _source_match_odds_availability(m),
         }
         new_entry.update(actual_fields)
         new_entry.update(_serialize_result_prediction_data(r, actual_result))
@@ -3650,6 +3668,7 @@ def main():
             m = r['match']
             if m.get('event_id') and not match_entry.get('event_id'):
                 match_entry['event_id'] = m.get('event_id')
+            match_entry['odds_availability'] = _source_match_odds_availability(m)
             serialized_predictions = _serialize_result_prediction_data(r, match_entry.get('actual_result'))
             match_entry['predictions'] = serialized_predictions['predictions']
             match_entry['consensus'] = serialized_predictions['consensus']
@@ -3686,10 +3705,13 @@ def main():
                     matches_by_key.setdefault(key, m_data)
             for match_entry in existing_report.get('matches', []):
                 m_data = _find_by_keys(matches_by_key, _report_match_keys(match_entry))
-                if not m_data or not m_data.get('result'):
+                if not m_data:
                     continue
                 if m_data.get('event_id') and not match_entry.get('event_id'):
                     match_entry['event_id'] = m_data.get('event_id')
+                match_entry['odds_availability'] = _source_match_odds_availability(m_data)
+                if not m_data.get('result'):
+                    continue
                 actual_result = _apply_actual_fields_to_report_match(match_entry, m_data)
                 if not actual_result:
                     continue

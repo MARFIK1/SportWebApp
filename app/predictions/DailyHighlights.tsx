@@ -1,5 +1,6 @@
 import Link from "next/link";
 import TeamLogo from "../components/common/TeamLogo";
+import { getAgreementCount, getConsensusConfidence, getPredictionStrength } from "../util/predictions/confidence";
 import { getDrawWatchSignalFromPredictions } from "../util/predictions/drawWatch";
 import { resolvePredictionMatchResult } from "../util/predictions/matchResult";
 import type { ConsensusPrediction, MatchResult, PredictionMatch } from "@/types/predictions";
@@ -20,24 +21,6 @@ interface HighlightMatch {
     gapToBest?: number;
 }
 
-const OUTCOMES: MatchResult[] = ["HOME", "DRAW", "AWAY"];
-
-function getProbabilityScale(probabilities: Record<MatchResult, number>): number {
-    return Math.max(...OUTCOMES.map((outcome) => probabilities[outcome] ?? 0)) <= 1 ? 100 : 1;
-}
-
-function getConsensusConfidence(consensus: ConsensusPrediction): number {
-    if (!consensus.prediction) return 0;
-    const scale = getProbabilityScale(consensus.avg_probabilities);
-    return (consensus.avg_probabilities[consensus.prediction] ?? 0) * scale;
-}
-
-function getAgreementCount(agreement: string | null): number {
-    if (!agreement) return 0;
-    const parsed = Number.parseInt(agreement.split("/")[0] ?? "0", 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function predictionLabel(outcome: MatchResult | null, t: (key: string) => string): string {
     if (outcome === "HOME") return t("home_win");
     if (outcome === "AWAY") return t("away_win");
@@ -55,16 +38,18 @@ function collectHighlights(matches: PredictionMatch[]) {
     const eligible = matches.flatMap<HighlightMatch>((match) => {
         const consensus = match.predictions.consensus;
         if (!consensus?.prediction) return [];
+        const strength = getPredictionStrength(consensus);
 
         return [{
             match,
             consensus,
-            confidence: getConsensusConfidence(consensus),
-            agreementCount: getAgreementCount(consensus.agreement),
+            confidence: strength.confidence,
+            agreementCount: strength.agreementCount,
         }];
     });
 
     const highConfidence = [...eligible]
+        .filter((item) => getPredictionStrength(item.consensus).tier === "strong")
         .sort((a, b) => b.confidence - a.confidence || b.agreementCount - a.agreementCount)
         .slice(0, 4);
 

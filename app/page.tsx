@@ -7,7 +7,8 @@ import DatePicker from "./components/home/DatePicker";
 import HomeLeagueList from "./components/home/HomeLeagueList";
 import { getServerT } from "./util/i18n/getLocale";
 import { normalizeReportDate, todayYmd } from "./util/data/dateUtils";
-import type { ConsensusPrediction, PredictionMatch } from "@/types/predictions";
+import { getMatchConsensusConfidence, isHighConfidenceMatch } from "./util/predictions/confidence";
+import type { PredictionMatch } from "@/types/predictions";
 
 export const metadata: Metadata = {
     title: "Home",
@@ -16,12 +17,6 @@ export const metadata: Metadata = {
 
 interface PageProps {
     searchParams: Promise<{ date?: string }>;
-}
-
-function getConsensusConfidence(match: PredictionMatch): number {
-    const consensus = match.predictions.consensus as ConsensusPrediction;
-    const prediction = consensus?.prediction;
-    return prediction ? consensus.avg_probabilities?.[prediction] ?? 0 : 0;
 }
 
 const REPORT_DAYS_PAST = 30;
@@ -152,11 +147,11 @@ export default async function Home({ searchParams }: PageProps) {
     const totalMatches = report?.summary.total_matches ?? 0;
     const finishedMatches = report?.summary.finished_matches ?? 0;
     const pendingMatches = totalMatches - finishedMatches;
-    const predictedMatches = matches.filter((match) => getConsensusConfidence(match) > 0);
+    const predictedMatches = matches.filter((match) => getMatchConsensusConfidence(match) > 0);
     const averageConfidence = predictedMatches.length
-        ? predictedMatches.reduce((sum, match) => sum + getConsensusConfidence(match), 0) / predictedMatches.length
+        ? predictedMatches.reduce((sum, match) => sum + getMatchConsensusConfidence(match), 0) / predictedMatches.length
         : 0;
-    const highConfidenceCount = predictedMatches.filter((match) => getConsensusConfidence(match) >= 60).length;
+    const highConfidenceCount = predictedMatches.filter(isHighConfidenceMatch).length;
     const matchSummaryText = totalMatches === 0
         ? t("no_matches_for_date_title")
         : finishedMatches === totalMatches

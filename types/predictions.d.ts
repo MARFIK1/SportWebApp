@@ -56,8 +56,15 @@ export interface PredictionVariant {
         [key: string]: MarketPrediction | undefined;
     };
     odds_used: boolean;
+    source_odds?: Record<string, number>;
     missing_odds_by_target?: Record<string, string[]>;
     skipped_targets?: string[];
+}
+
+export interface OddsAvailability {
+    has_base_odds: boolean;
+    missing_base_odds: string[];
+    source_odds?: Record<string, number>;
 }
 
 export interface PredictionMatch {
@@ -92,6 +99,7 @@ export interface PredictionMatch {
     };
     default_prediction_variant?: PredictionVariantKey;
     prediction_variants?: Partial<Record<PredictionVariantKey, PredictionVariant>>;
+    odds_availability?: OddsAvailability;
 }
 
 export interface ModelAccuracy {

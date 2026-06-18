@@ -2,6 +2,7 @@
 
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { PredictionVariantKey } from "@/types/predictions";
+import { getPredictionStrength, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import { useMatchPredictionVariant } from "./MatchPredictionVariantProvider";
 
@@ -47,6 +48,12 @@ function getVariantLabel(variant: PredictionVariantKey, t: (key: string) => stri
     return variant === "with_odds" ? t("with_odds") : t("without_odds");
 }
 
+function getStrengthTone(tier: PredictionStrengthTier): string {
+    if (tier === "strong") return "text-emerald-400";
+    if (tier === "lean") return "text-amber-400";
+    return "text-gray-400";
+}
+
 export default function MatchPredictionSidebar() {
     const { t } = useLanguage();
     const {
@@ -56,9 +63,15 @@ export default function MatchPredictionSidebar() {
         setActiveVariant,
         bundle,
         matchFinished,
+        oddsAvailability,
     } = useMatchPredictionVariant();
     const showMarketPanel = Boolean(bundle.marketPredictions) || bundle.skippedTargets.length > 0;
     const drawWatch = getDrawWatchSignalFromModels(bundle.models);
+    const strength = getPredictionStrength(bundle.consensus);
+    const missingBaseOdds = oddsAvailability?.has_base_odds === false
+        ? oddsAvailability.missing_base_odds
+        : [];
+    const showWithOddsUnavailable = !availableVariants.includes("with_odds") && missingBaseOdds.length > 0;
 
     return (
         <>
@@ -88,6 +101,17 @@ export default function MatchPredictionSidebar() {
                             {t("variant_partial_markets")}
                         </p>
                     )}
+                </div>
+            )}
+
+            {showWithOddsUnavailable && (
+                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-xs text-amber-700 dark:text-amber-200">
+                    <div className="font-black uppercase tracking-[0.14em]">
+                        {t("with_odds_unavailable")}
+                    </div>
+                    <div className="mt-2 text-gray-600 dark:text-gray-300">
+                        {t("with_odds_missing_base")}: {missingBaseOdds.join(", ")}
+                    </div>
                 </div>
             )}
 
@@ -145,6 +169,12 @@ export default function MatchPredictionSidebar() {
                             <span className="text-gray-500 dark:text-gray-400">{t("model_confidence")}</span>
                             <span className="text-gray-900 dark:text-white font-semibold">
                                 {maxProbability(bundle.consensus.avg_probabilities).toFixed(0)}%
+                            </span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-gray-500 dark:text-gray-400">{t("prediction_strength")}</span>
+                            <span className={`font-semibold ${getStrengthTone(strength.tier)}`}>
+                                {t(`prediction_strength_${strength.tier}`)}
                             </span>
                         </div>
                         <div className="flex justify-between">

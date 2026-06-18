@@ -4,12 +4,12 @@ import { ChevronDownIcon } from "@heroicons/react/24/outline";
 import { PredictionMatch, ModelPrediction, ConsensusPrediction } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
+import { getMatchAgreementCount, getMatchConsensusConfidence, isHighConfidenceMatch } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
 import {
     getTeamFavoriteKey,
 } from "@/app/util/favorites/favorites";
 import { useStoredFavorites } from "@/app/util/favorites/useStoredFavorites";
-import type { MatchResult } from "@/types/predictions";
 import { predictionCorrectness, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
 
 interface PredictionsClientProps {
@@ -20,28 +20,6 @@ interface PredictionsClientProps {
 
 type MatchViewFilter = "all" | "favorites" | "drawWatch" | "highConfidence" | "finished" | "upcoming";
 type MatchSort = "default" | "confidence" | "agreement" | "drawProbability" | "kickoff";
-
-const HIGH_CONFIDENCE_THRESHOLD = 60;
-const OUTCOMES: MatchResult[] = ["HOME", "DRAW", "AWAY"];
-
-function getProbabilityScale(probabilities: Record<MatchResult, number> | undefined): number {
-    if (!probabilities) return 1;
-    return Math.max(...OUTCOMES.map((outcome) => probabilities[outcome] ?? 0)) <= 1 ? 100 : 1;
-}
-
-function getConsensusConfidence(match: PredictionMatch): number {
-    const consensus = match.predictions.consensus as ConsensusPrediction;
-    if (!consensus?.prediction) return 0;
-    const scale = getProbabilityScale(consensus.avg_probabilities);
-    return (consensus.avg_probabilities?.[consensus.prediction] ?? 0) * scale;
-}
-
-function getAgreementCount(match: PredictionMatch): number {
-    const consensus = match.predictions.consensus as ConsensusPrediction;
-    if (!consensus?.agreement) return 0;
-    const parsed = Number.parseInt(consensus.agreement.split("/")[0] ?? "0", 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
 
 function getDrawProbability(match: PredictionMatch): number {
     return getDrawWatchSignalFromPredictions(match.predictions)?.drawProbability ?? 0;
@@ -79,7 +57,7 @@ function matchMatchesFavorites(
 
 function matchPassesViewFilter(match: PredictionMatch, filter: MatchViewFilter): boolean {
     if (filter === "drawWatch") return Boolean(getDrawWatchSignalFromPredictions(match.predictions));
-    if (filter === "highConfidence") return getConsensusConfidence(match) >= HIGH_CONFIDENCE_THRESHOLD;
+    if (filter === "highConfidence") return isHighConfidenceMatch(match);
     if (filter === "finished") return match.status === "finished";
     if (filter === "upcoming") return match.status !== "finished";
     return true;
@@ -88,13 +66,13 @@ function matchPassesViewFilter(match: PredictionMatch, filter: MatchViewFilter):
 function sortMatches(matches: PredictionMatch[], sortBy: MatchSort): PredictionMatch[] {
     const sorted = [...matches];
     if (sortBy === "confidence") {
-        return sorted.sort((a, b) => getConsensusConfidence(b) - getConsensusConfidence(a) || getAgreementCount(b) - getAgreementCount(a));
+        return sorted.sort((a, b) => getMatchConsensusConfidence(b) - getMatchConsensusConfidence(a) || getMatchAgreementCount(b) - getMatchAgreementCount(a));
     }
     if (sortBy === "agreement") {
-        return sorted.sort((a, b) => getAgreementCount(b) - getAgreementCount(a) || getConsensusConfidence(b) - getConsensusConfidence(a));
+        return sorted.sort((a, b) => getMatchAgreementCount(b) - getMatchAgreementCount(a) || getMatchConsensusConfidence(b) - getMatchConsensusConfidence(a));
     }
     if (sortBy === "drawProbability") {
-        return sorted.sort((a, b) => getDrawProbability(b) - getDrawProbability(a) || getConsensusConfidence(b) - getConsensusConfidence(a));
+        return sorted.sort((a, b) => getDrawProbability(b) - getDrawProbability(a) || getMatchConsensusConfidence(b) - getMatchConsensusConfidence(a));
     }
     if (sortBy === "kickoff") {
         return sorted.sort((a, b) => kickoffValue(a) - kickoffValue(b));

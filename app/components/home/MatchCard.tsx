@@ -7,6 +7,7 @@ import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
+import { getPredictionStrength, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
 import { predictionCorrectness, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
 
 interface MatchCardProps {
@@ -33,19 +34,20 @@ function getPredictionBarColor(prediction: string): string {
     return "bg-amber-400";
 }
 
-function getPredictionLabel(match: PredictionMatch, t: (key: string) => string): { text: string; color: string; barColor: string; probability: number; agreement: string | null } | null {
+function getPredictionLabel(match: PredictionMatch, t: (key: string) => string): { text: string; color: string; barColor: string; probability: number; agreement: string | null; strength: PredictionStrengthTier } | null {
     const consensus = match.predictions.consensus as ConsensusPrediction;
     if (!consensus?.prediction) return null;
 
     const pred = consensus.prediction;
     const prob = consensus.avg_probabilities?.[pred] ?? 0;
+    const strength = getPredictionStrength(consensus);
 
     let label = "";
     if (pred === "HOME") label = `${t("home_win")} (${prob.toFixed(0)}%)`;
     else if (pred === "AWAY") label = `${t("away_win")} (${prob.toFixed(0)}%)`;
     else label = `${t("draw")} (${prob.toFixed(0)}%)`;
 
-    return { text: label, color: getPredictionColor(pred), barColor: getPredictionBarColor(pred), probability: prob, agreement: consensus.agreement };
+    return { text: label, color: getPredictionColor(pred), barColor: getPredictionBarColor(pred), probability: prob, agreement: consensus.agreement, strength: strength.tier };
 }
 
 function FavoriteTeamButton({
@@ -222,9 +224,16 @@ export default function MatchCard({
                 <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50/80 p-3 dark:border-white/10 dark:bg-black/20">
                     <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
                         <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">{t("ml_prediction")}</span>
-                        <span className={`min-w-0 break-words text-right text-xs font-semibold leading-tight ${prediction.color}`}>
-                            {prediction.text}
-                        </span>
+                        <div className="min-w-0 text-right">
+                            <span className={`block break-words text-xs font-semibold leading-tight ${prediction.color}`}>
+                                {prediction.text}
+                            </span>
+                            {prediction.strength !== "strong" && (
+                                <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-400 dark:text-gray-500">
+                                    {t(`prediction_strength_${prediction.strength}`)}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
                         <div

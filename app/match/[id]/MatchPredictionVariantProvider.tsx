@@ -24,6 +24,7 @@ interface MatchPredictionVariantContextValue {
     setActiveVariant: (variant: PredictionVariantKey) => void;
     bundle: ActivePredictionBundle;
     matchFinished: boolean;
+    oddsAvailability?: PredictionMatch["odds_availability"];
 }
 
 const MatchPredictionVariantContext = createContext<MatchPredictionVariantContextValue | null>(null);
@@ -107,6 +108,7 @@ export default function MatchPredictionVariantProvider({
                 setActiveVariant,
                 bundle,
                 matchFinished,
+                oddsAvailability: match.odds_availability,
             }}
         >
             {children}

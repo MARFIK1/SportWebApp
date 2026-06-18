@@ -1,5 +1,6 @@
 "use client";
 
+import { getPredictionStrength } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import type { AnalysisMatch, MatchResult } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
@@ -52,6 +53,7 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
     if (!consensus) return null;
 
     const confidence = maxProbability(consensus.avg_probabilities);
+    const strength = getPredictionStrength(consensus);
     const predictionLabel = pickLabel(consensus.prediction, homeTeam, awayTeam, t("draw"));
     const homeXg = analysis?.goals?.expected_goals_home;
     const awayXg = analysis?.goals?.expected_goals_away;
@@ -91,8 +93,11 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
                         <span className="min-w-0 truncate text-base font-black text-gray-900 dark:text-white">{predictionLabel}</span>
                         <span className="shrink-0 text-xl font-black text-emerald-500">{confidence.toFixed(0)}%</span>
                     </div>
-                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        {t("agreement")}: {consensus.agreement ?? "-"}
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span>{t("agreement")}: {consensus.agreement ?? "-"}</span>
+                        <span className="rounded-full border border-gray-200 px-2 py-0.5 font-bold uppercase tracking-[0.12em] text-gray-500 dark:border-white/10 dark:text-gray-300">
+                            {t(`prediction_strength_${strength.tier}`)}
+                        </span>
                     </div>
                 </div>
 
