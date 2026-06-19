@@ -20,6 +20,7 @@
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit --incremental false",
     "test": "jest",
     "diagnostics:models": "node scripts/model-diagnostics.mjs",
+    "cache:team-logos": "node scripts/cache-team-logos.mjs",
     "deploy:vercel": "node scripts/vercel-deploy.mjs"
   },
   "dependencies": {

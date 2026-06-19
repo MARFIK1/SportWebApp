@@ -1,3 +1,8 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+export const runtime = "nodejs";
+
 const SOFASCORE_IMAGE_URLS = [
     "https://img.sofascore.com/api/v1/team/{id}/image",
     "https://api.sofascore.app/api/v1/team/{id}/image",
@@ -7,6 +12,7 @@ const SOFASCORE_IMAGE_URLS = [
     "https://api.sofascore.app/api/v1/team/{id}/image/small",
 ];
 const IMAGE_CACHE_CONTROL = "public, max-age=604800, s-maxage=2592000, stale-while-revalidate=2592000";
+const LOCAL_IMAGE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const FALLBACK_CACHE_CONTROL = "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
 const IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FALLBACK_CACHE_TTL_MS = 60 * 1000;
@@ -152,7 +158,29 @@ async function fetchImageTemplates(id: string, templates: string[], source: stri
     return null;
 }
 
+async function fetchLocalLogo(id: string): Promise<CachedLogo | null> {
+    try {
+        const logo = await readFile(join(process.cwd(), "public", "team-logos", `${id}.png`));
+
+        return {
+            body: logo.buffer.slice(logo.byteOffset, logo.byteOffset + logo.byteLength),
+            cacheControl: LOCAL_IMAGE_CACHE_CONTROL,
+            contentType: "image/png",
+            expiresAt: Number.MAX_SAFE_INTEGER,
+            fallback: false,
+            source: "local",
+        };
+    } catch {
+        return null;
+    }
+}
+
 async function fetchLogo(id: string): Promise<CachedLogo> {
+    const local = await fetchLocalLogo(id);
+    if (local) {
+        return local;
+    }
+
     const sofascore = await fetchImageTemplates(id, SOFASCORE_IMAGE_URLS, "sofascore");
     if (sofascore) {
         return sofascore;
