@@ -935,6 +935,44 @@ def _print_sofascore_api_blocked(scraper) -> bool:
     return True
 
 
+def _sofascore_bootstrap_url(target_date: Optional[str]) -> str:
+    if target_date:
+        return f"https://www.sofascore.com/api/v1/sport/football/scheduled-events/{target_date}"
+    return "https://www.sofascore.com/api/v1/sport/football/categories"
+
+
+def _warm_up_sofascore_session(driver, target_date: Optional[str] = None):
+    import time
+
+    full_page = str(os.environ.get('SOFASCORE_FULL_PAGE_BOOTSTRAP', '')).strip().lower()
+    if full_page in {'1', 'true', 'yes', 'on'}:
+        url = f"https://www.sofascore.com/football/{target_date}" if target_date else "https://www.sofascore.com"
+        wait_seconds = 3.0
+        mode = "full page"
+    else:
+        url = _sofascore_bootstrap_url(target_date)
+        wait_seconds = 0.75
+        mode = "api"
+
+    try:
+        wait_seconds = max(0.0, float(os.environ.get('SOFASCORE_BOOTSTRAP_WAIT', wait_seconds)))
+    except ValueError:
+        pass
+
+    print(f"[SOFASCORE] Session bootstrap ({mode}): {url}")
+    driver.get(url)
+    if wait_seconds:
+        time.sleep(wait_seconds)
+
+
+def _print_sofascore_request_summary(scraper):
+    if scraper is None:
+        return
+    limit = getattr(scraper, 'max_api_requests', None) or 'unlimited'
+    count = getattr(scraper, 'api_request_count', 0)
+    print(f"[SOFASCORE] API requests used: {count}/{limit}")
+
+
 def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, base_dir: Path) -> bool:
     from sofascore import FootballDataManager
     from sofascore.utils import extract_match_data, extract_referee_data, extract_odds
@@ -1226,10 +1264,7 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
     driver, user_agent = create_stealth_driver(headless=False)
     scraper = SofascoreSeleniumScraper(driver)
     
-    start_url = f"https://www.sofascore.com/football/{target_date}" if target_date else "https://www.sofascore.com"
-    driver.get(start_url)
-    import time
-    time.sleep(3)
+    _warm_up_sofascore_session(driver, target_date)
     
     try:
         if target_date:
@@ -1310,6 +1345,7 @@ def scrape_upcoming(target_date: str = None, force: bool = False):
                     
                     time.sleep(2)
     finally:
+        _print_sofascore_request_summary(scraper)
         driver.quit()
     
     print("\n[OK] Fetching complete")
@@ -1349,9 +1385,8 @@ def update_match_results(target_date: str):
     driver, user_agent = create_stealth_driver(headless=False)
     scraper = SofascoreSeleniumScraper(driver)
     
-    driver.get(f"https://www.sofascore.com/football/{target_date}")
+    _warm_up_sofascore_session(driver, target_date)
     import time
-    time.sleep(3)
     
     updated_count = 0
     matched_count = 0
@@ -1530,6 +1565,7 @@ def update_match_results(target_date: str):
             time.sleep(1)
     
     finally:
+        _print_sofascore_request_summary(scraper)
         driver.quit()
     
     print(f"\n[OK] Matched {matched_count}, updated {updated_count} matches")

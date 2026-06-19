@@ -146,8 +146,9 @@ class SofascoreSeleniumScraper:
         self.last_api_error = None
         self.api_blocked = False
         self.api_request_count = 0
-        self.max_api_requests = _int_env('SOFASCORE_MAX_API_REQUESTS', 160, minimum=0)
-        self.api_delay = _float_env('SOFASCORE_API_DELAY', 0.35)
+        self.max_api_requests = _int_env('SOFASCORE_MAX_API_REQUESTS', 90, minimum=0)
+        self.api_delay = _float_env('SOFASCORE_API_DELAY', 0.75)
+        self.api_jitter = _float_env('SOFASCORE_API_JITTER', 0.25)
         self._last_api_request_at = 0.0
 
     def _is_endpoint_optional_for_fallback(self, endpoint):
@@ -195,10 +196,14 @@ class SofascoreSeleniumScraper:
         if self.api_delay <= 0:
             return
 
+        target_delay = self.api_delay
+        if self.api_jitter > 0:
+            target_delay += random.random() * self.api_jitter
+
         now = time.time()
         elapsed = now - self._last_api_request_at
-        if elapsed < self.api_delay:
-            time.sleep(self.api_delay - elapsed)
+        if elapsed < target_delay:
+            time.sleep(target_delay - elapsed)
         self._last_api_request_at = time.time()
 
     def _read_json_from_page(self):
