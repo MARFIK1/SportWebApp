@@ -176,33 +176,39 @@ async function fetchWithTimeout(url) {
 }
 
 async function downloadLogo(id) {
+    const failures = [];
+
     for (const template of LOGO_URLS) {
         const url = template.replace("{id}", id);
 
         try {
             const response = await fetchWithTimeout(url);
             if (!response.ok) {
+                failures.push(`${response.status} ${new URL(url).hostname}`);
                 continue;
             }
 
             const contentType = response.headers.get("content-type") ?? "";
             if (!contentType.toLowerCase().startsWith("image/")) {
+                failures.push(`${contentType || "no content-type"} ${new URL(url).hostname}`);
                 continue;
             }
 
             const image = Buffer.from(await response.arrayBuffer());
             if (image.byteLength === 0) {
+                failures.push(`empty ${new URL(url).hostname}`);
                 continue;
             }
 
             await writeFile(logoPath(id), image);
-            return url;
+            return { ok: true, source: url };
         } catch {
+            failures.push(`request failed ${new URL(url).hostname}`);
             continue;
         }
     }
 
-    return null;
+    return { ok: false, reason: [...new Set(failures)].join(", ") || "unknown" };
 }
 
 await collectFromSources();
@@ -232,13 +238,13 @@ for (const [id, name] of selectedTeams) {
         continue;
     }
 
-    const source = await downloadLogo(id);
-    if (source) {
+    const result = await downloadLogo(id);
+    if (result.ok) {
         downloaded += 1;
-        console.log(`[OK] ${id}${name ? ` ${name}` : ""} <- ${source}`);
+        console.log(`[OK] ${id}${name ? ` ${name}` : ""} <- ${result.source}`);
     } else {
         failed += 1;
-        console.log(`[MISS] ${id}${name ? ` ${name}` : ""}`);
+        console.log(`[MISS] ${id}${name ? ` ${name}` : ""} (${result.reason})`);
     }
 
     await sleep(delayMs);
