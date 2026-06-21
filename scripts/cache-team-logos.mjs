@@ -29,6 +29,9 @@ const optional = process.env.TEAM_LOGO_OPTIONAL === "1" || args.has("--optional"
 const userAgent =
     process.env.SOFASCORE_USER_AGENT?.trim() ||
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+const secChUa =
+    process.env.SOFASCORE_SEC_CH_UA?.trim() ||
+    '"Brave";v="149", "Chromium";v="149", "Not)A;Brand";v="24"';
 
 const teams = new Map();
 
@@ -205,6 +208,12 @@ async function fetchWithTimeout(url) {
         Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         Referer: "https://www.sofascore.com/",
+        "Sec-Ch-Ua": secChUa,
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "image",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Site": "same-site",
         "User-Agent": userAgent,
     };
 
