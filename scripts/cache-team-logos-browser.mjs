@@ -154,6 +154,36 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function waitForProcessExit(child, timeout = 5000) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, timeout);
+        child.once("exit", () => {
+            clearTimeout(timer);
+            resolve();
+        });
+    });
+}
+
+async function removeUserDataDir(dir) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+        try {
+            await rm(dir, { recursive: true, force: true });
+            return;
+        } catch (error) {
+            lastError = error;
+            await sleep(500 * attempt);
+        }
+    }
+
+    const detail = lastError instanceof Error ? `${lastError.name}: ${lastError.message}` : String(lastError);
+    console.warn(`[WARN] Could not remove temporary browser profile: ${dir} (${detail})`);
+}
+
 async function getFreePort() {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
@@ -403,10 +433,13 @@ const browser = createBrowser(port, userDataDir, browserPath);
 let downloaded = 0;
 let skipped = 0;
 let failed = 0;
+let ws = null;
 
 try {
     await waitForDevTools(port);
-    const { session, ws } = await createPageSession(port);
+    const page = await createPageSession(port);
+    const { session } = page;
+    ws = page.ws;
 
     for (const [id, name] of selectedTeams) {
         if (!force && existsSync(logoPath(id))) {
@@ -426,10 +459,13 @@ try {
         await sleep(delayMs);
     }
 
-    ws.close();
 } finally {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+    }
     browser.kill();
-    await rm(userDataDir, { recursive: true, force: true });
+    await waitForProcessExit(browser);
+    await removeUserDataDir(userDataDir);
 }
 
 console.log(`Done. downloaded=${downloaded}, skipped=${skipped}, failed=${failed}, output=${OUTPUT_DIR}`);
