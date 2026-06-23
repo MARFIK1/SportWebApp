@@ -5,6 +5,7 @@ import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
 import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
+import { getConsensusConfidence } from "@/app/util/predictions/confidence";
 import { normalizePredictionMatchResult, predictionCorrectness } from "@/app/util/predictions/matchResult";
 
 type RawPredictionMatch = Omit<PredictionMatch, "predictions"> & {
@@ -57,6 +58,26 @@ export interface DiagnosticLeagueAccuracy {
     accuracy_pct: number;
 }
 
+
+export interface CompetitionReliabilityRow {
+    competitionKey: string;
+    total: number;
+    correct: number;
+    incorrect: number;
+    accuracy_pct: number;
+    avg_confidence_pct: number;
+}
+
+export interface ConsensusConfidenceBucketRow {
+    label: string;
+    min: number;
+    max: number | null;
+    total: number;
+    correct: number;
+    incorrect: number;
+    accuracy_pct: number;
+    avg_confidence_pct: number;
+}
 export interface DiagnosticDrawThresholdRow {
     threshold_pct: number;
     max_gap_to_best_pct: number;
@@ -857,4 +878,100 @@ export function aggregateAccuracy(dates?: string[]): Record<string, ModelAccurac
     });
 
     return result;
+}
+
+function roundPercent(value: number): number {
+    return Math.round(value * 1000) / 10;
+}
+
+function emptyCompetitionStats(): CompetitionReliabilityRow & { confidenceSum: number } {
+    return {
+        competitionKey: "",
+        total: 0,
+        correct: 0,
+        incorrect: 0,
+        accuracy_pct: 0,
+        avg_confidence_pct: 0,
+        confidenceSum: 0,
+    };
+}
+
+export function computeCompetitionReliability(dates?: string[]): CompetitionReliabilityRow[] {
+    const reportDates = dates ?? listAllReportDates();
+    const stats = new Map<string, CompetitionReliabilityRow & { confidenceSum: number }>();
+
+    for (const date of reportDates) {
+        const report = loadPredictionReport(date);
+        if (!report) continue;
+
+        for (const match of report.matches) {
+            const consensus = match.predictions.consensus as ConsensusPrediction | undefined;
+            const resolved = predictionCorrectness(consensus?.prediction, match);
+            if (resolved === null) continue;
+
+            const competitionKey = `${match.comp_type}/${match.league}`.toLowerCase().replace(/\\/g, "/");
+            const current = stats.get(competitionKey) ?? { ...emptyCompetitionStats(), competitionKey };
+            current.total += 1;
+            current.confidenceSum += getConsensusConfidence(consensus);
+            if (resolved) current.correct += 1;
+            else current.incorrect += 1;
+            stats.set(competitionKey, current);
+        }
+    }
+
+    return Array.from(stats.values())
+        .map(({ confidenceSum, ...row }) => ({
+            ...row,
+            accuracy_pct: row.total > 0 ? roundPercent(row.correct / row.total) : 0,
+            avg_confidence_pct: row.total > 0 ? roundPercent(confidenceSum / row.total / 100) : 0,
+        }))
+        .sort((a, b) => b.total - a.total || b.accuracy_pct - a.accuracy_pct || a.competitionKey.localeCompare(b.competitionKey));
+}
+
+const CONSENSUS_CONFIDENCE_BUCKETS: Array<{ label: string; min: number; max: number | null }> = [
+    { label: "<40", min: 0, max: 40 },
+    { label: "40-45", min: 40, max: 45 },
+    { label: "45-50", min: 45, max: 50 },
+    { label: "50-55", min: 50, max: 55 },
+    { label: "55-60", min: 55, max: 60 },
+    { label: "60+", min: 60, max: null },
+];
+
+export function computeConsensusConfidenceBuckets(dates?: string[]): ConsensusConfidenceBucketRow[] {
+    const reportDates = dates ?? listAllReportDates();
+    const stats = CONSENSUS_CONFIDENCE_BUCKETS.map((bucket) => ({
+        ...bucket,
+        total: 0,
+        correct: 0,
+        incorrect: 0,
+        accuracy_pct: 0,
+        avg_confidence_pct: 0,
+        confidenceSum: 0,
+    }));
+
+    for (const date of reportDates) {
+        const report = loadPredictionReport(date);
+        if (!report) continue;
+
+        for (const match of report.matches) {
+            const consensus = match.predictions.consensus as ConsensusPrediction | undefined;
+            const resolved = predictionCorrectness(consensus?.prediction, match);
+            if (resolved === null) continue;
+
+            const confidence = getConsensusConfidence(consensus);
+            const bucket = stats.find((row) => confidence >= row.min && (row.max === null || confidence < row.max));
+            if (!bucket) continue;
+
+            bucket.total += 1;
+            bucket.confidenceSum += confidence;
+            if (resolved) bucket.correct += 1;
+            else bucket.incorrect += 1;
+        }
+    }
+
+    return stats.map(({ confidenceSum, ...row }) => ({
+        ...row,
+        accuracy_pct: row.total > 0 ? roundPercent(row.correct / row.total) : 0,
+        avg_confidence_pct: row.total > 0 ? roundPercent(confidenceSum / row.total / 100) : 0,
+    }));
 }

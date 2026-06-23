@@ -7,6 +7,8 @@ import {
     computeAccuracyOverTime,
     computeResultTypeAccuracy,
     computeConsensusAccuracy,
+    computeCompetitionReliability,
+    computeConsensusConfidenceBuckets,
     getModelAccuracySummary,
 } from "../util/data/predictionService";
 import { getCompetitionDisplayPriority, resolveCompetitionByDataPath } from "../util/league/leagueRegistry";
@@ -17,6 +19,7 @@ import ModelComparisonCharts from "./ModelComparisonCharts";
 import ModelDiagnosticsPanel from "./ModelDiagnosticsPanel";
 import PublicModelInsights from "./PublicModelInsights";
 import DailyHighlights from "./DailyHighlights";
+import ConsensusReliabilityPanel from "./ConsensusReliabilityPanel";
 import { getServerT } from "../util/i18n/getLocale";
 import { normalizeReportDate, todayYmd } from "../util/data/dateUtils";
 
@@ -58,6 +61,8 @@ export default async function PredictionsDashboard({
     const modelDiagnostics = loadModelDiagnostics();
     const accuracyOverTime = computeAccuracyOverTime();
     const resultTypeBreakdown = computeResultTypeAccuracy(dates);
+    const competitionReliability = computeCompetitionReliability();
+    const consensusConfidenceBuckets = computeConsensusConfidenceBuckets();
 
     const leagueDataPaths = Array.from(new Set(report.matches.map((m) => `${m.comp_type}/${m.league}`)));
     const competitions = leagueDataPaths.flatMap((dataPath) => {
@@ -126,6 +131,12 @@ export default async function PredictionsDashboard({
                 matches={report.matches}
                 selectedDate={selectedDate}
                 teamIds={teamIds}
+                t={t}
+            />
+
+            <ConsensusReliabilityPanel
+                competitionRows={competitionReliability}
+                confidenceBuckets={consensusConfidenceBuckets}
                 t={t}
             />
 
