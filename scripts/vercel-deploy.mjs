@@ -10,11 +10,11 @@ import { execSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
-const DATA_BUILD_SOURCE = process.env.SOFASCORE_DATA_BUILD_DIR ||
-    path.join(os.tmpdir(), "sportwebapp-data-build");
-const DATA_SOURCE = fs.existsSync(DATA_BUILD_SOURCE)
-    ? DATA_BUILD_SOURCE
-    : path.join(ROOT, ".data");
+const DEFAULT_DATA_BUILD_SOURCE = path.join(os.tmpdir(), "sportwebapp-data-build");
+const EXPLICIT_DATA_BUILD_SOURCE = process.env.SOFASCORE_DATA_BUILD_DIR
+    ? path.resolve(process.env.SOFASCORE_DATA_BUILD_DIR)
+    : null;
+const PREBUILT_DATA_SOURCE = path.join(ROOT, ".data");
 const VERCEL_PROJECT = "sport-web-app";
 const VERCEL_SCOPE = "sportwebapp-project";
 const VERCEL_PROD_DOMAIN = "sport-web-app-eight.vercel.app";
@@ -24,6 +24,43 @@ const STAGING = path.join(os.tmpdir(), "sportwebapp-vercel-" + crypto.randomByte
 function fail(message) {
     throw new Error(message);
 }
+
+function readSnapshotGeneratedAt(snapshotPath) {
+    const manifestPath = path.join(snapshotPath, ".prebuild-manifest.json");
+    if (!fs.existsSync(manifestPath)) return 0;
+
+    try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+        const generatedAt = Date.parse(manifest.generated_at || "");
+        return Number.isFinite(generatedAt) ? generatedAt : 0;
+    } catch {
+        return 0;
+    }
+}
+
+function snapshotMtime(snapshotPath) {
+    try {
+        return fs.statSync(snapshotPath).mtimeMs;
+    } catch {
+        return 0;
+    }
+}
+
+function resolveDataSource() {
+    if (EXPLICIT_DATA_BUILD_SOURCE) {
+        return EXPLICIT_DATA_BUILD_SOURCE;
+    }
+
+    return [DEFAULT_DATA_BUILD_SOURCE, PREBUILT_DATA_SOURCE]
+        .filter((candidate) => fs.existsSync(candidate))
+        .sort((a, b) => {
+            const generatedAtDelta = readSnapshotGeneratedAt(b) - readSnapshotGeneratedAt(a);
+            if (generatedAtDelta !== 0) return generatedAtDelta;
+            return snapshotMtime(b) - snapshotMtime(a);
+        })[0] ?? PREBUILT_DATA_SOURCE;
+}
+
+const DATA_SOURCE = resolveDataSource();
 
 function shouldSkipSrc(src) {
     const rel = path.relative(ROOT, src);
@@ -139,6 +176,7 @@ function cleanupStaging() {
 }
 
 console.log("staging copy for Vercel (.data included, no node_modules / full SofascoreData)\n");
+console.log(`using data snapshot: ${DATA_SOURCE}\n`);
 
 try {
     if (!fs.existsSync(DATA_SOURCE)) {
