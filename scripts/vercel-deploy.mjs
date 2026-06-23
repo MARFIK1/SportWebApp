@@ -58,6 +58,7 @@ function patchGitignore(stagingRoot) {
     const lines = raw.split(/\r?\n/).filter((line) => {
         const t = line.trim();
         if (t === "/.data/" || t === ".data/" || t === ".data") return false;
+        if (t === "/public/team-logos/" || t === "public/team-logos/" || t === "public/team-logos") return false;
         return true;
     });
     fs.writeFileSync(p, lines.join("\n").replace(/\n*$/, "\n"));
