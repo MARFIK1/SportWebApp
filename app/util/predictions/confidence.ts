@@ -80,3 +80,53 @@ export function getMatchAgreementCount(match: PredictionMatch): number {
 export function isHighConfidenceMatch(match: PredictionMatch): boolean {
     return getPredictionStrength(getMatchConsensus(match)).tier === "strong";
 }
+export type PredictionSignalType = "low_confidence" | "model_split" | "close_call" | "neutral_international";
+
+export interface PredictionSignal {
+    type: PredictionSignalType;
+    severity: "info" | "warning";
+}
+
+function pushSignal(signals: PredictionSignal[], signal: PredictionSignal): void {
+    if (!signals.some((item) => item.type === signal.type)) {
+        signals.push(signal);
+    }
+}
+
+export function getPredictionSignals(
+    match: PredictionMatch,
+    options: { isInternationalMatch?: boolean } = {},
+): PredictionSignal[] {
+    const consensus = getMatchConsensus(match);
+    if (!consensus?.prediction) return [];
+
+    const strength = getPredictionStrength(consensus);
+    const signals: PredictionSignal[] = [];
+
+    if (strength.tier === "low") {
+        pushSignal(signals, { type: "low_confidence", severity: "warning" });
+    }
+
+    const modelPredictions = Object.entries(match.predictions)
+        .filter(([name]) => name !== "consensus")
+        .map(([, prediction]) => prediction.prediction)
+        .filter((prediction): prediction is MatchResult => Boolean(prediction));
+
+    if (modelPredictions.length >= 5) {
+        const consensusVotes = modelPredictions.filter((prediction) => prediction === consensus.prediction).length;
+        if (consensusVotes / modelPredictions.length < 0.6) {
+            pushSignal(signals, { type: "model_split", severity: "warning" });
+        }
+    }
+
+    if (strength.margin > 0 && strength.margin < 4) {
+        pushSignal(signals, { type: "close_call", severity: "info" });
+    }
+
+    const isInternationalMatch = options.isInternationalMatch ?? match.comp_type === "international";
+    if (isInternationalMatch && strength.confidence < 50) {
+        pushSignal(signals, { type: "neutral_international", severity: "info" });
+    }
+
+    return signals;
+}
