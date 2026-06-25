@@ -260,15 +260,18 @@ function modelDiagnosticsPaths(): string[] {
     return paths;
 }
 
-function siblingStableLogsDir(): string {
-    return path.join(path.dirname(process.cwd()), "SportWebApp-daily-stable", "logs");
+function siblingStableLogsDirs(): string[] {
+    return [
+        path.join(path.dirname(process.cwd()), "SportWebApp-daily-stable", "logs"),
+        path.join(path.dirname(path.dirname(process.cwd())), "SportWebApp-daily-stable", "logs"),
+    ].filter((dir, index, dirs) => dirs.indexOf(dir) === index);
 }
 
 function operationalStatusPaths(): string[] {
     const paths = [repoPath(".data", "admin", "operational_status.json")];
     if (allowSourceFallback()) {
         paths.push(repoPath("logs", "operational_status.json"));
-        paths.push(path.join(siblingStableLogsDir(), "operational_status.json"));
+        paths.push(...siblingStableLogsDirs().map((dir) => path.join(dir, "operational_status.json")));
     }
     return paths;
 }
@@ -552,7 +555,7 @@ export const loadOperationalStatus = cache((): OperationalStatusArtifact | null 
     }
 
     if (allowSourceFallback()) {
-        for (const logDir of [repoPath("logs"), siblingStableLogsDir()]) {
+        for (const logDir of [repoPath("logs"), ...siblingStableLogsDirs()]) {
             const artifact = loadOperationalStatusFromLogs(logDir);
             if (artifact) artifacts.push(artifact);
         }

@@ -3,17 +3,34 @@ import fs from "node:fs";
 import path from "node:path";
 
 const repoRoot = process.cwd();
-const stableRoot = process.env.SPORTWEBAPP_STABLE_ROOT ||
-    path.join(path.dirname(repoRoot), "SportWebApp-daily-stable");
+
+function hasStableData(root) {
+    return fs.existsSync(path.join(root, "SofascoreData", "data")) &&
+        fs.existsSync(path.join(root, "SofascoreData", "reports"));
+}
+
+function resolveStableRoot() {
+    const candidates = [
+        process.env.SPORTWEBAPP_STABLE_ROOT,
+        path.join(path.dirname(repoRoot), "SportWebApp-daily-stable"),
+        path.join(path.dirname(path.dirname(repoRoot)), "SportWebApp-daily-stable"),
+    ].filter(Boolean);
+    const uniqueCandidates = [...new Set(candidates)];
+    const found = uniqueCandidates.find(hasStableData);
+
+    if (found) return found;
+
+    console.error("Missing stable data directory. Checked:");
+    for (const candidate of uniqueCandidates) {
+        console.error(`- ${path.join(candidate, "SofascoreData", "data")}`);
+        console.error(`- ${path.join(candidate, "SofascoreData", "reports")}`);
+    }
+    process.exit(1);
+}
+
+const stableRoot = resolveStableRoot();
 const stableData = path.join(stableRoot, "SofascoreData", "data");
 const stableReports = path.join(stableRoot, "SofascoreData", "reports");
-
-for (const dir of [stableData, stableReports]) {
-    if (!fs.existsSync(dir)) {
-        console.error(`Missing stable data directory: ${dir}`);
-        process.exit(1);
-    }
-}
 
 const nextBin = path.join(repoRoot, "node_modules", "next", "dist", "bin", "next");
 const forwardedArgs = process.argv.slice(2);
