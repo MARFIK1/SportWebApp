@@ -1470,19 +1470,20 @@ def update_match_results(target_date: str):
             if not date_matches:
                 continue
             
-            updated_matches = set()
-            
             if comp_type in ('european', 'international'):
                 raw_dir = base_dir / comp_type / comp_name / 'raw'
             else:
                 raw_dir = base_dir / comp_type / country / comp_name / 'raw'
             
+            reported_matches = set()
             all_files = list(raw_dir.glob('*.json'))
             upcoming_sub = raw_dir / 'upcoming'
             if upcoming_sub.exists():
                 all_files.extend(upcoming_sub.glob('*.json'))
 
             for raw_file in all_files:
+                updated_matches = set()
+
                 try:
                     with open(raw_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
@@ -1508,7 +1509,9 @@ def update_match_results(target_date: str):
                         api_away_id = api_m.get('awayTeam', {}).get('id')
 
                         if api_home_id == home_id and api_away_id == away_id:
-                            matched_count += 1
+                            first_report_for_match = match_key not in reported_matches
+                            if first_report_for_match:
+                                matched_count += 1
                             api_status = api_m.get('status', {}).get('type', '')
                             has_score = _apply_api_score_fields(match, api_m)
                             _refresh_score_details_if_needed(scraper, match, api_m, api_status)
@@ -1539,20 +1542,26 @@ def update_match_results(target_date: str):
 
                                 matches[idx] = match
                                 modified = True
-                                updated_count += 1
+                                if first_report_for_match:
+                                    updated_count += 1
+                                    score_text = _score_text_from_match(match) or "?-?"
+                                    penalty_score_text = _penalty_score_text_from_match(match)
+                                    penalty_suffix = f" (pen {penalty_score_text})" if penalty_score_text else ""
+                                    print(f"    OK {match.get('home_team')} {score_text}{penalty_suffix} {match.get('away_team')}")
                                 updated_matches.add(match_key)
-                                score_text = _score_text_from_match(match) or "?-?"
-                                penalty_score_text = _penalty_score_text_from_match(match)
-                                penalty_suffix = f" (pen {penalty_score_text})" if penalty_score_text else ""
-                                print(f"    OK {match.get('home_team')} {score_text}{penalty_suffix} {match.get('away_team')}")
+                                reported_matches.add(match_key)
                             elif api_status == 'postponed':
                                 match['status'] = 'postponed'
                                 matches[idx] = match
                                 modified = True
                                 updated_matches.add(match_key)
-                                print(f"    PP {match.get('home_team')} vs {match.get('away_team')} - POSTPONED")
+                                if first_report_for_match:
+                                    print(f"    PP {match.get('home_team')} vs {match.get('away_team')} - POSTPONED")
+                                reported_matches.add(match_key)
                             elif api_status == 'inprogress':
-                                print(f"    .. {match.get('home_team')} vs {match.get('away_team')} - IN PROGRESS")
+                                if first_report_for_match:
+                                    print(f"    .. {match.get('home_team')} vs {match.get('away_team')} - IN PROGRESS")
+                                reported_matches.add(match_key)
                             break
 
                 if modified:
