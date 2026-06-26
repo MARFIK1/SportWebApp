@@ -28,9 +28,51 @@ function resolveStableRoot() {
     process.exit(1);
 }
 
+function syncStableTeamLogos(stableRoot) {
+    if (process.env.SKIP_STABLE_LOGO_SYNC === "1") return;
+
+    const sourceDir = path.join(stableRoot, "public", "team-logos");
+    const targetDir = path.join(repoRoot, "public", "team-logos");
+
+    if (!fs.existsSync(sourceDir)) return;
+
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    let copied = 0;
+    let skipped = 0;
+    const supportedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".svg"]);
+
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+
+        const extension = path.extname(entry.name).toLowerCase();
+        if (!supportedExtensions.has(extension)) continue;
+
+        const sourcePath = path.join(sourceDir, entry.name);
+        const targetPath = path.join(targetDir, entry.name);
+        const sourceStats = fs.statSync(sourcePath);
+        const targetStats = fs.existsSync(targetPath) ? fs.statSync(targetPath) : null;
+        const shouldCopy = !targetStats ||
+            sourceStats.size !== targetStats.size ||
+            sourceStats.mtimeMs > targetStats.mtimeMs + 1000;
+
+        if (!shouldCopy) {
+            skipped += 1;
+            continue;
+        }
+
+        fs.copyFileSync(sourcePath, targetPath);
+        copied += 1;
+    }
+
+    console.log(`Using stable team logos: ${sourceDir}`);
+    console.log(`Synced stable team logos: copied ${copied}, already current ${skipped}`);
+}
+
 const stableRoot = resolveStableRoot();
 const stableData = path.join(stableRoot, "SofascoreData", "data");
 const stableReports = path.join(stableRoot, "SofascoreData", "reports");
+syncStableTeamLogos(stableRoot);
 
 const nextBin = path.join(repoRoot, "node_modules", "next", "dist", "bin", "next");
 const forwardedArgs = process.argv.slice(2);
