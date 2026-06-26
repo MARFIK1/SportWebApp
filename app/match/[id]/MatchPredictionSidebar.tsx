@@ -2,7 +2,7 @@
 
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { PredictionVariantKey } from "@/types/predictions";
-import { getPredictionStrength, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
+import { getPredictionSignals, getPredictionStrength, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import { useMatchPredictionVariant } from "./MatchPredictionVariantProvider";
 
@@ -53,6 +53,10 @@ function getStrengthTone(tier: PredictionStrengthTier): string {
     if (tier === "lean") return "text-amber-400";
     return "text-gray-400";
 }
+function getSignalTone(signal: PredictionSignal): string {
+    if (signal.severity === "warning") return "border-amber-400/40 bg-amber-400/10 text-amber-600 dark:text-amber-300";
+    return "border-sky-400/30 bg-sky-400/10 text-sky-600 dark:text-sky-300";
+}
 
 export default function MatchPredictionSidebar() {
     const { t } = useLanguage();
@@ -62,12 +66,14 @@ export default function MatchPredictionSidebar() {
         canSwitchVariants,
         setActiveVariant,
         bundle,
+        match,
         matchFinished,
         oddsAvailability,
     } = useMatchPredictionVariant();
     const showMarketPanel = Boolean(bundle.marketPredictions) || bundle.skippedTargets.length > 0;
     const drawWatch = getDrawWatchSignalFromModels(bundle.models);
     const strength = getPredictionStrength(bundle.consensus);
+    const predictionSignals = getPredictionSignals(match);
     const missingBaseOdds = oddsAvailability?.has_base_odds === false
         ? oddsAvailability.missing_base_odds
         : [];
@@ -162,6 +168,18 @@ export default function MatchPredictionSidebar() {
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    )}
+                    {predictionSignals.length > 0 && (
+                        <div className="mb-4 flex flex-wrap gap-2" aria-label={t("prediction_signals")}>
+                            {predictionSignals.map((signal) => (
+                                <span
+                                    key={signal.type}
+                                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${getSignalTone(signal)}`}
+                                >
+                                    {t(`prediction_signal_${signal.type}`)}
+                                </span>
+                            ))}
                         </div>
                     )}
                     <div className="space-y-2 text-sm">

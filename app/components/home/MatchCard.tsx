@@ -7,7 +7,7 @@ import { PredictionMatch, ConsensusPrediction } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
-import { getPredictionStrength, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
+import { getPredictionSignals, getPredictionStrength, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
 import { predictionCorrectness, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
 
 interface MatchCardProps {
@@ -32,6 +32,11 @@ function getPredictionBarColor(prediction: string): string {
     if (prediction === "HOME") return "bg-emerald-400";
     if (prediction === "AWAY") return "bg-rose-400";
     return "bg-amber-400";
+}
+
+function getSignalTone(signal: PredictionSignal): string {
+    if (signal.severity === "warning") return "border-amber-400/40 bg-amber-400/10 text-amber-600 dark:text-amber-300";
+    return "border-sky-400/30 bg-sky-400/10 text-sky-600 dark:text-sky-300";
 }
 
 function getPredictionLabel(match: PredictionMatch, t: (key: string) => string): { text: string; color: string; barColor: string; probability: number; agreement: string | null; strength: PredictionStrengthTier } | null {
@@ -97,6 +102,7 @@ export default function MatchCard({
     const isFinished = resultState.isFinished;
     const prediction = getPredictionLabel(match, t);
     const drawWatch = getDrawWatchSignalFromPredictions(match.predictions);
+    const predictionSignals = getPredictionSignals(match);
     const score = resultState.regularScore;
     const penaltyScore = resultState.penaltyScore;
     const consensus = match.predictions.consensus as ConsensusPrediction;
@@ -258,6 +264,18 @@ export default function MatchCard({
                             <span className="shrink-0 text-xs font-black text-amber-600 dark:text-amber-300">
                                 {drawWatch.drawProbability.toFixed(0)}%
                             </span>
+                        </div>
+                    )}
+                    {predictionSignals.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5" aria-label={t("prediction_signals")}>
+                            {predictionSignals.map((signal) => (
+                                <span
+                                    key={signal.type}
+                                    className={`rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] ${getSignalTone(signal)}`}
+                                >
+                                    {t(`prediction_signal_${signal.type}`)}
+                                </span>
+                            ))}
                         </div>
                     )}
                 </div>

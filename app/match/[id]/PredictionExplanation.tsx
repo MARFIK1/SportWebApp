@@ -1,6 +1,6 @@
 "use client";
 
-import { getPredictionStrength } from "@/app/util/predictions/confidence";
+import { getPredictionSignals, getPredictionStrength, type PredictionSignal } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import type { AnalysisMatch, MatchResult } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
@@ -43,10 +43,14 @@ function hasMeaningfulPair(home: number | null | undefined, away: number | null 
         (Math.abs(home) > 0 || Math.abs(away) > 0)
     );
 }
+function getSignalTone(signal: PredictionSignal): string {
+    if (signal.severity === "warning") return "border-amber-400/40 bg-amber-400/10 text-amber-600 dark:text-amber-300";
+    return "border-sky-400/30 bg-sky-400/10 text-sky-600 dark:text-sky-300";
+}
 
 export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: PredictionExplanationProps) {
     const { t } = useLanguage();
-    const { bundle } = useMatchPredictionVariant();
+    const { bundle, match } = useMatchPredictionVariant();
     const consensus = bundle.consensus;
     const drawWatch = getDrawWatchSignalFromModels(bundle.models);
 
@@ -54,6 +58,7 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
 
     const confidence = maxProbability(consensus.avg_probabilities);
     const strength = getPredictionStrength(consensus);
+    const predictionSignals = getPredictionSignals(match);
     const predictionLabel = pickLabel(consensus.prediction, homeTeam, awayTeam, t("draw"));
     const homeXg = analysis?.goals?.expected_goals_home;
     const awayXg = analysis?.goals?.expected_goals_away;
@@ -99,6 +104,18 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
                             {t(`prediction_strength_${strength.tier}`)}
                         </span>
                     </div>
+                    {predictionSignals.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2" aria-label={t("prediction_signals")}>
+                            {predictionSignals.map((signal) => (
+                                <span
+                                    key={signal.type}
+                                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${getSignalTone(signal)}`}
+                                >
+                                    {t(`prediction_signal_${signal.type}`)}
+                                </span>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
