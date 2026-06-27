@@ -1013,6 +1013,10 @@ def _fetch_tournament_scheduled_events_by_comp(
     scope_keys = set(only_comp_keys or [])
     if not scope_keys:
         scope_keys = set(fallback_comp_keys or [])
+    if scope_keys:
+        resolved_scope_keys = _resolve_comp_key_refs(scope_keys, competitions)
+        if resolved_scope_keys:
+            scope_keys = resolved_scope_keys
 
     if not scope_keys and not allow_broad_scan:
         print("Tournament scheduled-events fallback skipped: no scoped competition candidates.")
@@ -1277,6 +1281,15 @@ def _update_results_from_scheduled_events(
             ]
 
         if not scheduled_events:
+            if not _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN"):
+                print("Tournament scheduled-events returned 0 update candidates; skipping season lookup to avoid API block.")
+                return {
+                    'source_ok': False,
+                    'api_blocked': False,
+                    'matched_count': 0,
+                    'updated_count': 0,
+                    'skip_season_lookup': True,
+                }
             print("Tournament scheduled-events returned 0 update candidates; falling back to season lookup.")
             return None
 
@@ -1546,6 +1559,8 @@ def update_match_results(target_date: str):
                 'updated_count': updated_count,
             }
         if scheduled_update is not None:
+            if scheduled_update.get('skip_season_lookup'):
+                return scheduled_update
             matched_count += scheduled_update.get('matched_count', 0)
             updated_count += scheduled_update.get('updated_count', 0)
             remaining = _collect_competitions_requiring_update(base_dir, target_date)
