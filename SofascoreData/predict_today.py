@@ -880,19 +880,151 @@ def _iter_competition_configs(competitions: dict):
                     yield comp_type, country, comp_name, comp_data, tournament_id
 
 
+def _format_comp_key(comp_key):
+    return "/".join(str(part) for part in comp_key)
+
+
+def _competition_key_index(competitions: dict):
+    known_keys = set()
+    keys_by_name = {}
+    for comp_type, country, comp_name, _comp_data, _tournament_id in _iter_competition_configs(competitions):
+        comp_key = (comp_type, country, comp_name)
+        known_keys.add(comp_key)
+        keys_by_name.setdefault(comp_name, set()).add(comp_key)
+    return known_keys, keys_by_name
+
+
+def _resolve_comp_key_refs(comp_refs, competitions: dict) -> set:
+    known_keys, keys_by_name = _competition_key_index(competitions)
+    selected = set()
+    for comp_type, country, comp_name in comp_refs:
+        comp_key = (comp_type, country, comp_name)
+        if comp_key in known_keys:
+            selected.add(comp_key)
+            continue
+
+        matches = {key for key in keys_by_name.get(comp_name, set()) if key[0] == comp_type}
+        if len(matches) == 1:
+            selected.update(matches)
+    return selected
+
+
+def _daily_fallback_comp_keys_from_env(competitions: dict) -> set:
+    raw = os.environ.get("SOFASCORE_DAILY_COMP_KEYS", "").strip()
+    if not raw:
+        return set()
+
+    known_keys, keys_by_name = _competition_key_index(competitions)
+    selected = set()
+    for entry in re.split(r"[,;]+", raw):
+        entry = entry.strip()
+        if not entry:
+            continue
+
+        parts = [part.strip() for part in re.split(r"[:/]+", entry) if part.strip()]
+        if len(parts) == 3:
+            comp_key = tuple(parts)
+            if comp_key in known_keys:
+                selected.add(comp_key)
+            else:
+                print(f"[WARN] SOFASCORE_DAILY_COMP_KEYS entry not found: {entry}")
+            continue
+
+        if len(parts) == 2:
+            matches = {key for key in keys_by_name.get(parts[1], set()) if key[0] == parts[0]}
+            if len(matches) == 1:
+                selected.update(matches)
+            elif not matches:
+                print(f"[WARN] SOFASCORE_DAILY_COMP_KEYS entry not found: {entry}")
+            else:
+                options = ", ".join(_format_comp_key(key) for key in sorted(matches))
+                print(f"[WARN] SOFASCORE_DAILY_COMP_KEYS entry is ambiguous: {entry} ({options})")
+            continue
+
+        if len(parts) == 1:
+            matches = keys_by_name.get(parts[0], set())
+            if len(matches) == 1:
+                selected.update(matches)
+            elif not matches:
+                print(f"[WARN] SOFASCORE_DAILY_COMP_KEYS entry not found: {entry}")
+            else:
+                options = ", ".join(_format_comp_key(key) for key in sorted(matches))
+                print(f"[WARN] SOFASCORE_DAILY_COMP_KEYS entry is ambiguous: {entry} ({options})")
+            continue
+
+        print(f"[WARN] Invalid SOFASCORE_DAILY_COMP_KEYS entry: {entry}")
+
+    return selected
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _match_belongs_to_date(match: dict, target_date: str) -> bool:
+    for key in ("date", "start_time", "datetime"):
+        value = match.get(key)
+        if isinstance(value, str) and value.startswith(target_date):
+            return True
+    return False
+
+
+def _local_scheduled_comp_keys_for_date(base_dir: Path, target_date: str, competitions: dict) -> set:
+    comp_refs = set()
+    for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
+        if not _include_competition_path_in_daily(comp_type, country, comp_name):
+            continue
+
+        raw_dir = comp_dir / "raw"
+        if not raw_dir.exists():
+            continue
+
+        raw_files = []
+        upcoming_dir = raw_dir / "upcoming"
+        if upcoming_dir.exists():
+            raw_files.extend(sorted(upcoming_dir.glob("*.json"), key=lambda path: _upcoming_file_sort_key(path, target_date), reverse=True))
+        raw_files.extend(sorted(raw_dir.glob("*.json")))
+
+        for raw_file in raw_files:
+            try:
+                with open(raw_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            matches = data.get("matches", []) if isinstance(data, dict) else []
+            if any(isinstance(match, dict) and _match_belongs_to_date(match, target_date) for match in matches):
+                comp_refs.add((comp_type, country, comp_name))
+                break
+
+    return _resolve_comp_key_refs(comp_refs, competitions)
+
 def _fetch_tournament_scheduled_events_by_comp(
     scraper,
     target_date: str,
     competitions: dict,
     only_comp_keys=None,
+    fallback_comp_keys=None,
+    allow_broad_scan: bool = True,
 ):
     events_by_comp = {}
     total_events = 0
 
-    only_comp_keys = set(only_comp_keys or [])
+    scope_keys = set(only_comp_keys or [])
+    if not scope_keys:
+        scope_keys = set(fallback_comp_keys or [])
+
+    if not scope_keys and not allow_broad_scan:
+        print("Tournament scheduled-events fallback skipped: no scoped competition candidates.")
+        return events_by_comp, total_events
+
+    if scope_keys:
+        keys_text = ", ".join(_format_comp_key(key) for key in sorted(scope_keys))
+        print(f"Tournament scheduled-events fallback restricted to: {keys_text}")
+
     for comp_type, country, comp_name, _comp_data, tournament_id in _iter_competition_configs(competitions):
         comp_key = (comp_type, country, comp_name)
-        if only_comp_keys and comp_key not in only_comp_keys:
+        if scope_keys and comp_key not in scope_keys:
             continue
 
         events = scraper.get_tournament_scheduled_events(tournament_id, target_date)
@@ -907,7 +1039,6 @@ def _fetch_tournament_scheduled_events_by_comp(
         total_events += len(events)
 
     return events_by_comp, total_events
-
 
 def _load_finished_matches_for_features(raw_dir: Path) -> list:
     all_seasons_path = raw_dir / 'all_seasons.json'
@@ -994,16 +1125,30 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
         else:
             print("Scheduled events endpoint returned 0 events; trying tournament scheduled-events.")
 
+        fallback_comp_keys = _daily_fallback_comp_keys_from_env(competitions)
+        if fallback_comp_keys:
+            print("Using SOFASCORE_DAILY_COMP_KEYS for tournament scheduled-events fallback.")
+        else:
+            fallback_comp_keys = _local_scheduled_comp_keys_for_date(base_dir, target_date, competitions)
+            if fallback_comp_keys:
+                print("Using local upcoming data to scope tournament scheduled-events fallback.")
+
+        allow_broad_scan = _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN")
         events_by_comp, total_events = _fetch_tournament_scheduled_events_by_comp(
             scraper,
             target_date,
             competitions,
+            fallback_comp_keys=fallback_comp_keys,
+            allow_broad_scan=allow_broad_scan,
         )
         if events_by_comp is None:
             return False
         if not events_by_comp:
-            print("Tournament scheduled-events returned 0 tracked events; falling back to season lookup.")
-            return False
+            if allow_broad_scan:
+                print("Tournament scheduled-events returned 0 tracked events; falling back to season lookup.")
+                return False
+            print("No scoped tournament scheduled-events found; skipping broad season lookup to avoid API block.")
+            return True
 
     tracked_count = sum(len(v) for v in events_by_comp.values())
     print(f"Scheduled events for {target_date}: {total_events} total, {tracked_count} tracked")
