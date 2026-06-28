@@ -1324,6 +1324,7 @@ def _update_results_from_scheduled_events(
 
     updated_count = 0
     matched_count = 0
+    team_history_updates = []
     for _comp_type, _country, _comp_name, comp_dir in iter_competition_dirs(base_dir):
         raw_dir = comp_dir / 'raw'
         if not raw_dir.exists():
@@ -1361,6 +1362,9 @@ def _update_results_from_scheduled_events(
                     match['status'] = 'finished'
                     if api_match.get('id') and not match.get('event_id'):
                         match['event_id'] = api_match.get('id')
+                    if _comp_type == 'international':
+                        match.setdefault('source_competition', _comp_name.replace('_', ' ').title())
+                        team_history_updates.append(match.copy())
                     modified = True
                     updated_count += 1
                 elif api_status == 'postponed':
@@ -1380,7 +1384,13 @@ def _update_results_from_scheduled_events(
                 with open(raw_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
 
+    team_history_updates.extend(_collect_local_finished_international_matches(base_dir, target_date))
+    synced_history = _sync_finished_matches_to_team_history(team_history_updates)
+    if synced_history:
+        print(f"[OK] Synced {synced_history} team history cache entries from finished international matches")
+
     print(f"[OK] Matched {matched_count}, updated {updated_count} matches from scheduled events")
+
     return {
         'source_ok': matched_count > 0,
         'matched_count': matched_count,
@@ -1550,11 +1560,15 @@ def update_match_results(target_date: str):
     
     if not comps_to_check:
         print("No matches requiring update found.")
+        synced_history = _sync_local_finished_international_team_history(base_dir, target_date)
+        if synced_history:
+            print(f"[OK] Synced {synced_history} team history cache entries from local finished international matches")
         return {
             'source_ok': True,
             'api_blocked': False,
             'matched_count': 0,
             'updated_count': 0,
+            'synced_history': synced_history,
         }
     
     print(f"Competitions to check: {len(comps_to_check)}")
@@ -1758,12 +1772,17 @@ def update_match_results(target_date: str):
         _print_sofascore_request_summary(scraper)
         driver.quit()
     
+    synced_history = _sync_local_finished_international_team_history(base_dir, target_date)
+    if synced_history:
+        print(f"[OK] Synced {synced_history} team history cache entries from local finished international matches")
+
     print(f"\n[OK] Matched {matched_count}, updated {updated_count} matches")
     return {
         'source_ok': matched_count > 0,
         'api_blocked': False,
         'matched_count': matched_count,
         'updated_count': updated_count,
+        'synced_history': synced_history,
     }
 
 
@@ -1894,6 +1913,110 @@ def _save_cached_team_history(team_id, team_name: str, matches: List[Dict]):
             },
             'matches': matches,
         }, f, ensure_ascii=False, indent=2)
+
+
+def _team_history_match_from_raw(match: Dict) -> Optional[Dict]:
+    if match.get('home_score') is None or match.get('away_score') is None:
+        return None
+
+    keys = [
+        'event_id', 'status', 'date', 'time', 'round',
+        'home_team_id', 'home_team', 'away_team_id', 'away_team',
+        'home_score', 'away_score', 'home_score_ht', 'away_score_ht',
+        'home_score_et', 'away_score_et', 'home_score_pen', 'away_score_pen',
+        'home_xg', 'away_xg', 'home_shots', 'away_shots',
+        'home_shots_on_target', 'away_shots_on_target',
+        'home_big_chances', 'away_big_chances',
+        'home_possession', 'away_possession',
+        'home_corners', 'away_corners',
+        'home_yellow_cards', 'away_yellow_cards',
+        'home_red_cards', 'away_red_cards',
+        'source_competition',
+    ]
+    history_match = {key: match.get(key) for key in keys if match.get(key) not in (None, '')}
+    history_match['status'] = 'finished'
+    return history_match
+
+
+def _sync_finished_match_to_team_history(match: Dict) -> int:
+    history_match = _team_history_match_from_raw(match)
+    if not history_match:
+        return 0
+
+    changed = 0
+    for side in ('home', 'away'):
+        team_id = match.get(f'{side}_team_id')
+        team_name = match.get(f'{side}_team')
+        if team_id in (None, ''):
+            continue
+
+        cached = _load_cached_team_history(team_id)
+        merged = _dedupe_historical_matches([history_match, *cached])
+        if merged == cached:
+            continue
+
+        _save_cached_team_history(team_id, team_name, merged)
+        changed += 1
+
+    return changed
+
+
+def _sync_finished_matches_to_team_history(matches: List[Dict]) -> int:
+    synced = 0
+    seen = set()
+    for match in matches or []:
+        if match.get('status') != 'finished':
+            continue
+        key = _historical_match_key(match)
+        if key in seen:
+            continue
+        seen.add(key)
+        synced += _sync_finished_match_to_team_history(match)
+    return synced
+
+
+def _collect_local_finished_international_matches(base_dir: Path, target_date: Optional[str] = None) -> List[Dict]:
+    international_dir = base_dir / 'international'
+    if not international_dir.exists():
+        return []
+
+    finished_matches = []
+    for raw_dir in international_dir.rglob('raw'):
+        if not raw_dir.is_dir():
+            continue
+
+        raw_files = list(raw_dir.glob('*.json'))
+        upcoming_dir = raw_dir / 'upcoming'
+        if upcoming_dir.exists():
+            raw_files.extend(upcoming_dir.glob('*.json'))
+
+        competition_name = raw_dir.parent.name.replace('_', ' ').title()
+        for raw_file in raw_files:
+            try:
+                with open(raw_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            for match in data.get('matches', []):
+                if target_date and not match.get('date', '').startswith(target_date):
+                    continue
+                if match.get('status') != 'finished':
+                    continue
+                if match.get('home_score') is None or match.get('away_score') is None:
+                    continue
+
+                history_match = match.copy()
+                history_match.setdefault('source_competition', competition_name)
+                finished_matches.append(history_match)
+
+    finished_matches.sort(key=lambda m: (m.get('date') or '', m.get('time') or ''))
+    return finished_matches
+
+
+def _sync_local_finished_international_team_history(base_dir: Path, target_date: Optional[str] = None) -> int:
+    matches = _collect_local_finished_international_matches(base_dir, target_date)
+    return _sync_finished_matches_to_team_history(matches)
 
 
 def _normalize_team_history_events(events: List[Dict]) -> List[Dict]:
@@ -3865,6 +3988,10 @@ def main():
         print()
     
     if args.repredict:
+        synced_history = _sync_local_finished_international_team_history(DATA_DIR)
+        if synced_history:
+            print(f"[OK] Synced {synced_history} team history cache entries from local finished international matches")
+
         existing_report = load_existing_report(target_date)
         if not existing_report:
             print(f"No existing report for {target_date}.")
@@ -3996,6 +4123,10 @@ def main():
         refresh_existing_report_odds(target_date, refresh_existing=args.force)
         return
     
+    synced_history = _sync_local_finished_international_team_history(DATA_DIR)
+    if synced_history:
+        print(f"[OK] Synced {synced_history} team history cache entries from local finished international matches")
+
     print("\nSearching for matches in saved data...")
     matches = find_matches_for_date(target_date)
     print(f"Found {len(matches)} matches")
