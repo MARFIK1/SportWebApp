@@ -16,9 +16,11 @@ function allowSourceFallback(): boolean {
 
 function resolveDataDir(): string {
     const prebuilt = repoPath(".data");
+    const sourceData = repoPath("SofascoreData", "data");
+    if (allowSourceFallback() && fs.existsSync(sourceData)) return sourceData;
     if (fs.existsSync(prebuilt)) return prebuilt;
     if (!allowSourceFallback()) return prebuilt;
-    return repoPath("SofascoreData", "data");
+    return sourceData;
 }
 
 const DATA_DIR = process.env.SOFASCORE_DATA_DIR || resolveDataDir();
