@@ -1257,14 +1257,35 @@ def _update_results_from_scheduled_events(
     base_dir: Path,
     competitions: Optional[dict] = None,
 ) -> Optional[Dict]:
-    scheduled_events = scraper.get_scheduled_events(target_date)
-    if not scheduled_events:
+    comps_to_check = _collect_competitions_requiring_update(base_dir, target_date)
+    scheduled_events = []
+    used_scoped_tournament_first = bool(
+        competitions and comps_to_check and not _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN")
+    )
+
+    if used_scoped_tournament_first:
+        print("Skipping global scheduled-events endpoint; using scoped tournament scheduled-events.")
+        events_by_comp, _total_events = _fetch_tournament_scheduled_events_by_comp(
+            scraper,
+            target_date,
+            competitions,
+            only_comp_keys=comps_to_check,
+        )
+        if events_by_comp is None:
+            return None
+        scheduled_events = [
+            event
+            for events in events_by_comp.values()
+            for event in events
+        ]
+    else:
+        scheduled_events = scraper.get_scheduled_events(target_date)
+    if not scheduled_events and not used_scoped_tournament_first:
         if scheduled_events is None:
             print("Scheduled events endpoint unavailable; trying tournament scheduled-events.")
         else:
             print("Scheduled events endpoint returned 0 events; trying tournament scheduled-events.")
 
-        comps_to_check = _collect_competitions_requiring_update(base_dir, target_date)
         if competitions and comps_to_check:
             events_by_comp, _total_events = _fetch_tournament_scheduled_events_by_comp(
                 scraper,
@@ -1280,18 +1301,18 @@ def _update_results_from_scheduled_events(
                 for event in events
             ]
 
-        if not scheduled_events:
-            if not _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN"):
-                print("Tournament scheduled-events returned 0 update candidates; skipping season lookup to avoid API block.")
-                return {
-                    'source_ok': False,
-                    'api_blocked': False,
-                    'matched_count': 0,
-                    'updated_count': 0,
-                    'skip_season_lookup': True,
-                }
-            print("Tournament scheduled-events returned 0 update candidates; falling back to season lookup.")
-            return None
+    if not scheduled_events:
+        if not _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN"):
+            print("Tournament scheduled-events returned 0 update candidates; skipping season lookup to avoid API block.")
+            return {
+                'source_ok': False,
+                'api_blocked': False,
+                'matched_count': 0,
+                'updated_count': 0,
+                'skip_season_lookup': True,
+            }
+        print("Tournament scheduled-events returned 0 update candidates; falling back to season lookup.")
+        return None
 
     events_by_id = {event.get('id'): event for event in scheduled_events if event.get('id')}
     events_by_teams = {}
