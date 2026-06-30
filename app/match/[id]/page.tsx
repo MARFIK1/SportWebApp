@@ -1,10 +1,10 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions, resolveCompetitionByDataPath, type Competition } from "@/app/util/league/leagueRegistry";
-import { buildMatchLookupMaps, computeStandings, findMatchInCompetitions, findMatchInTeamHistory, loadAllSeasons, loadTeamHistory, resolveLeagueTableContext } from "@/app/util/data/dataService";
+import { buildMatchLookupMaps, computeStandings, findMatchInCompetitions, findMatchInTeamHistory, listSeasonFiles, loadAllSeasons, loadSeasonMatches, loadTeamHistory, loadUpcomingMatches, resolveLeagueTableContext } from "@/app/util/data/dataService";
 import { getMatchPrediction, loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
-import type { PredictionReport } from "@/types/predictions";
+import type { PredictionMatch, PredictionReport } from "@/types/predictions";
 import CompactLeagueTable from "./CompactLeagueTable";
 import MatchPredictions from "./MatchPredictions";
 import TeamLogo from "@/app/components/common/TeamLogo";
@@ -18,6 +18,7 @@ import PostMatchInsights from "./PostMatchInsights";
 import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
+import TournamentContext from "./TournamentContext";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
 import { parseScorePair, resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 
@@ -171,6 +172,57 @@ function resolveSeasonMatches(match: SofascoreMatch, matches: SofascoreMatch[]):
     return bestSeason.length > 0 ? bestSeason : matches;
 }
 
+function resolveWorldCupCompetition(competition: Competition, competitions: Competition[]): Competition | null {
+    if (competition.slug === "fifa-world-cup") return competition;
+    const competitionName = competition.name.toLowerCase();
+    if (!competitionName.includes("world cup")) return null;
+    return competitions.find((comp) => comp.slug === "fifa-world-cup") ?? null;
+}
+
+function addContextMatches(matchesByEventId: Map<number, SofascoreMatch>, matches: SofascoreMatch[]) {
+    for (const match of matches) {
+        matchesByEventId.set(match.event_id, match);
+    }
+}
+
+function upcomingToContextMatch(match: ReturnType<typeof loadUpcomingMatches>[number]): SofascoreMatch {
+    return {
+        ...match,
+        season: match.date.slice(0, 4),
+    } as unknown as SofascoreMatch;
+}
+
+function loadContextMatches(competition: Competition, seasonHint?: string | null): SofascoreMatch[] {
+    const matchesByEventId = new Map<number, SofascoreMatch>();
+
+    if (competition.slug === "fifa-world-cup") {
+        const seasonYear = seasonHint && /^\d{4}$/.test(seasonHint) ? seasonHint : null;
+        const seasonFiles = listSeasonFiles(competition);
+        const exactSeasonFiles = seasonYear
+            ? seasonFiles.filter((file) => file === `${seasonYear}.json` || file === `world_cup_${seasonYear}.json`)
+            : [];
+        const filesToLoad = exactSeasonFiles.length > 0 ? exactSeasonFiles : seasonFiles;
+
+        for (const seasonFile of filesToLoad) {
+            addContextMatches(matchesByEventId, loadSeasonMatches(competition, seasonFile));
+        }
+
+        for (const upcoming of loadUpcomingMatches(competition)) {
+            if (seasonYear && !String(upcoming.date ?? "").startsWith(seasonYear)) continue;
+            matchesByEventId.set(upcoming.event_id, upcomingToContextMatch(upcoming));
+        }
+
+        return Array.from(matchesByEventId.values());
+    }
+
+    for (const match of loadAllSeasons(competition)) {
+        matchesByEventId.set(match.event_id, match);
+    }
+
+    return Array.from(matchesByEventId.values());
+}
+
+
 function hasSameTeamPair(match: SofascoreMatch, homeTeamId: number, awayTeamId: number): boolean {
     return (
         (match.home_team_id === homeTeamId && match.away_team_id === awayTeamId) ||
@@ -206,13 +258,132 @@ function resolvePlayoffContextMatches(
     );
 }
 
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+
+const WORLD_CUP_SLOT_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+)$/;
+
+function isWorldCupSlotTeam(teamName: string): boolean {
+    return WORLD_CUP_SLOT_TEAM_RE.test(teamName.trim());
+}
+
+function validTeamId(teamId: number): boolean {
+    return Number.isFinite(teamId) && teamId > 0;
+}
+
+function addDaysYmd(date: string, offset: number): string | null {
+    const base = new Date(`${date}T00:00:00Z`);
+    if (Number.isNaN(base.getTime())) return null;
+    base.setUTCDate(base.getUTCDate() + offset);
+    return base.toISOString().slice(0, 10);
+}
+
+function collectNearbyPredictionMatches(date: string, radiusDays = 21): PredictionMatch[] {
+    const matchesByEventId = new Map<number, PredictionMatch>();
+
+    for (let offset = -radiusDays; offset <= radiusDays; offset += 1) {
+        const reportDate = addDaysYmd(date, offset);
+        if (!reportDate) continue;
+
+        const report = loadPredictionReport(reportDate);
+        for (const match of report?.matches ?? []) {
+            if (typeof match.event_id === "number") {
+                matchesByEventId.set(match.event_id, match);
+            }
+        }
+    }
+
+    return Array.from(matchesByEventId.values());
+}
+
+function buildDisplayTeamIds(
+    competition: Competition,
+    competitionMatches: SofascoreMatch[],
+    predictionMatches: PredictionMatch[],
+): Record<string, number> {
+    const ids = { ...buildMatchLookupMaps([competition]).teamIds };
+
+    for (const match of competitionMatches) {
+        if (validTeamId(match.home_team_id) && !isWorldCupSlotTeam(match.home_team)) {
+            ids[match.home_team] = ids[match.home_team] ?? match.home_team_id;
+        }
+        if (validTeamId(match.away_team_id) && !isWorldCupSlotTeam(match.away_team)) {
+            ids[match.away_team] = ids[match.away_team] ?? match.away_team_id;
+        }
+    }
+
+    for (const pred of predictionMatches) {
+        const homeId = ids[pred.home_team];
+        const awayId = ids[pred.away_team];
+        if (validTeamId(homeId)) ids[pred.home_team] = homeId;
+        if (validTeamId(awayId)) ids[pred.away_team] = awayId;
+    }
+
+    return ids;
+}
+
+function resolveReportBackedMatchTeams(
+    match: SofascoreMatch,
+    predMatch: PredictionMatch | null | undefined,
+    teamIds: Record<string, number>,
+): SofascoreMatch {
+    if (!predMatch) return match;
+
+    const replaceHome = isWorldCupSlotTeam(match.home_team) && !isWorldCupSlotTeam(predMatch.home_team);
+    const replaceAway = isWorldCupSlotTeam(match.away_team) && !isWorldCupSlotTeam(predMatch.away_team);
+    if (!replaceHome && !replaceAway) return match;
+
+    const homeTeam = replaceHome ? predMatch.home_team : match.home_team;
+    const awayTeam = replaceAway ? predMatch.away_team : match.away_team;
+
+    return {
+        ...match,
+        home_team: homeTeam,
+        away_team: awayTeam,
+        home_team_id: replaceHome ? (teamIds[homeTeam] ?? match.home_team_id) : match.home_team_id,
+        away_team_id: replaceAway ? (teamIds[awayTeam] ?? match.away_team_id) : match.away_team_id,
+    };
+}
+
+function resolveReportBackedSeasonMatches(
+    matches: SofascoreMatch[],
+    predictionMatches: PredictionMatch[],
+    teamIds: Record<string, number>,
+): SofascoreMatch[] {
+    if (predictionMatches.length === 0) return matches;
+
+    const predictionsByEventId = new Map<number, PredictionMatch>();
+    for (const pred of predictionMatches) {
+        if (typeof pred.event_id === "number") predictionsByEventId.set(pred.event_id, pred);
+    }
+
+    return matches.map((match) => resolveReportBackedMatchTeams(match, predictionsByEventId.get(match.event_id), teamIds));
+}
+
+export async function generateMetadata({ params, searchParams }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
+    const resolvedSearchParams = await searchParams;
     const eventId = parseInt(resolvedParams.id, 10);
     if (!Number.isFinite(eventId)) return { title: "Match" };
-    const result = findMatchInCompetitions(eventId, getAllCompetitions()) ?? findMatchInTeamHistory(eventId);
+    const competitions = getAllCompetitions();
+    const result = findMatchInCompetitions(eventId, competitions) ?? findMatchInTeamHistory(eventId);
     if (!result) return { title: "Match" };
-    const { match } = result;
+
+    const requestedDate = normalizeReportDate(resolvedSearchParams.date);
+    const reportDate = requestedDate || result.match.date.slice(0, 10);
+    const predReport = reportDate ? loadPredictionReport(reportDate) : null;
+    const worldCupCompetition = resolveWorldCupCompetition(result.competition, competitions);
+    const contextCompetition = worldCupCompetition ?? result.competition;
+    const competitionMatches = loadContextMatches(contextCompetition, reportDate?.slice(0, 4) ?? result.match.date.slice(0, 4));
+    const selectedPredictionMatches = predReport?.matches ?? [];
+    const nearbyPredictionMatches = worldCupCompetition && reportDate
+        ? collectNearbyPredictionMatches(reportDate)
+        : selectedPredictionMatches;
+    const predictionMatches = nearbyPredictionMatches.length > 0 ? nearbyPredictionMatches : selectedPredictionMatches;
+    const predMatch = (predReport ? findPredictionMatch(predReport, eventId, result.match.home_team, result.match.away_team) : null) ??
+        predictionMatches.find((item) => String(item.event_id) === String(eventId)) ??
+        null;
+    const teamIds = buildDisplayTeamIds(contextCompetition, competitionMatches, predictionMatches);
+    const match = resolveReportBackedMatchTeams(result.match, predMatch, teamIds);
+
     const matchResult = resolveSofascoreMatchResult(match, null);
     const score = matchResult.regularScore ? ` ${matchResult.regularScore.home}-${matchResult.regularScore.away}` : "";
     return {
@@ -243,10 +414,24 @@ export default async function Match({ params, searchParams }: PageProps) {
         );
     }
 
-    const { match, competition } = result;
-    const date = initialDate || match.date.slice(0, 10);
-    const competitionMatches = loadAllSeasons(competition);
-    const sameSeasonMatches = resolveSeasonMatches(match, competitionMatches);
+    const { match: sourceMatch, competition } = result;
+    const date = initialDate || sourceMatch.date.slice(0, 10);
+    const worldCupCompetition = resolveWorldCupCompetition(competition, competitions);
+    const contextCompetition = worldCupCompetition ?? competition;
+    const competitionMatches = loadContextMatches(contextCompetition, date.slice(0, 4));
+    const selectedPredictionMatches = predReport?.matches ?? [];
+    const isWorldCupMatch = Boolean(worldCupCompetition);
+    const nearbyPredictionMatches = isWorldCupMatch ? collectNearbyPredictionMatches(date) : selectedPredictionMatches;
+    const predictionMatches = nearbyPredictionMatches.length > 0 ? nearbyPredictionMatches : selectedPredictionMatches;
+    const displayTeamIds = buildDisplayTeamIds(contextCompetition, competitionMatches, predictionMatches);
+    const predMatch = (predReport ? findPredictionMatch(predReport, eventId, sourceMatch.home_team, sourceMatch.away_team) : null) ??
+        predictionMatches.find((item) => String(item.event_id) === String(eventId)) ??
+        null;
+    const match = resolveReportBackedMatchTeams(sourceMatch, predMatch, displayTeamIds);
+    const resolvedCompetitionMatches = isWorldCupMatch
+        ? resolveReportBackedSeasonMatches(competitionMatches, predictionMatches, displayTeamIds)
+        : competitionMatches;
+    const sameSeasonMatches = resolveSeasonMatches(match, resolvedCompetitionMatches);
     const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(sameSeasonMatches) : null;
     const leagueStandings = leagueTableContext
         ? computeStandings(leagueTableContext.standingsMatches)
@@ -256,7 +441,6 @@ export default async function Match({ params, searchParams }: PageProps) {
         : [];
 
     const analysisReport = loadAnalysisReport(date);
-    const predMatch = predReport ? findPredictionMatch(predReport, eventId, match.home_team, match.away_team) : null;
 
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const rawAnalysis = analysisReport?.matches?.[analysisKey] ?? null;
@@ -477,6 +661,15 @@ export default async function Match({ params, searchParams }: PageProps) {
                         />
                     )}
                     {predMatch && <MatchPredictionSidebar />}
+                    {isWorldCupMatch && (
+                        <TournamentContext
+                            matches={sameSeasonMatches}
+                            currentMatch={match}
+                            competitionSlug={contextCompetition.slug}
+                            predictionMatches={predictionMatches}
+                            t={t}
+                        />
+                    )}
                     <CompactLeagueTable
                         standings={leagueStandings}
                         homeTeamId={match.home_team_id}
