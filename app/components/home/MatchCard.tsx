@@ -105,6 +105,9 @@ export default function MatchCard({
     const predictionSignals = getPredictionSignals(match);
     const score = resultState.regularScore;
     const penaltyScore = resultState.penaltyScore;
+    const penaltyWinnerName = resultState.decidedByPenalties && resultState.actualResult
+        ? (resultState.actualResult === "HOME" ? match.home_team : resultState.actualResult === "AWAY" ? match.away_team : null)
+        : null;
     const consensus = match.predictions.consensus as ConsensusPrediction;
     const correct = predictionCorrectness(consensus?.prediction, match);
 
@@ -181,6 +184,11 @@ export default function MatchCard({
                             {penaltyScore && (
                                 <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
                                     {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
+                                </span>
+                            )}
+                            {penaltyWinnerName && (
+                                <span className="max-w-[92px] truncate text-center text-[9px] font-bold uppercase tracking-[0.06em] text-amber-500 dark:text-amber-300" title={`${penaltyWinnerName} ${t("won_on_penalties")}`}>
+                                    {penaltyWinnerName} {t("advanced")}
                                 </span>
                             )}
                         </>

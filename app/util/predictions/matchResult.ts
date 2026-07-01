@@ -132,6 +132,26 @@ export function resolveSofascoreMatchResult(
     };
 }
 
+export function resolvedWinnerName(
+    state: ResolvedMatchResult,
+    homeTeam: string,
+    awayTeam: string,
+): string | null {
+    if (!state.actualResult) return null;
+    if (state.actualResult === "HOME") return homeTeam;
+    if (state.actualResult === "AWAY") return awayTeam;
+    return null;
+}
+
+export function penaltyAdvancer(
+    state: ResolvedMatchResult,
+    homeTeam: string,
+    awayTeam: string,
+): string | null {
+    if (!state.decidedByPenalties) return null;
+    return resolvedWinnerName(state, homeTeam, awayTeam);
+}
+
 function resolvedCorrectness(
     prediction: MatchResult | null | undefined,
     state: ResolvedMatchResult,
