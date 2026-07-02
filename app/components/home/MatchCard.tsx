@@ -55,15 +55,13 @@ function getPredictionLabel(match: PredictionMatch, t: (key: string) => string):
     return { text: label, color: getPredictionColor(pred), barColor: getPredictionBarColor(pred), probability: prob, agreement: consensus.agreement, strength: strength.tier };
 }
 
-function FavoriteTeamButton({
-    active,
-    label,
-    onToggle,
-}: {
+interface FavoriteTeamButtonProps {
     active: boolean;
     label: string;
     onToggle: () => void;
-}) {
+}
+
+function FavoriteTeamButton({ active, label, onToggle }: FavoriteTeamButtonProps) {
     return (
         <button
             type="button"
