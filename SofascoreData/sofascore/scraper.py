@@ -299,7 +299,7 @@ class SofascoreSeleniumScraper:
             if not matches:
                 break
             all_matches.extend(matches)
-            time.sleep(0.3 + random.random() * 0.4)  # FAST MODE: 0.3-0.7s
+            time.sleep(0.3 + random.random() * 0.4)
         return all_matches
     
     def get_match_statistics(self, event_id):
@@ -367,7 +367,10 @@ class SofascoreSeleniumScraper:
         data = self.get_api_data(endpoint)
         if self._has_api_error(endpoint, data):
             error = data.get('error') or {}
-            print(f"[WARN] scheduled-events {date_ymd}: Sofascore API error {error.get('code')} {error.get('reason')}")
+            print(
+                f"[INFO] global scheduled-events {date_ymd} unavailable "
+                f"({error.get('code')} {error.get('reason')}); using tournament fallback."
+            )
             return None
         if not data or not isinstance(data, dict):
             return None
