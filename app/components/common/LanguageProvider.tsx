@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { Locale } from "@/app/util/i18n/translations";
 import { getTranslations } from "@/app/util/i18n/translations";
@@ -21,12 +21,23 @@ export function useLanguage() {
 }
 
 export default function LanguageProvider({ children, initial }: { children: React.ReactNode; initial: Locale }) {
-    const [locale, setLocaleState] = useState<Locale>(() => {
-        if (typeof window === "undefined") return initial;
-        const stored = window.localStorage.getItem("locale");
-        return stored === "en" || stored === "pl" ? stored : initial;
-    });
+    const [locale, setLocaleState] = useState<Locale>(initial);
     const router = useRouter();
+
+    useEffect(() => {
+        const stored = window.localStorage.getItem("locale");
+        if ((stored !== "en" && stored !== "pl") || stored === initial) {
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            setLocaleState(stored);
+            document.cookie = `locale=${stored};path=/;max-age=31536000`;
+            router.refresh();
+        }, 0);
+
+        return () => window.clearTimeout(timer);
+    }, [initial, router]);
 
     const setLocale = useCallback((next: Locale) => {
         setLocaleState(next);
