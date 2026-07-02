@@ -19,6 +19,7 @@ import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 import TournamentContext from "./TournamentContext";
+import { computeKnockoutSlots } from "./WorldCupBracket";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
 import { parseScorePair, resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 
@@ -432,6 +433,9 @@ export default async function Match({ params, searchParams }: PageProps) {
         ? resolveReportBackedSeasonMatches(competitionMatches, predictionMatches, displayTeamIds)
         : competitionMatches;
     const sameSeasonMatches = resolveSeasonMatches(match, resolvedCompetitionMatches);
+    const knockoutSlotByEventId = isWorldCupMatch
+        ? computeKnockoutSlots(resolveSeasonMatches(match, competitionMatches))
+        : new Map<number, number>();
     const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(sameSeasonMatches) : null;
     const leagueStandings = leagueTableContext
         ? computeStandings(leagueTableContext.standingsMatches)
@@ -445,7 +449,10 @@ export default async function Match({ params, searchParams }: PageProps) {
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const rawAnalysis = analysisReport?.matches?.[analysisKey] ?? null;
 
-    const { displayHomeScore, displayAwayScore, penaltyScore, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
+    const { displayHomeScore, displayAwayScore, penaltyScore, decidedByPenalties, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
+    const penaltyWinnerName = decidedByPenalties && actualResult
+        ? (actualResult === "HOME" ? match.home_team : actualResult === "AWAY" ? match.away_team : null)
+        : null;
     const matchStats = isFinished ? buildMatchStats(match) : [];
     const rawMatch = match as unknown as Record<string, unknown>;
     const actualXgHome = readStatValue(rawMatch, ["home_expectedgoals", "home_xg"]);
@@ -558,8 +565,13 @@ export default async function Match({ params, searchParams }: PageProps) {
                                             {t("full_time")}
                                         </span>
                                         {penaltyScore && (
-                                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                                                {t("penalties")}: {penaltyScore.home} - {penaltyScore.away}
+                                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                                                {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
+                                            </span>
+                                        )}
+                                        {penaltyWinnerName && (
+                                            <span className="mt-0.5 max-w-[180px] rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-center text-[11px] font-bold leading-tight text-amber-600 dark:text-amber-300">
+                                                {penaltyWinnerName} {t("won_on_penalties")}
                                             </span>
                                         )}
                                         {match.home_score_ht != null && match.away_score_ht != null && (
@@ -661,15 +673,6 @@ export default async function Match({ params, searchParams }: PageProps) {
                         />
                     )}
                     {predMatch && <MatchPredictionSidebar />}
-                    {isWorldCupMatch && (
-                        <TournamentContext
-                            matches={sameSeasonMatches}
-                            currentMatch={match}
-                            competitionSlug={contextCompetition.slug}
-                            predictionMatches={predictionMatches}
-                            t={t}
-                        />
-                    )}
                     <CompactLeagueTable
                         standings={leagueStandings}
                         homeTeamId={match.home_team_id}
@@ -738,6 +741,19 @@ export default async function Match({ params, searchParams }: PageProps) {
                     )}
                 </div>
             </div>
+
+            {isWorldCupMatch && (
+                <div className="mt-6">
+                    <TournamentContext
+                        matches={sameSeasonMatches}
+                        slotByEventId={knockoutSlotByEventId}
+                        currentMatch={match}
+                        competitionSlug={contextCompetition.slug}
+                        predictionMatches={predictionMatches}
+                        t={t}
+                    />
+                </div>
+            )}
 
             {predMatch && <MatchPredictions />}
         </>

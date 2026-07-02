@@ -1,12 +1,15 @@
-﻿import Link from "next/link";
+import type { ReactNode } from "react";
+import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { computeStandings, type StandingRow } from "@/app/util/data/dataService";
-import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
+import { resolveSofascoreMatchResult, type ResolvedMatchResult } from "@/app/util/predictions/matchResult";
 import type { SofascoreMatch } from "@/types/sofascore";
 import type { PredictionMatch } from "@/types/predictions";
+import WorldCupBracket from "./WorldCupBracket";
 
 interface TournamentContextProps {
     matches: SofascoreMatch[];
+    slotByEventId: Map<number, number>;
     currentMatch: SofascoreMatch;
     competitionSlug: string;
     predictionMatches?: PredictionMatch[];
@@ -18,6 +21,71 @@ interface TournamentGroup {
     teamIds: number[];
     teamNames: Map<number, string>;
     matches: SofascoreMatch[];
+}
+
+interface TeamMarkProps {
+    teamId: number;
+    teamName: string;
+    t: (key: string) => string;
+    align?: "left" | "right";
+}
+
+interface ScoreBadgeProps {
+    children: ReactNode;
+    tone?: "default" | "current";
+}
+
+interface GroupStandingsTableProps {
+    group: TournamentGroup;
+    homeTeamId: number;
+    awayTeamId: number;
+    t: (key: string) => string;
+}
+
+interface GroupFixturesProps {
+    group: TournamentGroup;
+    currentMatchId: number;
+    predictionsByEventId: Map<number, PredictionMatch>;
+    t: (key: string) => string;
+}
+
+interface GroupStageSectionProps extends GroupStandingsTableProps {
+    competitionSlug: string;
+    currentMatchId: number;
+    predictionsByEventId: Map<number, PredictionMatch>;
+}
+
+interface FeaturedKnockoutMatchProps {
+    match: SofascoreMatch;
+    roundLabel: string;
+    predictionsByEventId: Map<number, PredictionMatch>;
+    t: (key: string) => string;
+}
+
+interface FeaturedTeamLogoProps {
+    teamId: number;
+    teamName: string;
+    t: (key: string) => string;
+}
+
+interface KnockoutRoundWithMatches {
+    labelKey: string;
+    matches: SofascoreMatch[];
+}
+
+interface KnockoutRoundsListProps {
+    rounds: KnockoutRoundWithMatches[];
+    currentMatchId: number;
+    predictionsByEventId: Map<number, PredictionMatch>;
+    t: (key: string) => string;
+}
+
+interface KnockoutSectionProps {
+    matches: SofascoreMatch[];
+    slotByEventId: Map<number, number>;
+    currentMatch: SofascoreMatch;
+    predictionsByEventId: Map<number, PredictionMatch>;
+    t: (key: string) => string;
 }
 
 const GROUP_STAGE_ROUNDS = new Set([1, 2, 3]);
@@ -36,6 +104,10 @@ const PLACEHOLDER_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+)
 
 function validTeamId(teamId: number): boolean {
     return Number.isFinite(teamId) && teamId > 0;
+}
+
+function isPlaceholderTeam(name: string): boolean {
+    return !name || PLACEHOLDER_TEAM_RE.test(name.trim());
 }
 
 function buildTeamIds(matches: SofascoreMatch[]): Map<string, number> {
@@ -208,77 +280,166 @@ function formStyle(result: string): string {
 }
 
 function rowStyle(row: StandingRow, homeTeamId: number, awayTeamId: number): string {
-    if (row.teamId === homeTeamId) return "border-emerald-400/65 bg-emerald-500/15";
-    if (row.teamId === awayTeamId) return "border-blue-400/65 bg-blue-500/15";
+    if (row.teamId === homeTeamId) return "border-emerald-400/65 bg-emerald-500/12";
+    if (row.teamId === awayTeamId) return "border-blue-400/65 bg-blue-500/12";
     return "border-white/10 bg-gray-950/25";
 }
 
-function formatMatchScore(match: SofascoreMatch, t: (key: string) => string): string {
-    const result = resolveSofascoreMatchResult(match, null);
-    if (match.status === "finished" && result.regularScore) {
-        const base = `${result.regularScore.home} - ${result.regularScore.away}`;
-        if (result.penaltyScore) {
-            return `${base} (${t("penalties")} ${result.penaltyScore.home} - ${result.penaltyScore.away})`;
-        }
+function formatMatchScore(match: SofascoreMatch, state: ResolvedMatchResult, t: (key: string) => string): string {
+    if (state.isFinished && state.regularScore) {
+        const base = `${state.regularScore.home} - ${state.regularScore.away}`;
+        if (state.penaltyScore) return `${base} · ${t("penalties")} ${state.penaltyScore.home}-${state.penaltyScore.away}`;
         return base;
     }
     if (match.status === "postponed") return t("postponed");
     return "vs";
 }
 
-function isPlaceholderTeam(name: string): boolean {
-    return PLACEHOLDER_TEAM_RE.test(name.trim());
+function displayTeamName(name: string, t: (key: string) => string): string {
+    return isPlaceholderTeam(name) ? t("to_be_decided") : name;
 }
 
-function TeamMark({ teamId, teamName, align = "left" }: { teamId: number; teamName: string; align?: "left" | "right" }) {
+function TeamMark({ teamId, teamName, t, align = "left" }: TeamMarkProps) {
     const placeholder = isPlaceholderTeam(teamName);
+    const label = displayTeamName(teamName, t);
     return (
-        <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "justify-end text-right" : ""}`}>
-            {align === "right" && <span className="truncate text-xs font-black text-gray-900 dark:text-white">{teamName}</span>}
+        <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
             {placeholder ? (
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/15 bg-gray-800 text-[9px] font-black text-gray-300">
-                    {teamName.slice(0, 3)}
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/15 bg-gray-800 text-[9px] font-black text-gray-400">
+                    ?
                 </span>
             ) : (
-                <TeamLogo
-                    teamId={teamId}
-                    alt={teamName}
-                    size={24}
-                    className="h-6 w-6 shrink-0 object-contain"
-                />
+                <TeamLogo teamId={teamId} alt={label} size={24} className="h-6 w-6 shrink-0 object-contain" />
             )}
-            {align === "left" && <span className="truncate text-xs font-black text-gray-900 dark:text-white">{teamName}</span>}
+            <span className={`truncate text-xs font-bold ${placeholder ? "text-gray-400" : "text-gray-900 dark:text-white"}`}>
+                {label}
+            </span>
         </div>
     );
 }
 
-function GroupStandingsCard({
-    group,
-    homeTeamId,
-    awayTeamId,
-    competitionSlug,
-    currentMatchId,
-    t,
-}: {
-    group: TournamentGroup;
-    homeTeamId: number;
-    awayTeamId: number;
-    competitionSlug: string;
-    currentMatchId: number;
-    t: (key: string) => string;
-}) {
+function ScoreBadge({ children, tone = "default" }: ScoreBadgeProps) {
+    const cls =
+        tone === "current"
+            ? "border border-amber-400/50 bg-amber-400/15 text-amber-600 dark:text-amber-200"
+            : "border border-white/10 bg-gray-950/60 text-white";
+    return (
+        <span className={`shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-center text-[11px] font-black ${cls}`}>
+            {children}
+        </span>
+    );
+}
+
+
+function GroupStandingsTable({ group, homeTeamId, awayTeamId, t }: GroupStandingsTableProps) {
     const standings = buildGroupStandings(group);
+    return (
+        <div className="overflow-x-auto">
+            <div className="min-w-[420px]">
+                <div className="grid grid-cols-[1.75rem_minmax(7rem,1fr)_2rem_3.4rem_2.4rem_3.8rem_2.4rem] gap-2 px-1.5 pb-2 text-[10px] font-black uppercase tracking-[0.08em] text-gray-500 dark:text-gray-500">
+                    <span>#</span>
+                    <span>{t("team")}</span>
+                    <span className="text-center">{t("played_short")}</span>
+                    <span className="text-center">{t("win_draw_loss_short")}</span>
+                    <span className="text-center">{t("gd_short")}</span>
+                    <span className="text-center">{t("last5")}</span>
+                    <span className="text-right">{t("points_short")}</span>
+                </div>
+                <div className="space-y-1">
+                    {standings.map((row) => {
+                        const isHome = row.teamId === homeTeamId;
+                        const isAway = row.teamId === awayTeamId;
+                        return (
+                            <div
+                                key={row.teamId}
+                                className={`grid grid-cols-[1.75rem_minmax(7rem,1fr)_2rem_3.4rem_2.4rem_3.8rem_2.4rem] items-center gap-2 rounded-lg border px-1.5 py-1.5 text-xs ${rowStyle(row, homeTeamId, awayTeamId)}`}
+                            >
+                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-800 dark:bg-gray-700 dark:text-white">
+                                    {row.position}
+                                </span>
+                                <div className="flex min-w-0 items-center gap-2">
+                                    <TeamLogo teamId={row.teamId} alt={row.teamName} size={22} className="h-5 w-5 shrink-0 object-contain" />
+                                    <div className="min-w-0">
+                                        <div className="truncate font-bold text-gray-900 dark:text-white">{row.teamName}</div>
+                                        {(isHome || isAway) && (
+                                            <div className={`mt-0.5 text-[8px] font-black uppercase tracking-[0.14em] ${isHome ? "text-emerald-500 dark:text-emerald-300" : "text-blue-500 dark:text-blue-300"}`}>
+                                                {isHome ? t("home_short") : t("away_short")}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                <span className="text-center font-semibold text-gray-700 dark:text-gray-200">{row.played}</span>
+                                <span className="text-center font-semibold text-gray-700 dark:text-gray-200">{row.won}-{row.drawn}-{row.lost}</span>
+                                <span className={`text-center font-bold ${row.goalDifference >= 0 ? "text-emerald-500 dark:text-emerald-300" : "text-red-500 dark:text-red-300"}`}>
+                                    {formatGoalDifference(row.goalDifference)}
+                                </span>
+                                <span className="flex justify-center gap-0.5">
+                                    {row.form.length > 0 ? row.form.slice(-5).map((result, index) => (
+                                        <span key={`${result}-${index}`} className={`flex h-5 w-4 items-center justify-center rounded-[3px] text-[10px] font-black ${formStyle(result)}`}>
+                                            {result}
+                                        </span>
+                                    )) : <span className="text-xs font-semibold text-gray-500">-</span>}
+                                </span>
+                                <span className="text-right text-sm font-black text-gray-900 dark:text-white">{row.points}</span>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function GroupFixtures({ group, currentMatchId, predictionsByEventId, t }: GroupFixturesProps) {
+    const byMatchday = new Map<number, SofascoreMatch[]>();
+    for (const match of group.matches) {
+        const day = Number(match.round) || 0;
+        const list = byMatchday.get(day) ?? [];
+        list.push(match);
+        byMatchday.set(day, list);
+    }
+    const matchdays = Array.from(byMatchday.entries()).sort((a, b) => a[0] - b[0]);
 
     return (
-        <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-5">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-4">
+            {matchdays.map(([day, dayMatches]) => (
+                <div key={day}>
+                    <div className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
+                        {t("matchday")} {day}
+                    </div>
+                    <div className="space-y-1.5">
+                        {dayMatches.map((match) => {
+                            const isCurrent = match.event_id === currentMatchId;
+                            const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
+                            return (
+                                <Link
+                                    key={match.event_id}
+                                    href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
+                                    prefetch={false}
+                                    className={`grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-lg border px-2.5 py-2 transition-colors ${isCurrent ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-gray-950/25 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
+                                >
+                                    <TeamMark teamId={match.home_team_id} teamName={match.home_team} t={t} />
+                                    <ScoreBadge tone={isCurrent ? "current" : "default"}>{formatMatchScore(match, state, t)}</ScoreBadge>
+                                    <TeamMark teamId={match.away_team_id} teamName={match.away_team} t={t} align="right" />
+                                </Link>
+                            );
+                        })}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function GroupStageSection({ group, homeTeamId, awayTeamId, competitionSlug, currentMatchId, predictionsByEventId, t }: GroupStageSectionProps) {
+    return (
+        <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
+            <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                        {t("group_standings")}
+                        {t("group")} {group.letter}
                     </h3>
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        {t("group_context_hint")}
-                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t("group_context_hint")}</p>
                 </div>
                 <Link
                     href={`/league/${competitionSlug}`}
@@ -289,346 +450,189 @@ function GroupStandingsCard({
                 </Link>
             </div>
 
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
                 <div>
-                    <div className="text-lg font-black text-gray-900 dark:text-white">
-                        {t("group")} {group.letter}
-                    </div>
-                    <div className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-500 dark:text-emerald-300">
+                    <div className="mb-3 text-xs font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
                         {t("group_standings")}
                     </div>
+                    <GroupStandingsTable group={group} homeTeamId={homeTeamId} awayTeamId={awayTeamId} t={t} />
                 </div>
-                <span className="rounded-full border border-white/10 bg-gray-950/30 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-                    {group.matches.length} {t("matches_count")}
-                </span>
-            </div>
-
-            <div className="overflow-x-auto pb-1">
-                <div className="min-w-[560px]">
-                    <div className="grid grid-cols-[2rem_minmax(9.5rem,1fr)_2rem_4rem_2.6rem_4.3rem_2.8rem] gap-2 px-1.5 pb-2 text-[10px] font-black uppercase tracking-[0.08em] text-gray-500 dark:text-gray-500">
-                        <span>#</span>
-                        <span>{t("team")}</span>
-                        <span className="text-center">{t("played_short")}</span>
-                        <span className="text-center">{t("win_draw_loss_short")}</span>
-                        <span className="text-center">{t("gd_short")}</span>
-                        <span className="text-center">{t("last5")}</span>
-                        <span className="text-right">{t("points_short")}</span>
+                <div>
+                    <div className="mb-3 text-xs font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
+                        {t("group_fixtures")}
                     </div>
-
-                    <div className="space-y-1">
-                        {standings.map((row) => {
-                            const isHome = row.teamId === homeTeamId;
-                            const isAway = row.teamId === awayTeamId;
-                            return (
-                                <div
-                                    key={row.teamId}
-                                    className={`grid grid-cols-[2rem_minmax(9.5rem,1fr)_2rem_4rem_2.6rem_4.3rem_2.8rem] items-center gap-2 rounded-lg border px-1.5 py-1.5 text-xs ${rowStyle(row, homeTeamId, awayTeamId)}`}
-                                >
-                                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-800 dark:bg-gray-700 dark:text-white">
-                                        {row.position}
-                                    </span>
-                                    <div className="flex min-w-0 items-center gap-2">
-                                        <TeamLogo
-                                            teamId={row.teamId}
-                                            alt={row.teamName}
-                                            size={22}
-                                            className="h-5 w-5 shrink-0 object-contain"
-                                        />
-                                        <div className="min-w-0">
-                                            <div className="truncate font-bold text-gray-900 dark:text-white">
-                                                {row.teamName}
-                                            </div>
-                                            {(isHome || isAway) && (
-                                                <div className={`mt-0.5 text-[8px] font-black uppercase tracking-[0.14em] ${isHome ? "text-emerald-500 dark:text-emerald-300" : "text-blue-500 dark:text-blue-300"}`}>
-                                                    {isHome ? t("home_short") : t("away_short")}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <span className="text-center font-semibold text-gray-700 dark:text-gray-200">{row.played}</span>
-                                    <span className="text-center font-semibold text-gray-700 dark:text-gray-200">{row.won}-{row.drawn}-{row.lost}</span>
-                                    <span className={`text-center font-bold ${row.goalDifference >= 0 ? "text-emerald-500 dark:text-emerald-300" : "text-red-500 dark:text-red-300"}`}>
-                                        {formatGoalDifference(row.goalDifference)}
-                                    </span>
-                                    <span className="flex justify-center gap-0.5">
-                                        {row.form.length > 0 ? row.form.slice(-5).map((result, index) => (
-                                            <span key={`${result}-${index}`} className={`flex h-5 w-4 items-center justify-center rounded-[3px] text-[10px] font-black ${formStyle(result)}`}>
-                                                {result}
-                                            </span>
-                                        )) : <span className="text-xs font-semibold text-gray-500">-</span>}
-                                    </span>
-                                    <span className="text-right text-sm font-black text-gray-900 dark:text-white">
-                                        {row.points}
-                                    </span>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            </div>
-
-            <div className="mt-5 border-t border-gray-200 pt-4 dark:border-white/10">
-                <div className="mb-3 text-xs font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-                    {t("group_fixtures")}
-                </div>
-                <div className="space-y-2">
-                    {group.matches.map((match) => {
-                        const isCurrent = match.event_id === currentMatchId;
-                        return (
-                            <Link
-                                key={match.event_id}
-                                href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
-                                prefetch={false}
-                                className={`rounded-lg border p-2.5 transition-colors ${isCurrent ? "border-emerald-400/70 bg-emerald-500/15" : "border-white/10 bg-gray-950/25 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
-                            >
-                                <div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
-                                    <span>{match.date.slice(5, 10)}</span>
-                                    {isCurrent && <span className="text-emerald-500 dark:text-emerald-300">{t("current_match")}</span>}
-                                </div>
-                                <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-                                    <TeamMark teamId={match.home_team_id} teamName={match.home_team} />
-                                    <span className="rounded-md bg-gray-950/65 px-2 py-1 text-center text-xs font-black text-white">
-                                        {formatMatchScore(match, t)}
-                                    </span>
-                                    <TeamMark teamId={match.away_team_id} teamName={match.away_team} align="right" />
-                                </div>
-                            </Link>
-                        );
-                    })}
+                    <GroupFixtures group={group} currentMatchId={currentMatchId} predictionsByEventId={predictionsByEventId} t={t} />
                 </div>
             </div>
         </section>
     );
 }
 
-type KnockoutRound = (typeof KNOCKOUT_ROUNDS)[number] & { matches: SofascoreMatch[] };
 
-function TeamIcon({ teamId, teamName, size = 24 }: { teamId: number; teamName: string; size?: number }) {
-    if (isPlaceholderTeam(teamName)) {
+function FeaturedTeamLogo({ teamId, teamName, t }: FeaturedTeamLogoProps) {
+    if (isPlaceholderTeam(teamName) || !validTeamId(teamId)) {
         return (
             <span
-                className="flex shrink-0 items-center justify-center rounded-full border border-white/15 bg-gray-700 text-[9px] font-black text-gray-200"
-                style={{ width: size, height: size }}
+                title={t("to_be_decided")}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-gray-800 text-base font-black text-gray-400 sm:h-14 sm:w-14"
             >
-                {teamName.slice(0, 3)}
+                ?
             </span>
         );
     }
 
-    return (
-        <TeamLogo
-            teamId={teamId}
-            alt={teamName}
-            size={size}
-            className="shrink-0 object-contain"
-            style={{ width: size, height: size }}
-        />
-    );
+    return <TeamLogo teamId={teamId} alt={teamName} size={56} className="h-11 w-11 object-contain sm:h-14 sm:w-14" />;
 }
 
-function shortTeamName(teamName: string): string {
-    if (teamName.length <= 11) return teamName;
-    return teamName
-        .replace("Bosnia & Herzegovina", "Bosnia")
-        .replace("Cote d'Ivoire", "C. d'Ivoire")
-        .replace("South Africa", "S. Africa")
-        .replace("New Zealand", "N. Zealand");
-}
+function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, t }: FeaturedKnockoutMatchProps) {
+    const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
+    const winnerName = state.decidedByPenalties && state.actualResult
+        ? (state.actualResult === "HOME" ? match.home_team : state.actualResult === "AWAY" ? match.away_team : null)
+        : null;
 
-function FeaturedKnockoutMatch({
-    match,
-    roundLabel,
-    t,
-}: {
-    match: SofascoreMatch;
-    roundLabel: string;
-    t: (key: string) => string;
-}) {
     return (
         <Link
             href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
             prefetch={false}
-            className="block overflow-hidden rounded-2xl border border-emerald-400/60 bg-emerald-500/15 p-4 transition-colors hover:bg-emerald-500/20"
+            className="block overflow-hidden rounded-2xl border border-emerald-400/50 bg-emerald-500/10 p-4 transition-colors hover:bg-emerald-500/15 sm:p-5"
         >
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-300">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-500 dark:text-emerald-300">
                     {t("current_match")}
                 </span>
-                <span className="rounded-full border border-emerald-300/30 bg-gray-950/40 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-emerald-100">
+                <span className="rounded-full border border-emerald-300/30 bg-gray-950/40 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-emerald-600 dark:text-emerald-100">
                     {roundLabel}
                 </span>
             </div>
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-6">
                 <div className="flex min-w-0 flex-col items-center gap-2 text-center">
-                    <TeamIcon teamId={match.home_team_id} teamName={match.home_team} size={40} />
-                    <span className="max-w-full truncate text-sm font-black text-white">
-                        {shortTeamName(match.home_team)}
+                    <FeaturedTeamLogo teamId={match.home_team_id} teamName={match.home_team} t={t} />
+                    <span className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
+                        {displayTeamName(match.home_team, t)}
                     </span>
                 </div>
                 <div className="flex flex-col items-center gap-1">
-                    <span className="rounded-xl bg-gray-950 px-3 py-2 text-sm font-black text-white">
-                        {formatMatchScore(match, t)}
+                    <span className="rounded-xl bg-gray-950 px-3 py-2 text-lg font-black text-white">
+                        {state.isFinished && state.regularScore ? `${state.regularScore.home} - ${state.regularScore.away}` : "vs"}
                     </span>
-                    <span className="text-[10px] font-bold text-gray-400">
-                        {match.date.slice(5, 10)}
-                    </span>
+                    {state.penaltyScore && (
+                        <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
+                            {t("penalties")} {state.penaltyScore.home} - {state.penaltyScore.away}
+                        </span>
+                    )}
+                    <span className="text-[10px] font-bold text-gray-400">{match.date.slice(5, 10)}</span>
                 </div>
                 <div className="flex min-w-0 flex-col items-center gap-2 text-center">
-                    <TeamIcon teamId={match.away_team_id} teamName={match.away_team} size={40} />
-                    <span className="max-w-full truncate text-sm font-black text-white">
-                        {shortTeamName(match.away_team)}
+                    <FeaturedTeamLogo teamId={match.away_team_id} teamName={match.away_team} t={t} />
+                    <span className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
+                        {displayTeamName(match.away_team, t)}
                     </span>
                 </div>
             </div>
+            {winnerName && (
+                <div className="mt-3 flex justify-center">
+                    <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[11px] font-bold text-amber-600 dark:text-amber-300">
+                        {winnerName} {t("won_on_penalties")}
+                    </span>
+                </div>
+            )}
         </Link>
     );
 }
 
-function KnockoutMatchRow({
-    match,
-    isCurrent,
-    t,
-}: {
-    match: SofascoreMatch;
-    isCurrent: boolean;
-    t: (key: string) => string;
-}) {
+function KnockoutRoundsList({ rounds, currentMatchId, predictionsByEventId, t }: KnockoutRoundsListProps) {
     return (
-        <Link
-            href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
-            prefetch={false}
-            className={`block rounded-xl border p-3 transition-colors ${isCurrent ? "border-emerald-400/70 bg-emerald-500/15" : "border-white/10 bg-gray-950/35 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
-        >
-            <div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
-                <span>{match.date.slice(5, 10)}</span>
-                {isCurrent && <span className="text-emerald-300">{t("current_match")}</span>}
-            </div>
-            <div className="grid grid-cols-[minmax(0,1fr)_3.5rem_minmax(0,1fr)] items-center gap-2">
-                <TeamMark teamId={match.home_team_id} teamName={match.home_team} />
-                <span className="rounded-lg bg-gray-950 px-2 py-1.5 text-center text-[11px] font-black text-white">
-                    {formatMatchScore(match, t)}
-                </span>
-                <TeamMark teamId={match.away_team_id} teamName={match.away_team} align="right" />
-            </div>
-        </Link>
-    );
-}
-
-function RoundPathSummary({
-    rounds,
-    currentRoundIndex,
-    currentMatchId,
-    t,
-}: {
-    rounds: KnockoutRound[];
-    currentRoundIndex: number;
-    currentMatchId: number;
-    t: (key: string) => string;
-}) {
-    return (
-        <div className="space-y-3">
-            {rounds.map((round, index) => {
-                const isActiveRound = index === currentRoundIndex;
-                const isPastRound = index < currentRoundIndex;
-                const currentInRound = round.matches.find((match) => match.event_id === currentMatchId);
-                const sampleMatch = currentInRound ?? round.matches[0];
-
-                return (
-                    <div key={round.round} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3">
-                        <div className="flex flex-col items-center">
-                            <span className={`flex h-7 w-7 items-center justify-center rounded-full border text-[10px] font-black ${isActiveRound ? "border-emerald-300 bg-emerald-400 text-gray-950" : isPastRound ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "border-white/15 bg-gray-800 text-gray-400"}`}>
-                                {index + 1}
-                            </span>
-                            {index < rounds.length - 1 && (
-                                <span className={`mt-1 h-full min-h-8 w-px ${isPastRound || isActiveRound ? "bg-emerald-400/35" : "bg-white/10"}`} />
-                            )}
-                        </div>
-                        <div className={`min-w-0 rounded-2xl border p-3 ${isActiveRound ? "border-emerald-400/60 bg-emerald-500/10" : "border-white/10 bg-gray-950/25"}`}>
-                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-                                    {t(round.labelKey)}
-                                </span>
-                                <span className="rounded-full bg-gray-950/70 px-2 py-0.5 text-[10px] font-black text-gray-300">
-                                    {round.matches.length}
-                                </span>
-                            </div>
-                            {sampleMatch ? (
-                                <KnockoutMatchRow
-                                    match={sampleMatch}
-                                    isCurrent={sampleMatch.event_id === currentMatchId}
-                                    t={t}
-                                />
-                            ) : null}
-                        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {rounds.map((round) => (
+                <div key={round.labelKey} className="rounded-xl border border-white/10 bg-gray-950/25 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
+                            {t(round.labelKey)}
+                        </span>
+                        <span className="rounded-full bg-gray-950/60 px-2 py-0.5 text-[10px] font-black text-gray-400">
+                            {round.matches.length}
+                        </span>
                     </div>
-                );
-            })}
+                    <div className="space-y-1.5">
+                        {round.matches.map((match) => {
+                            const isCurrent = match.event_id === currentMatchId;
+                            const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
+                            return (
+                                <Link
+                                    key={match.event_id}
+                                    href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
+                                    prefetch={false}
+                                    className={`grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors ${isCurrent ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-gray-950/40 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
+                                >
+                                    <TeamMark teamId={match.home_team_id} teamName={match.home_team} t={t} />
+                                    <ScoreBadge tone={isCurrent ? "current" : "default"}>{formatMatchScore(match, state, t)}</ScoreBadge>
+                                    <TeamMark teamId={match.away_team_id} teamName={match.away_team} t={t} align="right" />
+                                </Link>
+                            );
+                        })}
+                    </div>
+                </div>
+            ))}
         </div>
     );
 }
 
-function KnockoutBracket({
-    matches,
-    currentMatchId,
-    t,
-}: {
-    matches: SofascoreMatch[];
-    currentMatchId: number;
-    t: (key: string) => string;
-}) {
-    const rounds: KnockoutRound[] = KNOCKOUT_ROUNDS.map((round) => ({
+function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEventId, t }: KnockoutSectionProps) {
+    const rounds = KNOCKOUT_ROUNDS.map((round) => ({
         ...round,
         matches: matches.filter((match) => Number(match.round) === round.round).sort(sortMatches),
     })).filter((round) => round.matches.length > 0);
 
     if (rounds.length === 0) return null;
 
-    const rawCurrentRoundIndex = rounds.findIndex((round) => round.matches.some((match) => match.event_id === currentMatchId));
-    const currentRoundIndex = rawCurrentRoundIndex >= 0 ? rawCurrentRoundIndex : 0;
-    const currentRound = rounds[currentRoundIndex] ?? rounds[0];
-    const currentRoundMatch = currentRound.matches.find((match) => match.event_id === currentMatchId) ?? currentRound.matches[0];
+    const currentRound = rounds.find((round) => round.matches.some((match) => match.event_id === currentMatch.event_id)) ?? rounds[0];
+    const hasFullBracket = matches.some((match) => Number(match.round) === 6);
 
     return (
-        <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-5">
+        <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                         {t("knockout_bracket")}
                     </h3>
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        {t("knockout_bracket_hint")}
-                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t("knockout_bracket_hint")}</p>
                 </div>
-                <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-emerald-400">
+                <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-emerald-500 dark:text-emerald-400">
                     {t(currentRound.labelKey)}
                 </span>
             </div>
 
-            <div className="space-y-4">
-                {currentRoundMatch && (
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+                <div className="space-y-4">
                     <FeaturedKnockoutMatch
-                        match={currentRoundMatch}
+                        match={currentMatch}
                         roundLabel={t(currentRound.labelKey)}
+                        predictionsByEventId={predictionsByEventId}
                         t={t}
                     />
-                )}
-                <RoundPathSummary
+                    {hasFullBracket && (
+                        <WorldCupBracket
+                            matches={matches}
+                            slotByEventId={slotByEventId}
+                            predictionsByEventId={predictionsByEventId}
+                            currentMatchId={currentMatch.event_id}
+                            t={t}
+                        />
+                    )}
+                </div>
+                <KnockoutRoundsList
                     rounds={rounds}
-                    currentRoundIndex={currentRoundIndex}
-                    currentMatchId={currentMatchId}
+                    currentMatchId={currentMatch.event_id}
+                    predictionsByEventId={predictionsByEventId}
                     t={t}
                 />
             </div>
         </section>
     );
 }
-export default function TournamentContext({
-    matches,
-    currentMatch,
-    competitionSlug,
-    predictionMatches,
-    t,
-}: TournamentContextProps) {
+
+
+export default function TournamentContext({ matches, slotByEventId, currentMatch, competitionSlug, predictionMatches, t }: TournamentContextProps) {
     const teamIds = buildTeamIds(matches);
     const predictionsByEventId = predictionMap(predictionMatches);
     const displayMatches = matches.map((match) => resolveDisplayMatch(match, predictionsByEventId, teamIds));
@@ -643,12 +647,13 @@ export default function TournamentContext({
 
     if (currentGroup) {
         return (
-            <GroupStandingsCard
+            <GroupStageSection
                 group={currentGroup}
                 homeTeamId={displayHomeTeamId}
                 awayTeamId={displayAwayTeamId}
                 competitionSlug={competitionSlug}
                 currentMatchId={displayCurrentMatch.event_id}
+                predictionsByEventId={predictionsByEventId}
                 t={t}
             />
         );
@@ -656,5 +661,13 @@ export default function TournamentContext({
 
     if (knockoutMatches.length === 0) return null;
 
-    return <KnockoutBracket matches={knockoutMatches} currentMatchId={displayCurrentMatch.event_id} t={t} />;
+    return (
+        <KnockoutSection
+            matches={knockoutMatches}
+            slotByEventId={slotByEventId}
+            currentMatch={displayCurrentMatch}
+            predictionsByEventId={predictionsByEventId}
+            t={t}
+        />
+    );
 }
