@@ -1,7 +1,3 @@
-// Trim SofascoreData to the fields the app uses; write to .data/
-// Run: node scripts/prebuild.mjs
-// Env: PREBUILD_REPORT_DAYS_PAST / PREBUILD_REPORT_DAYS_FUTURE (default 30 past / 2 future), PREBUILD_COPY_ALL_REPORTS=1 for all report dates.
-
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -50,8 +46,6 @@ const PLAYER_FIELDS = new Set([
     "id", "name", "short_name", "position", "jersey_number",
     "date_of_birth", "height", "country", "team",
 ]);
-
-// Same paths as leagueRegistry.ts
 const COMPETITIONS = [
     "league/england/premier_league", "league/spain/la_liga", "league/germany/bundesliga",
     "league/italy/serie_a", "league/france/ligue_1", "league/netherlands/eredivisie",
@@ -396,7 +390,7 @@ function addCalendarDaysYmd(ymd, deltaDays) {
 }
 
 function isYmdInWindow(dateStr, minYmd, maxYmd) {
-    return dateStr >= minYmd && dateStr <= maxYmd;
+    return dateStr >= minYmd && (!maxYmd || dateStr <= maxYmd);
 }
 
 function copyReportsWindowed(srcReports, destReports) {
@@ -410,10 +404,11 @@ function copyReportsWindowed(srcReports, destReports) {
     }
 
     const past = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_PAST || "30", 10));
-    const future = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_FUTURE || "2", 10));
+    const futureValue = process.env.PREBUILD_REPORT_DAYS_FUTURE;
+    const future = futureValue ? Math.max(0, parseInt(futureValue, 10)) : null;
     const today = todayYmd();
     const minYmd = addCalendarDaysYmd(today, -past);
-    const maxYmd = addCalendarDaysYmd(today, future);
+    const maxYmd = future === null ? null : addCalendarDaysYmd(today, future);
 
     ensureDir(destReports);
     let copied = 0;
@@ -428,7 +423,7 @@ function copyReportsWindowed(srcReports, destReports) {
         copyDir(path.join(srcReports, e.name), path.join(destReports, e.name));
         copied++;
     }
-    console.log("report date range: " + minYmd + " .. " + maxYmd + " (" + past + "d back, " + future + "d ahead)");
+    console.log("report date range: " + minYmd + " .. " + (maxYmd ?? "open future") + " (" + past + "d back, " + (future === null ? "open future" : future + "d ahead") + ")");
     return { copied, skipped, total: copied + skipped };
 }
 
