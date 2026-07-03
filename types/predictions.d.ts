@@ -79,6 +79,10 @@ export interface PredictionMatch {
     actual_result: MatchResult | null;
     actual_score: string | null;
     actual_penalty_score?: string | null;
+    actual_extra_time_score?: string | null;
+    actual_normal_time_score?: string | null;
+    home_score_et?: number | string | null;
+    away_score_et?: number | string | null;
     decided_by_penalties?: boolean | null;
     actual_cards: number | null;
     actual_corners: number | null;

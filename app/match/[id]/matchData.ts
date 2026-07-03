@@ -7,7 +7,10 @@ export interface MatchDisplayState {
     displayStatus: string;
     displayHomeScore: number | null;
     displayAwayScore: number | null;
+    normalTimeScore: { home: number; away: number } | null;
+    extraTimeScore: { home: number; away: number } | null;
     penaltyScore: { home: number; away: number } | null;
+    wentToExtraTime: boolean;
     decidedByPenalties: boolean;
     actualResult: MatchResult | null;
     isFinished: boolean;
@@ -29,7 +32,10 @@ export function resolveMatchDisplayState(match: SofascoreMatch, predMatch: Predi
         displayStatus: state.displayStatus,
         displayHomeScore: state.regularScore?.home ?? null,
         displayAwayScore: state.regularScore?.away ?? null,
+        normalTimeScore: state.normalTimeScore,
+        extraTimeScore: state.extraTimeScore,
         penaltyScore: state.penaltyScore,
+        wentToExtraTime: state.wentToExtraTime,
         decidedByPenalties: state.decidedByPenalties,
         actualResult: state.actualResult,
         isFinished: state.isFinished,
