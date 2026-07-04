@@ -2,73 +2,19 @@ import Image from "next/image";
 import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { resolveSofascoreMatchResult, type ResolvedMatchResult } from "@/app/util/predictions/matchResult";
+import {
+    candidatePairForWinnerPlaceholder,
+    formatWorldCupSlotCandidatePair,
+    type WorldCupSlotCandidatePair,
+} from "@/app/util/predictions/worldCupSlotResolver";
 import type { SofascoreMatch } from "@/types/sofascore";
 import type { PredictionMatch } from "@/types/predictions";
+import type { TournamentFormat } from "./bracketConfig";
 
-const CHILDREN: Record<number, [number, number]> = {
-    89: [73, 75], 90: [74, 77], 91: [76, 78], 92: [79, 80],
-    93: [83, 84], 94: [81, 82], 95: [86, 88], 96: [85, 87],
-    97: [89, 90], 98: [93, 94], 99: [91, 92], 100: [95, 96],
-    101: [97, 98], 102: [99, 100],
-    104: [101, 102],
-};
-const FINAL_NUMBER = 104;
-const THIRD_PLACE_NUMBER = 103;
-
-const PARENT_OF: Record<number, number> = {};
-for (const [parent, kids] of Object.entries(CHILDREN)) {
-    for (const kid of kids) PARENT_OF[kid] = Number(parent);
-}
-
-const NUMBER_BY_CHILDREN = new Map<string, number>();
-for (const [parent, kids] of Object.entries(CHILDREN)) {
-    NUMBER_BY_CHILDREN.set([...kids].sort((a, b) => a - b).join(","), Number(parent));
-}
-
-const R32_SLOT_DEFINITION: [number, string[]][] = [
-    [73, ["2A", "2B"]], [74, ["1E"]], [75, ["1F", "2C"]], [76, ["1C", "2F"]],
-    [77, ["1I"]], [78, ["2E", "2I"]], [79, ["1A"]], [80, ["1L"]],
-    [81, ["1D"]], [82, ["1G"]], [83, ["2K", "2L"]], [84, ["1H", "2J"]],
-    [85, ["1B"]], [86, ["1J", "2H"]], [87, ["1K"]], [88, ["2D", "2G"]],
-];
-const SLOT_BY_DEFINITE_CODE: Record<string, number> = {};
-for (const [slot, codes] of R32_SLOT_DEFINITION) {
-    for (const code of codes) SLOT_BY_DEFINITE_CODE[code] = slot;
-}
-
-function normalizeGroupCode(code: string): string {
-    const value = (code ?? "").trim().toUpperCase();
-    const swapped = /^([A-Z])([12])$/.exec(value);
-    if (swapped) return `${swapped[2]}${swapped[1]}`;
-    return value;
-}
-
-function r32SlotFromCodes(home: string, away: string): number | null {
-    for (const code of [home, away]) {
-        const slot = SLOT_BY_DEFINITE_CODE[normalizeGroupCode(code)];
-        if (slot) return slot;
-    }
-    return null;
-}
-
-function matchNumberFromCode(code: string): number | null {
-    const match = /^[WL](\d+)$/i.exec((code ?? "").trim());
-    return match ? Number(match[1]) : null;
-}
-
-function childSlotsFromCodes(home: string, away: string): [number, number] | null {
-    const a = matchNumberFromCode(home);
-    const b = matchNumberFromCode(away);
-    if (a != null && b != null) return [a, b];
-    return null;
-}
-
-const RADIUS_BY_ROUND: Record<number, number> = { 6: 392, 5: 304, 27: 212, 28: 118, 29: 0 };
 const TEAM_RADIUS = 470;
 const VIEWBOX = 1000;
 const CENTER = VIEWBOX / 2;
 const TWO_PI = Math.PI * 2;
-
 const PLACEHOLDER_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+)$/;
 
 function isPlaceholderTeam(name: string): boolean {
@@ -79,60 +25,12 @@ function validTeamId(teamId: number): boolean {
     return Number.isFinite(teamId) && teamId > 0;
 }
 
-function roundOfNumber(n: number): number {
-    if (n >= 73 && n <= 88) return 6;
-    if (n >= 89 && n <= 96) return 5;
-    if (n >= 97 && n <= 100) return 27;
-    if (n === 101 || n === 102) return 28;
-    if (n === FINAL_NUMBER) return 29;
-    if (n === THIRD_PLACE_NUMBER) return 50;
-    return 0;
-}
-
-function sortMatches(a: SofascoreMatch, b: SofascoreMatch): number {
-    const byDate = String(a.date ?? "").localeCompare(String(b.date ?? ""));
-    if (byDate !== 0) return byDate;
-    return a.event_id - b.event_id;
-}
-
-export function computeKnockoutSlots(rawMatches: SofascoreMatch[]): Map<number, number> {
-    const slotByEventId = new Map<number, number>();
-    const usedSlots = new Set<number>();
-
-    const r32 = rawMatches.filter((m) => Number(m.round) === 6);
-    const unmatchedR32: SofascoreMatch[] = [];
-    for (const match of r32) {
-        const slot = r32SlotFromCodes(match.home_team, match.away_team);
-        if (slot != null && !usedSlots.has(slot)) {
-            slotByEventId.set(match.event_id, slot);
-            usedSlots.add(slot);
-        } else {
-            unmatchedR32.push(match);
-        }
+function buildParentMap(children: Record<number, [number, number]>): Record<number, number> {
+    const parentOf: Record<number, number> = {};
+    for (const [parent, kids] of Object.entries(children)) {
+        for (const kid of kids) parentOf[kid] = Number(parent);
     }
-    if (unmatchedR32.length > 0) {
-        const freeSlots: number[] = [];
-        for (let slot = 73; slot <= 88; slot++) if (!usedSlots.has(slot)) freeSlots.push(slot);
-        unmatchedR32.sort(sortMatches).forEach((match, index) => {
-            const slot = freeSlots[index];
-            if (slot != null) slotByEventId.set(match.event_id, slot);
-        });
-    }
-
-    for (const match of rawMatches) {
-        const round = Number(match.round);
-        if (round === 6) continue;
-        if (round === 50) {
-            slotByEventId.set(match.event_id, THIRD_PLACE_NUMBER);
-            continue;
-        }
-        const kids = childSlotsFromCodes(match.home_team, match.away_team);
-        if (!kids) continue;
-        const number = NUMBER_BY_CHILDREN.get([...kids].sort((a, b) => a - b).join(","));
-        if (number != null) slotByEventId.set(match.event_id, number);
-    }
-
-    return slotByEventId;
+    return parentOf;
 }
 
 interface Interval {
@@ -140,31 +38,36 @@ interface Interval {
     e: number;
 }
 
-function buildIntervals(): Map<number, Interval> {
+function buildIntervals(format: TournamentFormat): Map<number, Interval> {
     const map = new Map<number, Interval>();
-    const recurse = (n: number, s: number, e: number) => {
-        map.set(n, { s, e });
-        const kids = CHILDREN[n];
+    const recurse = (slot: number, s: number, e: number) => {
+        map.set(slot, { s, e });
+        const kids = format.children[slot];
         if (!kids) return;
         const mid = (s + e) / 2;
         recurse(kids[0], s, mid);
         recurse(kids[1], mid, e);
     };
-    recurse(FINAL_NUMBER, 0, 32);
+    recurse(format.finalSlot, 0, format.leafTeamSlots);
     return map;
 }
 
-function slotAngle(slot: number): number {
-    return -Math.PI / 2 + (slot / 32) * TWO_PI;
+function slotAngle(format: TournamentFormat, slot: number): number {
+    return -Math.PI / 2 + (slot / format.leafTeamSlots) * TWO_PI;
 }
 
 function polar(radius: number, angle: number): { x: number; y: number } {
     return { x: CENTER + radius * Math.cos(angle), y: CENTER + radius * Math.sin(angle) };
 }
 
-function nodePosition(n: number, interval: Interval): { x: number; y: number } {
-    const radius = RADIUS_BY_ROUND[roundOfNumber(n)] ?? 0;
-    return polar(radius, slotAngle((interval.s + interval.e) / 2));
+function stageOfSlot(format: TournamentFormat, slot: number) {
+    return format.stageBySlot[slot];
+}
+
+function nodePosition(format: TournamentFormat, slot: number, interval: Interval): { x: number; y: number } {
+    const stage = stageOfSlot(format, slot);
+    const radius = stage ? format.stageRadii[stage] ?? 0 : 0;
+    return polar(radius, slotAngle(format, (interval.s + interval.e) / 2));
 }
 
 function pct(value: number): string {
@@ -174,7 +77,8 @@ function pct(value: number): string {
 function scoreLabel(state: ResolvedMatchResult, t: (key: string) => string): string | null {
     if (!state.regularScore) return null;
     const base = `${state.regularScore.home}-${state.regularScore.away}`;
-    if (state.penaltyScore) return `${base} · ${t("penalties")} ${state.penaltyScore.home}-${state.penaltyScore.away}`;
+    if (state.penaltyScore) return `${base} \u00b7 ${t("penalties")} ${state.penaltyScore.home}-${state.penaltyScore.away}`;
+    if (state.wentToExtraTime) return `${base} AET`;
     return base;
 }
 
@@ -184,17 +88,22 @@ interface Side {
     isPlaceholder: boolean;
 }
 
+type MatchSide = "HOME" | "AWAY";
+
 interface TeamCrestProps {
     side: Side;
     dim: boolean;
     highlight: "none" | "winner" | "current";
     size?: number;
+    candidatePair?: WorldCupSlotCandidatePair | null;
 }
 
 interface WorldCupBracketProps {
+    format: TournamentFormat;
     matches: SofascoreMatch[];
     slotByEventId: Map<number, number>;
     predictionsByEventId: Map<number, PredictionMatch>;
+    candidatePairs: Map<number, WorldCupSlotCandidatePair>;
     currentMatchId: number;
     t: (key: string) => string;
 }
@@ -210,7 +119,12 @@ function sidesOf(match: SofascoreMatch | undefined): { home: Side; away: Side } 
     };
 }
 
-function TeamCrest({ side, dim, highlight, size = 32 }: TeamCrestProps) {
+function displaySideName(side: Side, candidatePair: WorldCupSlotCandidatePair | null, t: (key: string) => string): string {
+    if (candidatePair) return formatWorldCupSlotCandidatePair(candidatePair, " / ");
+    return side.isPlaceholder ? t("to_be_decided") : side.teamName;
+}
+
+function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null }: TeamCrestProps) {
     const ring =
         highlight === "current"
             ? "border-amber-400 ring-2 ring-amber-400/40"
@@ -221,7 +135,16 @@ function TeamCrest({ side, dim, highlight, size = 32 }: TeamCrestProps) {
         <div
             className={`flex h-full w-full items-center justify-center rounded-full border bg-gray-950/80 p-[10%] shadow-md transition ${ring} ${dim ? "opacity-35 grayscale" : ""}`}
         >
-            {validTeamId(side.teamId) && !side.isPlaceholder ? (
+            {candidatePair ? (
+                <span className="flex h-full w-full items-center justify-center -space-x-1">
+                    <span className="flex h-[78%] w-[78%] items-center justify-center rounded-full bg-gray-950/80 p-[4%]">
+                        <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={size} className="h-full w-full object-contain" />
+                    </span>
+                    <span className="flex h-[78%] w-[78%] items-center justify-center rounded-full bg-gray-950/80 p-[4%]">
+                        <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={size} className="h-full w-full object-contain" />
+                    </span>
+                </span>
+            ) : validTeamId(side.teamId) && !side.isPlaceholder ? (
                 <TeamLogo
                     teamId={side.teamId}
                     alt={side.teamName}
@@ -235,13 +158,14 @@ function TeamCrest({ side, dim, highlight, size = 32 }: TeamCrestProps) {
     );
 }
 
-export default function WorldCupBracket({ matches, slotByEventId, predictionsByEventId, currentMatchId, t }: WorldCupBracketProps) {
+export default function WorldCupBracket({ format, matches, slotByEventId, predictionsByEventId, candidatePairs, currentMatchId, t }: WorldCupBracketProps) {
     const byNumber = new Map<number, SofascoreMatch>();
     for (const match of matches) {
         const slot = slotByEventId.get(match.event_id);
         if (slot != null) byNumber.set(slot, match);
     }
-    const intervals = buildIntervals();
+    const intervals = buildIntervals(format);
+    const parentOf = buildParentMap(format.children);
 
     const resultOf = (match: SofascoreMatch): ResolvedMatchResult =>
         resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
@@ -259,11 +183,60 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
         let cursor: number | undefined = currentNumber;
         while (cursor != null) {
             pathNumbers.add(cursor);
-            cursor = PARENT_OF[cursor];
+            cursor = parentOf[cursor];
         }
     }
 
-    const leafNumbers = Array.from(intervals.keys()).filter((n) => roundOfNumber(n) === 6);
+    const entryNumbers = new Set<number>();
+    const entryLeafSides = new Map<number, Set<MatchSide>>();
+
+    const markLeafSide = (slot: number, side: MatchSide) => {
+        const sides = entryLeafSides.get(slot) ?? new Set<MatchSide>();
+        sides.add(side);
+        entryLeafSides.set(slot, sides);
+    };
+
+    const collectEntryPath = (slot: number) => {
+        entryNumbers.add(slot);
+        const kids = format.children[slot];
+        if (!kids) {
+            const match = byNumber.get(slot);
+            const state = match ? resultOf(match) : null;
+            if (state?.isFinished && state.actualResult === "HOME") {
+                markLeafSide(slot, "HOME");
+            } else if (state?.isFinished && state.actualResult === "AWAY") {
+                markLeafSide(slot, "AWAY");
+            } else {
+                markLeafSide(slot, "HOME");
+                markLeafSide(slot, "AWAY");
+            }
+            return;
+        }
+
+        const match = byNumber.get(slot);
+        const state = match ? resultOf(match) : null;
+        if (state?.isFinished && state.actualResult === "HOME") {
+            collectEntryPath(kids[0]);
+        } else if (state?.isFinished && state.actualResult === "AWAY") {
+            collectEntryPath(kids[1]);
+        } else {
+            collectEntryPath(kids[0]);
+            collectEntryPath(kids[1]);
+        }
+    };
+
+    if (currentNumber != null) {
+        entryNumbers.add(currentNumber);
+        const kids = format.children[currentNumber];
+        if (kids) {
+            collectEntryPath(kids[0]);
+            collectEntryPath(kids[1]);
+        } else {
+            collectEntryPath(currentNumber);
+        }
+    }
+
+    const leafNumbers = Array.from(intervals.keys()).filter((slot) => stageOfSlot(format, slot) === format.leafStage);
     if (leafNumbers.length === 0) return null;
 
     interface Segment {
@@ -276,33 +249,38 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
     const segments: Segment[] = [];
 
     for (const [num, interval] of intervals) {
-        const kids = CHILDREN[num];
-        const parentPos = nodePosition(num, interval);
+        const kids = format.children[num];
+        const parentPos = nodePosition(format, num, interval);
         if (kids) {
             for (const kid of kids) {
                 const kidInterval = intervals.get(kid);
                 if (!kidInterval) continue;
-                const kidPos = nodePosition(kid, kidInterval);
+                const kidPos = nodePosition(format, kid, kidInterval);
                 segments.push({
                     x1: kidPos.x,
                     y1: kidPos.y,
                     x2: parentPos.x,
                     y2: parentPos.y,
-                    onPath: pathNumbers.has(num) && pathNumbers.has(kid),
+                    onPath: (pathNumbers.has(num) && pathNumbers.has(kid)) || (entryNumbers.has(num) && entryNumbers.has(kid)),
                 });
             }
         } else {
-            const home = polar(TEAM_RADIUS, slotAngle(interval.s + 0.5));
-            const away = polar(TEAM_RADIUS, slotAngle(interval.s + 1.5));
-            const onPath = pathNumbers.has(num);
-            segments.push({ x1: home.x, y1: home.y, x2: parentPos.x, y2: parentPos.y, onPath });
-            segments.push({ x1: away.x, y1: away.y, x2: parentPos.x, y2: parentPos.y, onPath });
+            const home = polar(TEAM_RADIUS, slotAngle(format, interval.s + 0.5));
+            const away = polar(TEAM_RADIUS, slotAngle(format, interval.s + 1.5));
+            const entrySides = entryLeafSides.get(num);
+            const homeOnPath = Boolean(entrySides?.has("HOME"));
+            const awayOnPath = Boolean(entrySides?.has("AWAY"));
+            segments.push({ x1: home.x, y1: home.y, x2: parentPos.x, y2: parentPos.y, onPath: homeOnPath });
+            segments.push({ x1: away.x, y1: away.y, x2: parentPos.x, y2: parentPos.y, onPath: awayOnPath });
         }
     }
 
-    const guideRadii = [RADIUS_BY_ROUND[5], RADIUS_BY_ROUND[27], RADIUS_BY_ROUND[28]];
+    const guideRadii = format.treeStages
+        .filter((stage) => stage !== format.leafStage && stage !== "FINAL")
+        .map((stage) => format.stageRadii[stage])
+        .filter((radius): radius is number => typeof radius === "number" && radius > 0);
 
-    const finalMatch = byNumber.get(FINAL_NUMBER);
+    const finalMatch = byNumber.get(format.finalSlot);
     const finalState = finalMatch ? resultOf(finalMatch) : null;
     const finalSides = sidesOf(finalMatch);
     const champion =
@@ -371,12 +349,15 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
                         { side: home, slot: interval.s + 0.5, isWinner: winner === "HOME", isLoser: winner === "AWAY", key: `${num}-h` },
                         { side: away, slot: interval.s + 1.5, isWinner: winner === "AWAY", isLoser: winner === "HOME", key: `${num}-a` },
                     ].map(({ side, slot, isWinner, isLoser, key }) => {
-                        const pos = polar(TEAM_RADIUS, slotAngle(slot));
+                        const pos = polar(TEAM_RADIUS, slotAngle(format, slot));
+                        const candidatePair = candidatePairForWinnerPlaceholder(side.teamName, candidatePairs);
+                        const title = displaySideName(side, candidatePair, t);
                         const crest = (
                             <TeamCrest
                                 side={side}
                                 dim={isLoser}
                                 highlight={isCurrent ? "current" : isWinner ? "winner" : "none"}
+                                candidatePair={candidatePair}
                             />
                         );
                         return (
@@ -384,7 +365,7 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
                                 key={key}
                                 className="absolute -translate-x-1/2 -translate-y-1/2"
                                 style={{ left: pct(pos.x), top: pct(pos.y), width: "7%", height: "7%" }}
-                                title={side.isPlaceholder ? t("to_be_decided") : side.teamName}
+                                title={title}
                             >
                                 {href ? (
                                     <Link href={href} prefetch={false} className="block h-full w-full">
@@ -399,12 +380,16 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
                 })}
 
                 {Array.from(intervals.keys())
-                    .filter((num) => roundOfNumber(num) >= 5 && roundOfNumber(num) !== 6 && num !== FINAL_NUMBER)
+                    .filter((num) => {
+                        const stage = stageOfSlot(format, num);
+                        return Boolean(stage && stage !== format.leafStage && stage !== "FINAL" && stage !== "THIRD_PLACE");
+                    })
                     .map((num) => {
                         const interval = intervals.get(num);
                         if (!interval) return null;
-                        const pos = nodePosition(num, interval);
-                        const round = roundOfNumber(num);
+                        const stage = stageOfSlot(format, num);
+                        if (!stage) return null;
+                        const pos = nodePosition(format, num, interval);
                         const match = byNumber.get(num);
                         const state = match ? resultOf(match) : null;
                         const label = state ? scoreLabel(state, t) : null;
@@ -414,14 +399,16 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
                         const { home, away } = sidesOf(match);
                         const href = match ? `/match/${match.event_id}?date=${match.date.slice(0, 10)}` : null;
 
-                        const crestSize = round === 5 ? 4.8 : round === 27 ? 4.2 : 3.6;
-                        const sides: { side: Side; isWinner: boolean; isLoser: boolean }[] = [
-                            { side: home, isWinner: winner === "HOME", isLoser: winner === "AWAY" },
-                            { side: away, isWinner: winner === "AWAY", isLoser: winner === "HOME" },
+                        const crestSize = stage === "R16" ? 4.8 : stage === "QF" ? 4.2 : 3.6;
+                        const homeCandidatePair = candidatePairForWinnerPlaceholder(home.teamName, candidatePairs);
+                        const awayCandidatePair = candidatePairForWinnerPlaceholder(away.teamName, candidatePairs);
+                        const homeTitle = displaySideName(home, homeCandidatePair, t);
+                        const awayTitle = displaySideName(away, awayCandidatePair, t);
+                        const sides: { side: Side; isWinner: boolean; isLoser: boolean; candidatePair: WorldCupSlotCandidatePair | null }[] = [
+                            { side: home, isWinner: winner === "HOME", isLoser: winner === "AWAY", candidatePair: homeCandidatePair },
+                            { side: away, isWinner: winner === "AWAY", isLoser: winner === "HOME", candidatePair: awayCandidatePair },
                         ];
-                        const title = home.isPlaceholder || away.isPlaceholder
-                            ? t("to_be_decided")
-                            : `${home.teamName} vs ${away.teamName}${label ? ` · ${label}` : ""}`;
+                        const title = `${homeTitle} vs ${awayTitle}${label ? ` \u00b7 ${label}` : ""}`;
 
                         const pairing = (
                             <div
@@ -433,13 +420,14 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
                                             : "bg-gray-950/45"
                                 }`}
                             >
-                                {sides.map(({ side, isWinner, isLoser }, index) => (
+                                {sides.map(({ side, isWinner, isLoser, candidatePair }, index) => (
                                     <div key={index} className="h-full" style={{ aspectRatio: "1 / 1" }}>
                                         <TeamCrest
                                             side={side}
                                             dim={isLoser}
                                             highlight={isCurrent ? "current" : isWinner ? "winner" : "none"}
                                             size={20}
+                                            candidatePair={candidatePair}
                                         />
                                     </div>
                                 ))}
@@ -479,7 +467,8 @@ export default function WorldCupBracket({ matches, slotByEventId, predictionsByE
                             <div className="flex h-full w-full flex-col items-center justify-center gap-1 rounded-full border border-amber-400/50 bg-gradient-to-b from-amber-300/25 to-amber-500/10 p-2 text-center shadow-xl backdrop-blur-sm">
                                 {champion && validTeamId(champion.teamId) ? (
                                     <TeamLogo teamId={champion.teamId} alt={champion.teamName} size={44} className="h-[46%] w-[46%] object-contain" />
-                                ) : (<Image
+                                ) : (
+                                    <Image
                                         src="/icons/world-cup-trophy.svg"
                                         alt=""
                                         aria-hidden="true"

@@ -48,6 +48,17 @@ function getVariantLabel(variant: PredictionVariantKey, t: (key: string) => stri
     return variant === "with_odds" ? t("with_odds") : t("without_odds");
 }
 
+function getBaseOddsLabel(key: string, homeTeam: string, awayTeam: string, locale: "en" | "pl"): string {
+    if (key === "odds_home_win") return locale === "pl" ? `${homeTeam} wygra` : `${homeTeam} to win`;
+    if (key === "odds_draw") return locale === "pl" ? "remis" : "draw";
+    if (key === "odds_away_win") return locale === "pl" ? `${awayTeam} wygra` : `${awayTeam} to win`;
+    return key;
+}
+
+function getMissingBaseOddsTitle(locale: "en" | "pl"): string {
+    return locale === "pl" ? "Brak kursów otwarcia" : "Missing opening odds";
+}
+
 function getStrengthTone(tier: PredictionStrengthTier): string {
     if (tier === "strong") return "text-emerald-400";
     if (tier === "lean") return "text-amber-400";
@@ -59,7 +70,7 @@ function getSignalTone(signal: PredictionSignal): string {
 }
 
 export default function MatchPredictionSidebar() {
-    const { t } = useLanguage();
+    const { locale, t } = useLanguage();
     const {
         availableVariants,
         activeVariant,
@@ -77,6 +88,7 @@ export default function MatchPredictionSidebar() {
     const missingBaseOdds = oddsAvailability?.has_base_odds === false
         ? oddsAvailability.missing_base_odds
         : [];
+    const missingBaseOddsLabels = missingBaseOdds.map((key) => getBaseOddsLabel(key, match.home_team, match.away_team, locale));
     const showWithOddsUnavailable = !availableVariants.includes("with_odds") && missingBaseOdds.length > 0;
 
     return (
@@ -116,7 +128,7 @@ export default function MatchPredictionSidebar() {
                         {t("with_odds_unavailable")}
                     </div>
                     <div className="mt-2 text-gray-600 dark:text-gray-300">
-                        {t("with_odds_missing_base")}: {missingBaseOdds.join(", ")}
+                        {getMissingBaseOddsTitle(locale)}: {missingBaseOddsLabels.join(", ")}
                     </div>
                 </div>
             )}

@@ -3,13 +3,21 @@ import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { computeStandings, type StandingRow } from "@/app/util/data/dataService";
 import { resolveSofascoreMatchResult, type ResolvedMatchResult } from "@/app/util/predictions/matchResult";
+import {
+    buildWorldCupSlotCandidatePairs,
+    candidatePairForWinnerPlaceholder,
+    formatWorldCupSlotCandidatePair,
+    type WorldCupSlotCandidatePair,
+} from "@/app/util/predictions/worldCupSlotResolver";
 import type { SofascoreMatch } from "@/types/sofascore";
 import type { PredictionMatch } from "@/types/predictions";
 import WorldCupBracket from "./WorldCupBracket";
+import { buildWorldCupKnockoutRounds, type KnockoutRoundWithMatches, type TournamentFormat } from "./bracketConfig";
 
 interface TournamentContextProps {
     matches: SofascoreMatch[];
     slotByEventId: Map<number, number>;
+    format: TournamentFormat;
     currentMatch: SofascoreMatch;
     competitionSlug: string;
     predictionMatches?: PredictionMatch[];
@@ -28,6 +36,7 @@ interface TeamMarkProps {
     teamName: string;
     t: (key: string) => string;
     align?: "left" | "right";
+    candidatePair?: WorldCupSlotCandidatePair | null;
 }
 
 interface ScoreBadgeProps {
@@ -59,6 +68,7 @@ interface FeaturedKnockoutMatchProps {
     match: SofascoreMatch;
     roundLabel: string;
     predictionsByEventId: Map<number, PredictionMatch>;
+    candidatePairs: Map<number, WorldCupSlotCandidatePair>;
     t: (key: string) => string;
 }
 
@@ -66,17 +76,14 @@ interface FeaturedTeamLogoProps {
     teamId: number;
     teamName: string;
     t: (key: string) => string;
-}
-
-interface KnockoutRoundWithMatches {
-    labelKey: string;
-    matches: SofascoreMatch[];
+    candidatePair?: WorldCupSlotCandidatePair | null;
 }
 
 interface KnockoutRoundsListProps {
     rounds: KnockoutRoundWithMatches[];
     currentMatchId: number;
     predictionsByEventId: Map<number, PredictionMatch>;
+    candidatePairs: Map<number, WorldCupSlotCandidatePair>;
     t: (key: string) => string;
 }
 
@@ -85,20 +92,11 @@ interface KnockoutSectionProps {
     slotByEventId: Map<number, number>;
     currentMatch: SofascoreMatch;
     predictionsByEventId: Map<number, PredictionMatch>;
+    format: TournamentFormat;
+    rounds: KnockoutRoundWithMatches[];
     t: (key: string) => string;
 }
-
-const GROUP_STAGE_ROUNDS = new Set([1, 2, 3]);
 const GROUP_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-const KNOCKOUT_ROUNDS = [
-    { round: 6, labelKey: "round_of_32" },
-    { round: 5, labelKey: "round_of_16" },
-    { round: 27, labelKey: "quarter_finals" },
-    { round: 28, labelKey: "semi_finals" },
-    { round: 50, labelKey: "third_place" },
-    { round: 29, labelKey: "final" },
-];
 
 const PLACEHOLDER_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+)$/;
 
@@ -151,8 +149,8 @@ function resolveDisplayMatch(
     };
 }
 
-function isGroupStageMatch(match: SofascoreMatch): boolean {
-    return GROUP_STAGE_ROUNDS.has(Number(match.round)) && validTeamId(match.home_team_id) && validTeamId(match.away_team_id);
+function isGroupStageMatch(match: SofascoreMatch, groupStageEventIds: Set<number>): boolean {
+    return groupStageEventIds.has(match.event_id) && validTeamId(match.home_team_id) && validTeamId(match.away_team_id);
 }
 
 function sortMatches(a: SofascoreMatch, b: SofascoreMatch): number {
@@ -161,8 +159,12 @@ function sortMatches(a: SofascoreMatch, b: SofascoreMatch): number {
     return a.event_id - b.event_id;
 }
 
-function detectTournamentGroups(matches: SofascoreMatch[]): TournamentGroup[] {
-    const groupMatches = matches.filter(isGroupStageMatch);
+function buildGroupStageEventIds(matches: SofascoreMatch[], format: TournamentFormat): Set<number> {
+    return new Set([...matches].sort(sortMatches).slice(0, format.groupStageMatchCount).map((match) => match.event_id));
+}
+
+function detectTournamentGroups(matches: SofascoreMatch[], groupStageEventIds: Set<number>): TournamentGroup[] {
+    const groupMatches = matches.filter((match) => isGroupStageMatch(match, groupStageEventIds));
     if (groupMatches.length === 0) return [];
 
     const parent = new Map<number, number>();
@@ -221,8 +223,8 @@ function detectTournamentGroups(matches: SofascoreMatch[]): TournamentGroup[] {
         }));
 }
 
-function resolveCurrentGroup(matches: SofascoreMatch[], homeTeamId: number, awayTeamId: number): TournamentGroup | null {
-    return detectTournamentGroups(matches).find((group) =>
+function resolveCurrentGroup(matches: SofascoreMatch[], groupStageEventIds: Set<number>, homeTeamId: number, awayTeamId: number): TournamentGroup | null {
+    return detectTournamentGroups(matches, groupStageEventIds).find((group) =>
         group.teamIds.includes(homeTeamId) || group.teamIds.includes(awayTeamId)
     ) ?? null;
 }
@@ -285,26 +287,43 @@ function rowStyle(row: StandingRow, homeTeamId: number, awayTeamId: number): str
     return "border-white/10 bg-gray-950/25";
 }
 
+function compactResultLabel(state: ResolvedMatchResult, t: (key: string) => string): string | null {
+    if (!state.regularScore) return null;
+    const base = `${state.regularScore.home}-${state.regularScore.away}`;
+    if (state.penaltyScore) return `${base} \u00b7 ${t("penalties")} ${state.penaltyScore.home}-${state.penaltyScore.away}`;
+    if (state.wentToExtraTime) return `${base} AET`;
+    return base;
+}
+
 function formatMatchScore(match: SofascoreMatch, state: ResolvedMatchResult, t: (key: string) => string): string {
-    if (state.isFinished && state.regularScore) {
-        const base = `${state.regularScore.home} - ${state.regularScore.away}`;
-        if (state.penaltyScore) return `${base} · ${t("penalties")} ${state.penaltyScore.home}-${state.penaltyScore.away}`;
-        return base;
-    }
+    if (state.isFinished) return compactResultLabel(state, t) ?? "vs";
     if (match.status === "postponed") return t("postponed");
     return "vs";
 }
 
-function displayTeamName(name: string, t: (key: string) => string): string {
+function displayTeamName(name: string, t: (key: string) => string, candidatePair: WorldCupSlotCandidatePair | null = null): string {
+    if (candidatePair) return formatWorldCupSlotCandidatePair(candidatePair, " / ");
     return isPlaceholderTeam(name) ? t("to_be_decided") : name;
 }
 
-function TeamMark({ teamId, teamName, t, align = "left" }: TeamMarkProps) {
-    const placeholder = isPlaceholderTeam(teamName);
-    const label = displayTeamName(teamName, t);
+function TeamMark({ teamId, teamName, t, align = "left", candidatePair = null }: TeamMarkProps) {
+    const placeholder = isPlaceholderTeam(teamName) && !candidatePair;
+    const label = displayTeamName(teamName, t, candidatePair);
     return (
-        <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
-            {placeholder ? (
+        <div
+            title={label}
+            className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}
+        >
+            {candidatePair ? (
+                <span className="flex h-6 w-9 shrink-0 items-center justify-center -space-x-1">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-0.5">
+                        <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={24} className="h-full w-full object-contain" />
+                    </span>
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-0.5">
+                        <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={24} className="h-full w-full object-contain" />
+                    </span>
+                </span>
+            ) : placeholder ? (
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/15 bg-gray-800 text-[9px] font-black text-gray-400">
                     ?
                 </span>
@@ -469,7 +488,21 @@ function GroupStageSection({ group, homeTeamId, awayTeamId, competitionSlug, cur
 }
 
 
-function FeaturedTeamLogo({ teamId, teamName, t }: FeaturedTeamLogoProps) {
+function FeaturedTeamLogo({ teamId, teamName, t, candidatePair = null }: FeaturedTeamLogoProps) {
+    if (candidatePair) {
+        const label = formatWorldCupSlotCandidatePair(candidatePair, " / ");
+        return (
+            <span title={label} className="flex h-11 w-20 items-center justify-center -space-x-2 sm:h-14 sm:w-24">
+                <span className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-14 sm:w-14">
+                    <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={56} className="h-full w-full object-contain" />
+                </span>
+                <span className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-14 sm:w-14">
+                    <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={56} className="h-full w-full object-contain" />
+                </span>
+            </span>
+        );
+    }
+
     if (isPlaceholderTeam(teamName) || !validTeamId(teamId)) {
         return (
             <span
@@ -484,8 +517,13 @@ function FeaturedTeamLogo({ teamId, teamName, t }: FeaturedTeamLogoProps) {
     return <TeamLogo teamId={teamId} alt={teamName} size={56} className="h-11 w-11 object-contain sm:h-14 sm:w-14" />;
 }
 
-function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, t }: FeaturedKnockoutMatchProps) {
+function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, candidatePairs, t }: FeaturedKnockoutMatchProps) {
     const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
+    const scoreText = state.isFinished ? compactResultLabel(state, t) : null;
+    const homeCandidatePair = candidatePairForWinnerPlaceholder(match.home_team, candidatePairs);
+    const awayCandidatePair = candidatePairForWinnerPlaceholder(match.away_team, candidatePairs);
+    const homeLabel = displayTeamName(match.home_team, t, homeCandidatePair);
+    const awayLabel = displayTeamName(match.away_team, t, awayCandidatePair);
     const winnerName = state.decidedByPenalties && state.actualResult
         ? (state.actualResult === "HOME" ? match.home_team : state.actualResult === "AWAY" ? match.away_team : null)
         : null;
@@ -506,26 +544,21 @@ function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, t }: F
             </div>
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-6">
                 <div className="flex min-w-0 flex-col items-center gap-2 text-center">
-                    <FeaturedTeamLogo teamId={match.home_team_id} teamName={match.home_team} t={t} />
-                    <span className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
-                        {displayTeamName(match.home_team, t)}
+                    <FeaturedTeamLogo teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidatePair} t={t} />
+                    <span title={homeLabel} className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
+                        {homeLabel}
                     </span>
                 </div>
                 <div className="flex flex-col items-center gap-1">
                     <span className="rounded-xl bg-gray-950 px-3 py-2 text-lg font-black text-white">
-                        {state.isFinished && state.regularScore ? `${state.regularScore.home} - ${state.regularScore.away}` : "vs"}
+                        {scoreText ?? "vs"}
                     </span>
-                    {state.penaltyScore && (
-                        <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
-                            {t("penalties")} {state.penaltyScore.home} - {state.penaltyScore.away}
-                        </span>
-                    )}
                     <span className="text-[10px] font-bold text-gray-400">{match.date.slice(5, 10)}</span>
                 </div>
                 <div className="flex min-w-0 flex-col items-center gap-2 text-center">
-                    <FeaturedTeamLogo teamId={match.away_team_id} teamName={match.away_team} t={t} />
-                    <span className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
-                        {displayTeamName(match.away_team, t)}
+                    <FeaturedTeamLogo teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} t={t} />
+                    <span title={awayLabel} className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
+                        {awayLabel}
                     </span>
                 </div>
             </div>
@@ -540,53 +573,81 @@ function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, t }: F
     );
 }
 
-function KnockoutRoundsList({ rounds, currentMatchId, predictionsByEventId, t }: KnockoutRoundsListProps) {
+function roundColumn(stage: KnockoutRoundWithMatches["stage"], hasRoundOf32: boolean): number {
+    if (hasRoundOf32) {
+        if (stage === "R32") return 0;
+        if (stage === "R16" || stage === "SF") return 1;
+        return 2;
+    }
+    if (stage === "R16") return 0;
+    if (stage === "QF" || stage === "THIRD_PLACE") return 1;
+    return 2;
+}
+
+function groupRoundsIntoColumns(rounds: KnockoutRoundWithMatches[]): KnockoutRoundWithMatches[][] {
+    const hasRoundOf32 = rounds.some((round) => round.stage === "R32");
+    const columns: KnockoutRoundWithMatches[][] = [[], [], []];
+    for (const round of rounds) columns[roundColumn(round.stage, hasRoundOf32)].push(round);
+    return columns.filter((column) => column.length > 0);
+}
+
+function KnockoutRoundsList({ rounds, currentMatchId, predictionsByEventId, candidatePairs, t }: KnockoutRoundsListProps) {
+    const columns = groupRoundsIntoColumns(rounds);
     return (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {rounds.map((round) => (
-                <div key={round.labelKey} className="rounded-xl border border-white/10 bg-gray-950/25 p-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-                            {t(round.labelKey)}
-                        </span>
-                        <span className="rounded-full bg-gray-950/60 px-2 py-0.5 text-[10px] font-black text-gray-400">
-                            {round.matches.length}
-                        </span>
-                    </div>
-                    <div className="space-y-1.5">
-                        {round.matches.map((match) => {
-                            const isCurrent = match.event_id === currentMatchId;
-                            const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
-                            return (
-                                <Link
-                                    key={match.event_id}
-                                    href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
-                                    prefetch={false}
-                                    className={`grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors ${isCurrent ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-gray-950/40 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
-                                >
-                                    <TeamMark teamId={match.home_team_id} teamName={match.home_team} t={t} />
-                                    <ScoreBadge tone={isCurrent ? "current" : "default"}>{formatMatchScore(match, state, t)}</ScoreBadge>
-                                    <TeamMark teamId={match.away_team_id} teamName={match.away_team} t={t} align="right" />
-                                </Link>
-                            );
-                        })}
-                    </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 xl:items-start">
+            {columns.map((column, columnIndex) => (
+                <div key={columnIndex} className="space-y-4">
+                    {column.map((round) => (
+                        <div key={round.labelKey} className="rounded-xl border border-white/10 bg-gray-950/25 p-3">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
+                                    {t(round.labelKey)}
+                                </span>
+                                <span className="rounded-full bg-gray-950/60 px-2 py-0.5 text-[10px] font-black text-gray-400">
+                                    {round.matches.length}
+                                </span>
+                            </div>
+                            <div className="space-y-1.5">
+                                {round.matches.map((match) => {
+                                    const isCurrent = match.event_id === currentMatchId;
+                                    const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
+                                    const homeCandidatePair = candidatePairForWinnerPlaceholder(match.home_team, candidatePairs);
+                                    const awayCandidatePair = candidatePairForWinnerPlaceholder(match.away_team, candidatePairs);
+                                    return (
+                                        <Link
+                                            key={match.event_id}
+                                            href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
+                                            prefetch={false}
+                                            className={`grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors ${isCurrent ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-gray-950/40 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
+                                        >
+                                            <TeamMark teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidatePair} t={t} />
+                                            <ScoreBadge tone={isCurrent ? "current" : "default"}>{formatMatchScore(match, state, t)}</ScoreBadge>
+                                            <TeamMark teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} t={t} align="right" />
+                                        </Link>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
                 </div>
             ))}
         </div>
     );
 }
 
-function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEventId, t }: KnockoutSectionProps) {
-    const rounds = KNOCKOUT_ROUNDS.map((round) => ({
-        ...round,
-        matches: matches.filter((match) => Number(match.round) === round.round).sort(sortMatches),
-    })).filter((round) => round.matches.length > 0);
+function hasCompleteBracket(format: TournamentFormat, slotByEventId: Map<number, number>, currentMatchId: number): boolean {
+    const currentSlot = slotByEventId.get(currentMatchId);
+    if (currentSlot == null || format.stageBySlot[currentSlot] === "THIRD_PLACE") return false;
+    const mappedSlots = new Set(slotByEventId.values());
+    return format.leafSlots.every((slot) => mappedSlots.has(slot));
+}
 
+function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEventId, format, rounds, t }: KnockoutSectionProps) {
     if (rounds.length === 0) return null;
 
     const currentRound = rounds.find((round) => round.matches.some((match) => match.event_id === currentMatch.event_id)) ?? rounds[0];
-    const hasFullBracket = matches.some((match) => Number(match.round) === 6);
+    const hasFullBracket = hasCompleteBracket(format, slotByEventId, currentMatch.event_id);
+    const candidatePairs = buildWorldCupSlotCandidatePairs(matches, slotByEventId);
 
     return (
         <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
@@ -608,13 +669,16 @@ function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEv
                         match={currentMatch}
                         roundLabel={t(currentRound.labelKey)}
                         predictionsByEventId={predictionsByEventId}
+                        candidatePairs={candidatePairs}
                         t={t}
                     />
                     {hasFullBracket && (
                         <WorldCupBracket
+                            format={format}
                             matches={matches}
                             slotByEventId={slotByEventId}
                             predictionsByEventId={predictionsByEventId}
+                            candidatePairs={candidatePairs}
                             currentMatchId={currentMatch.event_id}
                             t={t}
                         />
@@ -624,26 +688,27 @@ function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEv
                     rounds={rounds}
                     currentMatchId={currentMatch.event_id}
                     predictionsByEventId={predictionsByEventId}
+                    candidatePairs={candidatePairs}
                     t={t}
                 />
             </div>
         </section>
     );
 }
-
-
-export default function TournamentContext({ matches, slotByEventId, currentMatch, competitionSlug, predictionMatches, t }: TournamentContextProps) {
+export default function TournamentContext({ matches, slotByEventId, format, currentMatch, competitionSlug, predictionMatches, t }: TournamentContextProps) {
     const teamIds = buildTeamIds(matches);
     const predictionsByEventId = predictionMap(predictionMatches);
     const displayMatches = matches.map((match) => resolveDisplayMatch(match, predictionsByEventId, teamIds));
     const displayCurrentMatch = resolveDisplayMatch(currentMatch, predictionsByEventId, teamIds);
     const displayHomeTeamId = displayCurrentMatch.home_team_id;
     const displayAwayTeamId = displayCurrentMatch.away_team_id;
-    const currentRound = Number(displayCurrentMatch.round);
-    const currentGroup = GROUP_STAGE_ROUNDS.has(currentRound)
-        ? resolveCurrentGroup(displayMatches, displayHomeTeamId, displayAwayTeamId)
+    const groupStageEventIds = buildGroupStageEventIds(displayMatches, format);
+    const knockoutRounds = buildWorldCupKnockoutRounds(displayMatches, format);
+    const knockoutMatches = knockoutRounds.flatMap((round) => round.matches);
+    const currentIsKnockout = knockoutMatches.some((match) => match.event_id === displayCurrentMatch.event_id);
+    const currentGroup = !currentIsKnockout && groupStageEventIds.has(displayCurrentMatch.event_id)
+        ? resolveCurrentGroup(displayMatches, groupStageEventIds, displayHomeTeamId, displayAwayTeamId)
         : null;
-    const knockoutMatches = displayMatches.filter((match) => KNOCKOUT_ROUNDS.some((round) => round.round === Number(match.round)));
 
     if (currentGroup) {
         return (
@@ -667,6 +732,8 @@ export default function TournamentContext({ matches, slotByEventId, currentMatch
             slotByEventId={slotByEventId}
             currentMatch={displayCurrentMatch}
             predictionsByEventId={predictionsByEventId}
+            format={format}
+            rounds={knockoutRounds}
             t={t}
         />
     );

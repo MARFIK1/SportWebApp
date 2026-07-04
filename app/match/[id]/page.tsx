@@ -19,9 +19,10 @@ import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 import TournamentContext from "./TournamentContext";
-import { computeKnockoutSlots } from "./WorldCupBracket";
+import { computeWorldCupBracketSlots, detectWorldCupFormat } from "./bracketConfig";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
 import { parseScorePair, resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
+import { buildWorldCupSlotCandidatePairs, candidatePairForWinnerPlaceholder, formatWorldCupSlotCandidatePair, resolveWorldCupCandidatePlaceholderName, resolveWorldCupPredictionMatches, type WorldCupSlotCandidatePair } from "@/app/util/predictions/worldCupSlotResolver";
 
 interface StatDefinition {
     label: string;
@@ -94,6 +95,7 @@ function reportOnlyMatch(
 
     const teamIds = buildMatchLookupMaps([competition]).teamIds;
     const score = parseScorePair(predMatch.actual_score);
+    const extraTimeScore = parseScorePair(predMatch.actual_extra_time_score);
     const date = reportMatchDate(reportDate, predMatch.start_time);
 
     return {
@@ -110,6 +112,8 @@ function reportOnlyMatch(
             away_score: score?.away ?? null,
             home_score_ht: null,
             away_score_ht: null,
+            home_score_et: extraTimeScore?.home ?? null,
+            away_score_et: extraTimeScore?.away ?? null,
             status: predMatch.status,
             season: date.slice(0, 4),
         } as SofascoreMatch,
@@ -295,6 +299,17 @@ function collectNearbyPredictionMatches(date: string, radiusDays = 21): Predicti
     return Array.from(matchesByEventId.values());
 }
 
+function resolvedSelectedPredictionMatches(selectedMatches: PredictionMatch[], resolvedMatches: PredictionMatch[]): PredictionMatch[] {
+    const resolvedByEventId = new Map<number, PredictionMatch>();
+    for (const match of resolvedMatches) {
+        if (typeof match.event_id === "number") resolvedByEventId.set(match.event_id, match);
+    }
+
+    return selectedMatches.map((match) => {
+        if (typeof match.event_id !== "number") return match;
+        return resolvedByEventId.get(match.event_id) ?? match;
+    });
+}
 function buildDisplayTeamIds(
     competition: Competition,
     competitionMatches: SofascoreMatch[],
@@ -359,6 +374,60 @@ function resolveReportBackedSeasonMatches(
     return matches.map((match) => resolveReportBackedMatchTeams(match, predictionsByEventId.get(match.event_id), teamIds));
 }
 
+function displayTeamName(teamName: string, candidatePair: WorldCupSlotCandidatePair | null): string {
+    return candidatePair ? formatWorldCupSlotCandidatePair(candidatePair, " / ") : teamName;
+}
+
+function resolvePredictionCandidateNames(match: PredictionMatch, candidatePairs: Map<number, WorldCupSlotCandidatePair>): PredictionMatch {
+    const homeTeam = resolveWorldCupCandidatePlaceholderName(match.home_team, candidatePairs);
+    const awayTeam = resolveWorldCupCandidatePlaceholderName(match.away_team, candidatePairs);
+    if (homeTeam === match.home_team && awayTeam === match.away_team) return match;
+    return { ...match, home_team: homeTeam, away_team: awayTeam };
+}
+
+function MatchHeaderTeam({ teamId, teamName, candidatePair }: { teamId: number; teamName: string; candidatePair: WorldCupSlotCandidatePair | null }) {
+    const label = displayTeamName(teamName, candidatePair);
+    return (
+        <div className="flex min-w-0 flex-col items-center">
+            <div className="flex h-16 w-full items-center justify-center sm:h-24">
+                {candidatePair ? (
+                    <div className="flex items-center justify-center -space-x-3" title={label}>
+                        <span className="flex h-14 w-14 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-20 sm:w-20">
+                            <TeamLogo
+                                teamId={candidatePair.home.teamId}
+                                alt={candidatePair.home.teamName}
+                                size={80}
+                                loading="eager"
+                                className="h-full w-full object-contain"
+                            />
+                        </span>
+                        <span className="flex h-14 w-14 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-20 sm:w-20">
+                            <TeamLogo
+                                teamId={candidatePair.away.teamId}
+                                alt={candidatePair.away.teamName}
+                                size={80}
+                                loading="eager"
+                                className="h-full w-full object-contain"
+                            />
+                        </span>
+                    </div>
+                ) : (
+                    <TeamLogo
+                        teamId={teamId}
+                        alt={teamName}
+                        size={96}
+                        loading="eager"
+                        className="h-14 w-14 object-contain sm:h-20 sm:w-20"
+                    />
+                )}
+            </div>
+            <span className="mt-2 block min-h-10 min-w-0 line-clamp-2 break-words text-center text-sm font-semibold leading-tight sm:mt-3 sm:min-h-12 sm:text-lg">
+                {label}
+            </span>
+        </div>
+    );
+}
+
 export async function generateMetadata({ params, searchParams }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const resolvedSearchParams = await searchParams;
@@ -374,22 +443,41 @@ export async function generateMetadata({ params, searchParams }: PageProps): Pro
     const worldCupCompetition = resolveWorldCupCompetition(result.competition, competitions);
     const contextCompetition = worldCupCompetition ?? result.competition;
     const competitionMatches = loadContextMatches(contextCompetition, reportDate?.slice(0, 4) ?? result.match.date.slice(0, 4));
+    const metadataSeasonMatches = worldCupCompetition ? resolveSeasonMatches(result.match, competitionMatches) : competitionMatches;
     const selectedPredictionMatches = predReport?.matches ?? [];
     const nearbyPredictionMatches = worldCupCompetition && reportDate
         ? collectNearbyPredictionMatches(reportDate)
         : selectedPredictionMatches;
-    const predictionMatches = nearbyPredictionMatches.length > 0 ? nearbyPredictionMatches : selectedPredictionMatches;
-    const predMatch = (predReport ? findPredictionMatch(predReport, eventId, result.match.home_team, result.match.away_team) : null) ??
+    const rawPredictionMatches = nearbyPredictionMatches.length > 0 ? nearbyPredictionMatches : selectedPredictionMatches;
+    const predictionMatches = worldCupCompetition
+        ? resolveWorldCupPredictionMatches(rawPredictionMatches, metadataSeasonMatches)
+        : rawPredictionMatches;
+    const selectedResolvedPredictionMatches = worldCupCompetition
+        ? resolvedSelectedPredictionMatches(selectedPredictionMatches, predictionMatches)
+        : selectedPredictionMatches;
+    const selectedPredictionReport = predReport ? { ...predReport, matches: selectedResolvedPredictionMatches } : null;
+    const predMatch = (selectedPredictionReport ? findPredictionMatch(selectedPredictionReport, eventId, result.match.home_team, result.match.away_team) : null) ??
         predictionMatches.find((item) => String(item.event_id) === String(eventId)) ??
         null;
-    const teamIds = buildDisplayTeamIds(contextCompetition, competitionMatches, predictionMatches);
+    const teamIds = buildDisplayTeamIds(contextCompetition, metadataSeasonMatches, predictionMatches);
     const match = resolveReportBackedMatchTeams(result.match, predMatch, teamIds);
-
+    const resolvedMetadataMatches = worldCupCompetition
+        ? resolveReportBackedSeasonMatches(metadataSeasonMatches, predictionMatches, teamIds)
+        : metadataSeasonMatches;
+    const metadataFormat = worldCupCompetition ? detectWorldCupFormat(match, metadataSeasonMatches) : null;
+    const metadataSlotByEventId = metadataFormat
+        ? computeWorldCupBracketSlots(metadataSeasonMatches, metadataFormat)
+        : new Map<number, number>();
+    const metadataCandidatePairs = metadataFormat
+        ? buildWorldCupSlotCandidatePairs(resolvedMetadataMatches, metadataSlotByEventId)
+        : new Map<number, WorldCupSlotCandidatePair>();
+    const metadataHomeTeam = displayTeamName(match.home_team, candidatePairForWinnerPlaceholder(match.home_team, metadataCandidatePairs));
+    const metadataAwayTeam = displayTeamName(match.away_team, candidatePairForWinnerPlaceholder(match.away_team, metadataCandidatePairs));
     const matchResult = resolveSofascoreMatchResult(match, null);
     const score = matchResult.regularScore ? ` ${matchResult.regularScore.home}-${matchResult.regularScore.away}` : "";
     return {
-        title: `${match.home_team} vs ${match.away_team}${score}`,
-        description: `${match.home_team} vs ${match.away_team} - match statistics, predictions, and head-to-head`,
+        title: `${metadataHomeTeam} vs ${metadataAwayTeam}${score}`,
+        description: `${metadataHomeTeam} vs ${metadataAwayTeam} - match statistics, predictions, and head-to-head`,
     };
 }
 
@@ -422,20 +510,43 @@ export default async function Match({ params, searchParams }: PageProps) {
     const competitionMatches = loadContextMatches(contextCompetition, date.slice(0, 4));
     const selectedPredictionMatches = predReport?.matches ?? [];
     const isWorldCupMatch = Boolean(worldCupCompetition);
+    const rawWorldCupSeasonMatches = isWorldCupMatch
+        ? resolveSeasonMatches(sourceMatch, competitionMatches)
+        : [];
     const nearbyPredictionMatches = isWorldCupMatch ? collectNearbyPredictionMatches(date) : selectedPredictionMatches;
-    const predictionMatches = nearbyPredictionMatches.length > 0 ? nearbyPredictionMatches : selectedPredictionMatches;
-    const displayTeamIds = buildDisplayTeamIds(contextCompetition, competitionMatches, predictionMatches);
-    const predMatch = (predReport ? findPredictionMatch(predReport, eventId, sourceMatch.home_team, sourceMatch.away_team) : null) ??
+    const rawPredictionMatches = nearbyPredictionMatches.length > 0 ? nearbyPredictionMatches : selectedPredictionMatches;
+    const predictionMatches = isWorldCupMatch
+        ? resolveWorldCupPredictionMatches(rawPredictionMatches, rawWorldCupSeasonMatches)
+        : rawPredictionMatches;
+    const selectedResolvedPredictionMatches = isWorldCupMatch
+        ? resolvedSelectedPredictionMatches(selectedPredictionMatches, predictionMatches)
+        : selectedPredictionMatches;
+    const selectedPredictionReport = predReport ? { ...predReport, matches: selectedResolvedPredictionMatches } : null;
+    const displayTeamIds = buildDisplayTeamIds(contextCompetition, rawWorldCupSeasonMatches.length > 0 ? rawWorldCupSeasonMatches : competitionMatches, predictionMatches);
+    const predMatch = (selectedPredictionReport ? findPredictionMatch(selectedPredictionReport, eventId, sourceMatch.home_team, sourceMatch.away_team) : null) ??
         predictionMatches.find((item) => String(item.event_id) === String(eventId)) ??
         null;
     const match = resolveReportBackedMatchTeams(sourceMatch, predMatch, displayTeamIds);
     const resolvedCompetitionMatches = isWorldCupMatch
-        ? resolveReportBackedSeasonMatches(competitionMatches, predictionMatches, displayTeamIds)
+        ? resolveReportBackedSeasonMatches(rawWorldCupSeasonMatches, predictionMatches, displayTeamIds)
         : competitionMatches;
-    const sameSeasonMatches = resolveSeasonMatches(match, resolvedCompetitionMatches);
-    const knockoutSlotByEventId = isWorldCupMatch
-        ? computeKnockoutSlots(resolveSeasonMatches(match, competitionMatches))
+    const sameSeasonMatches = isWorldCupMatch
+        ? resolvedCompetitionMatches
+        : resolveSeasonMatches(match, resolvedCompetitionMatches);
+    const worldCupFormat = isWorldCupMatch
+        ? detectWorldCupFormat(match, rawWorldCupSeasonMatches)
+        : null;
+    const knockoutSlotByEventId = worldCupFormat
+        ? computeWorldCupBracketSlots(rawWorldCupSeasonMatches, worldCupFormat)
         : new Map<number, number>();
+    const worldCupSlotCandidatePairs = worldCupFormat
+        ? buildWorldCupSlotCandidatePairs(sameSeasonMatches, knockoutSlotByEventId)
+        : new Map<number, WorldCupSlotCandidatePair>();
+    const homeCandidatePair = candidatePairForWinnerPlaceholder(match.home_team, worldCupSlotCandidatePairs);
+    const awayCandidatePair = candidatePairForWinnerPlaceholder(match.away_team, worldCupSlotCandidatePairs);
+    const displayHomeTeam = displayTeamName(match.home_team, homeCandidatePair);
+    const displayAwayTeam = displayTeamName(match.away_team, awayCandidatePair);
+    const displayPredMatch = predMatch ? resolvePredictionCandidateNames(predMatch, worldCupSlotCandidatePairs) : null;
     const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(sameSeasonMatches) : null;
     const leagueStandings = leagueTableContext
         ? computeStandings(leagueTableContext.standingsMatches)
@@ -447,9 +558,10 @@ export default async function Match({ params, searchParams }: PageProps) {
     const analysisReport = loadAnalysisReport(date);
 
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
-    const rawAnalysis = analysisReport?.matches?.[analysisKey] ?? null;
-
-    const { displayHomeScore, displayAwayScore, penaltyScore, decidedByPenalties, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
+    const sourceAnalysisKey = `${sourceMatch.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${sourceMatch.away_team.toLowerCase().replace(/\s+/g, "_")}`;
+    const rawAnalysis = analysisReport?.matches?.[analysisKey] ?? analysisReport?.matches?.[sourceAnalysisKey] ?? null;
+    const { displayHomeScore, displayAwayScore, normalTimeScore, extraTimeScore, penaltyScore, wentToExtraTime, decidedByPenalties, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
+    const finishedStatusLabel = penaltyScore ? t("penalties") : wentToExtraTime ? "AET" : t("full_time");
     const penaltyWinnerName = decidedByPenalties && actualResult
         ? (actualResult === "HOME" ? match.home_team : actualResult === "AWAY" ? match.away_team : null)
         : null;
@@ -542,18 +654,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                         </div>
 
                         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-8">
-                            <div className="flex min-w-0 flex-col items-center">
-                                <div className="flex h-16 w-full items-center justify-center sm:h-24">
-                                    <TeamLogo
-                                        teamId={match.home_team_id}
-                                        alt={match.home_team}
-                                        size={96}
-                                        loading="eager"
-                                        className="h-14 w-14 object-contain sm:h-20 sm:w-20"
-                                    />
-                                </div>
-                                <span className="mt-2 block min-h-10 min-w-0 line-clamp-2 break-words text-center text-sm font-semibold leading-tight sm:mt-3 sm:min-h-12 sm:text-lg">{match.home_team}</span>
-                            </div>
+                            <MatchHeaderTeam teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidatePair} />
 
                             <div className="flex min-w-[74px] flex-col items-center gap-2 sm:min-w-[120px]">
                                 {isFinished ? (
@@ -562,8 +663,18 @@ export default async function Match({ params, searchParams }: PageProps) {
                                             {displayHomeScore} - {displayAwayScore}
                                         </span>
                                         <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white sm:px-3 sm:text-xs">
-                                            {t("full_time")}
+                                            {finishedStatusLabel}
                                         </span>
+                                        {wentToExtraTime && normalTimeScore && (
+                                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                                                90&apos;: {normalTimeScore.home} - {normalTimeScore.away}
+                                            </span>
+                                        )}
+                                        {wentToExtraTime && extraTimeScore && (extraTimeScore.home !== 0 || extraTimeScore.away !== 0) && (
+                                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                                                ET: {extraTimeScore.home} - {extraTimeScore.away}
+                                            </span>
+                                        )}
                                         {penaltyScore && (
                                             <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
                                                 {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
@@ -590,18 +701,7 @@ export default async function Match({ params, searchParams }: PageProps) {
                                 )}
                             </div>
 
-                            <div className="flex min-w-0 flex-col items-center">
-                                <div className="flex h-16 w-full items-center justify-center sm:h-24">
-                                    <TeamLogo
-                                        teamId={match.away_team_id}
-                                        alt={match.away_team}
-                                        size={96}
-                                        loading="eager"
-                                        className="h-14 w-14 object-contain sm:h-20 sm:w-20"
-                                    />
-                                </div>
-                                <span className="mt-2 block min-h-10 min-w-0 line-clamp-2 break-words text-center text-sm font-semibold leading-tight sm:mt-3 sm:min-h-12 sm:text-lg">{match.away_team}</span>
-                            </div>
+                            <MatchHeaderTeam teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} />
                         </div>
                     </div>
 
@@ -628,15 +728,15 @@ export default async function Match({ params, searchParams }: PageProps) {
 
                     {(predMatch || analysis) && (
                         <div className="mb-6 space-y-6">
-                            {analysis && <TeamRadar analysis={analysis} homeTeam={match.home_team} awayTeam={match.away_team} />}
-                            {predMatch && <PredictionTriangle homeTeam={match.home_team} awayTeam={match.away_team} actualResult={isFinished ? actualResult : null} />}
+                            {analysis && <TeamRadar analysis={analysis} homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} />}
+                            {displayPredMatch && <PredictionTriangle homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} actualResult={isFinished ? actualResult : null} />}
                         </div>
                     )}
 
                     {isFinished && actualResult && displayHomeScore != null && displayAwayScore != null && (
                         <PostMatchInsights
-                            homeTeam={match.home_team}
-                            awayTeam={match.away_team}
+                            homeTeam={displayHomeTeam}
+                            awayTeam={displayAwayTeam}
                             homeScore={displayHomeScore}
                             awayScore={displayAwayScore}
                             actualResult={actualResult}
@@ -652,8 +752,8 @@ export default async function Match({ params, searchParams }: PageProps) {
 
                     {(h2h.length > 0 || homeRecent.length > 0 || awayRecent.length > 0) && (
                         <MatchHistoryTabs
-                            homeTeam={match.home_team}
-                            awayTeam={match.away_team}
+                            homeTeam={displayHomeTeam}
+                            awayTeam={displayAwayTeam}
                             homeTeamId={match.home_team_id}
                             awayTeamId={match.away_team_id}
                             h2h={h2h.map(toHistoryItem)}
@@ -665,14 +765,14 @@ export default async function Match({ params, searchParams }: PageProps) {
                 </div>
 
                 <div className="w-full space-y-6 lg:w-[540px] xl:w-[680px]">
-                    {predMatch && (
+                    {displayPredMatch && (
                         <PredictionExplanation
-                            homeTeam={match.home_team}
-                            awayTeam={match.away_team}
+                            homeTeam={displayHomeTeam}
+                            awayTeam={displayAwayTeam}
                             analysis={analysis}
                         />
                     )}
-                    {predMatch && <MatchPredictionSidebar />}
+                    {displayPredMatch && <MatchPredictionSidebar />}
                     <CompactLeagueTable
                         standings={leagueStandings}
                         homeTeamId={match.home_team_id}
@@ -742,11 +842,12 @@ export default async function Match({ params, searchParams }: PageProps) {
                 </div>
             </div>
 
-            {isWorldCupMatch && (
+            {isWorldCupMatch && worldCupFormat && (
                 <div className="mt-6">
                     <TournamentContext
                         matches={sameSeasonMatches}
                         slotByEventId={knockoutSlotByEventId}
+                        format={worldCupFormat}
                         currentMatch={match}
                         competitionSlug={contextCompetition.slug}
                         predictionMatches={predictionMatches}
@@ -755,14 +856,14 @@ export default async function Match({ params, searchParams }: PageProps) {
                 </div>
             )}
 
-            {predMatch && <MatchPredictions />}
+            {displayPredMatch && <MatchPredictions />}
         </>
     );
 
     return (
         <div className="mx-auto flex w-full max-w-[1680px] flex-col px-3 py-5 text-gray-900 dark:text-white sm:px-6 sm:py-8">
-            {predMatch ? (
-                <MatchPredictionVariantProvider key={predMatch.id} match={predMatch} matchFinished={isFinished}>
+            {displayPredMatch ? (
+                <MatchPredictionVariantProvider key={displayPredMatch.id} match={displayPredMatch} matchFinished={isFinished}>
                     {content}
                 </MatchPredictionVariantProvider>
             ) : (
