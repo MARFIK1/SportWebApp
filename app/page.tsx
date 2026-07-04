@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { listReportDates, loadPredictionReport } from "./util/data/predictionService";
-import { getCompetitionDisplayGroup, isFeaturedCompetition, resolveCompetitionByDataPath } from "./util/league/leagueRegistry";
-import { buildMatchLookupMaps } from "./util/data/dataService";
+import { getCompetitionDisplayGroup, isFeaturedCompetition, resolveCompetitionByDataPath, type Competition } from "./util/league/leagueRegistry";
+import { buildMatchLookupMaps, findMatchInCompetitions } from "./util/data/dataService";
 import DatePicker from "./components/home/DatePicker";
 import HomeLeagueList from "./components/home/HomeLeagueList";
 import { getServerT } from "./util/i18n/getLocale";
 import { normalizeReportDate, todayYmd } from "./util/data/dateUtils";
 import { getMatchConsensusConfidence, isHighConfidenceMatch } from "./util/predictions/confidence";
 import type { PredictionMatch } from "@/types/predictions";
+import { formatScorePair, resolveSofascoreMatchResult } from "./util/predictions/matchResult";
+import { isWorldCupPlaceholderTeamName, resolveWorldCupReportMatches } from "./util/predictions/worldCupSlotResolver";
 
 export const metadata: Metadata = {
     title: "Home",
@@ -20,7 +22,6 @@ interface PageProps {
 }
 
 const REPORT_DAYS_PAST = 30;
-const REPORT_DAYS_FUTURE = 2;
 const DAILY_DATE_WINDOW_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -42,7 +43,12 @@ function getDayOffset(date: string, todayIso: string): number | null {
 
 function isInReportDateWindow(date: string, todayIso: string): boolean {
     const offset = getDayOffset(date, todayIso);
-    return offset !== null && offset >= -REPORT_DAYS_PAST && offset <= REPORT_DAYS_FUTURE;
+    return offset !== null && offset >= -REPORT_DAYS_PAST;
+}
+
+function isInDailyDateWindow(date: string, todayIso: string): boolean {
+    const offset = getDayOffset(date, todayIso);
+    return offset !== null && Math.abs(offset) <= DAILY_DATE_WINDOW_DAYS;
 }
 
 function addDailyDateWindow(expandedDates: Set<string>, anchor: string) {
@@ -54,38 +60,43 @@ function addDailyDateWindow(expandedDates: Set<string>, anchor: string) {
     }
 }
 
-function addDateRange(expandedDates: Set<string>, startDate: string, endDate: string, todayIso: string) {
-    const startTime = parseDateUtc(startDate);
-    const endTime = parseDateUtc(endDate);
-    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) return;
-
-    for (let time = startTime; time <= endTime; time += MS_PER_DAY) {
-        const date = formatDateUtc(time);
-        if (isInReportDateWindow(date, todayIso)) {
-            expandedDates.add(date);
-        }
-    }
-}
-
 function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
-    if (requestedDate && isInReportDateWindow(requestedDate, todayIso)) {
+    if (requestedDate && (dates.includes(requestedDate) || isInDailyDateWindow(requestedDate, todayIso))) {
         return requestedDate;
     }
+    if (dates.includes(todayIso)) return todayIso;
 
-    return todayIso || dates[dates.length - 1] || "";
+    const visibleReportDates = dates.filter((date) => isInReportDateWindow(date, todayIso));
+    return visibleReportDates[visibleReportDates.length - 1] || dates[dates.length - 1] || todayIso || "";
 }
 
 function getDatePickerDates(dates: string[], todayIso: string): string[] {
     const reportDates = dates.filter((date) => isInReportDateWindow(date, todayIso));
     const expandedDates = new Set(reportDates);
-    if (reportDates.length > 0) {
-        addDateRange(expandedDates, reportDates[0], reportDates[reportDates.length - 1], todayIso);
-    }
     addDailyDateWindow(expandedDates, todayIso);
 
     return Array.from(expandedDates).sort((a, b) => a.localeCompare(b));
 }
 
+function hasConfirmedTeams(match: PredictionMatch): boolean {
+    return !isWorldCupPlaceholderTeamName(match.home_team) && !isWorldCupPlaceholderTeamName(match.away_team);
+}
+function enrichPredictionMatchTiming(match: PredictionMatch, competitions: Competition[]): PredictionMatch {
+    const eventId = typeof match.event_id === "number" ? match.event_id : null;
+    if (eventId === null) return match;
+
+    const sourceMatch = findMatchInCompetitions(eventId, competitions)?.match;
+    if (!sourceMatch) return match;
+
+    const state = resolveSofascoreMatchResult(sourceMatch, match);
+    if (!state.wentToExtraTime) return match;
+
+    return {
+        ...match,
+        actual_extra_time_score: state.extraTimeScore ? formatScorePair(state.extraTimeScore) : match.actual_extra_time_score ?? null,
+        actual_normal_time_score: state.normalTimeScore ? formatScorePair(state.normalTimeScore) : match.actual_normal_time_score ?? null,
+    };
+}
 export default async function Home({ searchParams }: PageProps) {
     const resolvedSearchParams = await searchParams;
     const dates = listReportDates();
@@ -107,14 +118,16 @@ export default async function Home({ searchParams }: PageProps) {
         );
     }
 
-    const matches = report?.matches ?? [];
-    const leagueDataPaths = Array.from(new Set(matches.map((m) => `${m.comp_type}/${m.league}`)));
+    const rawReportMatches = report?.matches ?? [];
+    const leagueDataPaths = Array.from(new Set(rawReportMatches.map((m) => `${m.comp_type}/${m.league}`)));
     const competitions = leagueDataPaths.flatMap((dataPath) => {
         const comp = resolveCompetitionByDataPath(dataPath);
         return comp ? [comp] : [];
     });
     const { teamIds, eventIds } = buildMatchLookupMaps(competitions);
-
+    const reportMatches = resolveWorldCupReportMatches(rawReportMatches, competitions, dates, selectedDate)
+        .filter(hasConfirmedTeams);
+    const matches = reportMatches.map((match) => enrichPredictionMatchTiming(match, competitions));
     const matchesByLeague: Record<string, PredictionMatch[]> = {};
     for (const match of matches) {
         const key = `${match.comp_type}/${match.league}`;
@@ -144,9 +157,9 @@ export default async function Home({ searchParams }: PageProps) {
         return a.leagueName.localeCompare(b.leagueName);
     });
 
-    const totalMatches = report?.summary.total_matches ?? 0;
-    const finishedMatches = report?.summary.finished_matches ?? 0;
-    const pendingMatches = totalMatches - finishedMatches;
+    const totalMatches = matches.length;
+    const finishedMatches = matches.filter((match) => match.status === "finished").length;
+    const pendingMatches = Math.max(0, totalMatches - finishedMatches);
     const predictedMatches = matches.filter((match) => getMatchConsensusConfidence(match) > 0);
     const averageConfidence = predictedMatches.length
         ? predictedMatches.reduce((sum, match) => sum + getMatchConsensusConfidence(match), 0) / predictedMatches.length
@@ -210,7 +223,7 @@ export default async function Home({ searchParams }: PageProps) {
                 teamIds={teamIds}
                 eventIds={eventIds}
                 selectedDate={selectedDate}
-                hasReport={Boolean(report)}
+                hasReport={totalMatches > 0}
             />
         </div>
     );
