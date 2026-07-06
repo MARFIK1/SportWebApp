@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/24/outline";
+import { ArrowTopRightOnSquareIcon, ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/24/outline";
 import { StarIcon as StarOutlineIcon } from "@heroicons/react/24/outline";
 import { StarIcon as StarSolidIcon } from "@heroicons/react/24/solid";
 
@@ -74,7 +74,7 @@ export default function LeagueSectionToggle({
                     </div>
                 </button>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     <button
                         type="button"
                         onClick={onToggleFavorite}
@@ -90,7 +90,7 @@ export default function LeagueSectionToggle({
                         {isFavorite ? <StarSolidIcon className="h-5 w-5" aria-hidden="true" /> : <StarOutlineIcon className="h-5 w-5" aria-hidden="true" />}
                     </button>
                     {accuracy && (
-                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white/70 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40">
+                        <div className="order-last flex w-full items-center gap-2 rounded-xl border border-gray-200 bg-white/70 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40 sm:order-none sm:w-auto">
                             <span className="text-xs text-gray-500 dark:text-gray-400">{labels.accuracy}:</span>
                             <span className={`text-sm font-bold ${accuracy.correct / accuracy.total >= 0.5 ? "text-emerald-400" : "text-gray-700 dark:text-gray-300"}`}>
                                 {accuracy.correct}/{accuracy.total}
@@ -112,9 +112,12 @@ export default function LeagueSectionToggle({
                     <Link
                         href={`/league/${slug}`}
                         prefetch={false}
-                        className="hidden rounded-xl border border-emerald-500/20 px-3 py-2 text-center text-sm font-semibold text-emerald-500 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400 sm:block"
+                        aria-label={`${labels.viewStandings}: ${leagueName}`}
+                        title={labels.viewStandings}
+                        className="flex h-10 min-w-10 items-center justify-center gap-2 rounded-xl border border-emerald-500/20 px-2 text-center text-sm font-semibold text-emerald-500 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:px-3"
                     >
-                        {labels.viewStandings} {"\u2197"}
+                        <span className="hidden sm:inline">{labels.viewStandings}</span>
+                        <ArrowTopRightOnSquareIcon className="h-4 w-4" aria-hidden="true" />
                     </Link>
                 </div>
             </div>
