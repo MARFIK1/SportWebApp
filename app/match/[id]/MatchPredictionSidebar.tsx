@@ -49,14 +49,14 @@ function getVariantLabel(variant: PredictionVariantKey, t: (key: string) => stri
 }
 
 function getBaseOddsLabel(key: string, homeTeam: string, awayTeam: string, locale: "en" | "pl"): string {
-    if (key === "odds_home_win") return locale === "pl" ? `${homeTeam} wygra` : `${homeTeam} to win`;
-    if (key === "odds_draw") return locale === "pl" ? "remis" : "draw";
-    if (key === "odds_away_win") return locale === "pl" ? `${awayTeam} wygra` : `${awayTeam} to win`;
-    return key;
+    if (key === "odds_home_win") return locale === "pl" ? `kurs na wygraną ${homeTeam}` : `${homeTeam} win odds`;
+    if (key === "odds_draw") return locale === "pl" ? "kurs na remis" : "draw odds";
+    if (key === "odds_away_win") return locale === "pl" ? `kurs na wygraną ${awayTeam}` : `${awayTeam} win odds`;
+    return locale === "pl" ? "jeden z kursów 1X2" : "one of the 1X2 odds";
 }
 
 function getMissingBaseOddsTitle(locale: "en" | "pl"): string {
-    return locale === "pl" ? "Brak kursów otwarcia" : "Missing opening odds";
+    return locale === "pl" ? "Brak kursów otwarcia 1X2" : "Missing opening 1X2 odds";
 }
 
 function getStrengthTone(tier: PredictionStrengthTier): string {
