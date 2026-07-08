@@ -314,7 +314,9 @@ function TeamMark({ teamId, teamName, t, align = "left", candidatePair = null }:
             title={label}
             className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}
         >
-            {candidatePair ? (
+            {candidatePair?.winner ? (
+                <TeamLogo teamId={candidatePair.winner.teamId} alt={candidatePair.winner.teamName} size={24} className="h-6 w-6 shrink-0 object-contain" />
+            ) : candidatePair ? (
                 <span className="flex h-6 w-9 shrink-0 items-center justify-center -space-x-1">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-0.5">
                         <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={24} className="h-full w-full object-contain" />
@@ -491,6 +493,18 @@ function GroupStageSection({ group, homeTeamId, awayTeamId, competitionSlug, cur
 function FeaturedTeamLogo({ teamId, teamName, t, candidatePair = null }: FeaturedTeamLogoProps) {
     if (candidatePair) {
         const label = formatWorldCupSlotCandidatePair(candidatePair, " / ");
+        if (candidatePair.winner) {
+            return (
+                <span title={label} className="flex h-11 w-11 items-center justify-center sm:h-14 sm:w-14">
+                    <TeamLogo
+                        teamId={candidatePair.winner.teamId}
+                        alt={candidatePair.winner.teamName}
+                        size={56}
+                        className="h-full w-full object-contain"
+                    />
+                </span>
+            );
+        }
         return (
             <span title={label} className="flex h-11 w-20 items-center justify-center -space-x-2 sm:h-14 sm:w-24">
                 <span className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-14 sm:w-14">
@@ -647,7 +661,7 @@ function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEv
 
     const currentRound = rounds.find((round) => round.matches.some((match) => match.event_id === currentMatch.event_id)) ?? rounds[0];
     const hasFullBracket = hasCompleteBracket(format, slotByEventId, currentMatch.event_id);
-    const candidatePairs = buildWorldCupSlotCandidatePairs(matches, slotByEventId);
+    const candidatePairs = buildWorldCupSlotCandidatePairs(matches, slotByEventId, predictionsByEventId);
 
     return (
         <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">

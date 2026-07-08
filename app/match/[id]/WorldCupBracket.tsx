@@ -135,7 +135,14 @@ function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null }: Te
         <div
             className={`flex h-full w-full items-center justify-center rounded-full border bg-gray-950/80 p-[10%] shadow-md transition ${ring} ${dim ? "opacity-35 grayscale" : ""}`}
         >
-            {candidatePair ? (
+            {candidatePair?.winner ? (
+                <TeamLogo
+                    teamId={candidatePair.winner.teamId}
+                    alt={candidatePair.winner.teamName}
+                    size={size}
+                    className="h-full w-full object-contain"
+                />
+            ) : candidatePair ? (
                 <span className="flex h-full w-full items-center justify-center -space-x-1">
                     <span className="flex h-[78%] w-[78%] items-center justify-center rounded-full bg-gray-950/80 p-[4%]">
                         <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={size} className="h-full w-full object-contain" />

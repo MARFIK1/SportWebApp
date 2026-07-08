@@ -6,6 +6,12 @@ import {
     WORLD_CUP_48_FORMAT,
     type WorldCupStage,
 } from "@/app/match/[id]/bracketConfig";
+import {
+    buildWorldCupSlotCandidatePairs,
+    candidatePairForWinnerPlaceholder,
+    formatWorldCupSlotCandidatePair,
+} from "@/app/util/predictions/worldCupSlotResolver";
+import type { PredictionMatch } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 
 function match(overrides: Partial<SofascoreMatch>): SofascoreMatch {
@@ -141,5 +147,73 @@ describe("World Cup bracket contracts", () => {
         expect(rounds.get("R16")?.some((item) => item.event_id === 7693131)).toBe(false);
         expect(slots.get(7693131)).toBe(WORLD_CUP_32_FORMAT.finalSlot);
         expect(slots.get(7693133)).toBe(WORLD_CUP_32_FORMAT.thirdPlaceSlot);
+    });
+
+    it("collapses a resolved winner placeholder to the winning team", () => {
+        const sourceMatch = match({
+            event_id: 9001,
+            date: "2026-07-05",
+            season: "2026",
+            home_team_id: 11,
+            home_team: "Brazil",
+            away_team_id: 12,
+            away_team: "Norway",
+            home_score: 1,
+            away_score: 2,
+            status: "finished",
+        });
+        const pairs = buildWorldCupSlotCandidatePairs([sourceMatch], new Map([[9001, 91]]));
+        const pair = candidatePairForWinnerPlaceholder("W91", pairs);
+
+        expect(pair?.winner?.teamName).toBe("Norway");
+        expect(formatWorldCupSlotCandidatePair(pair!, " / ")).toBe("Norway");
+    });
+
+    it("keeps unresolved winner placeholders as candidate pairs", () => {
+        const sourceMatch = match({
+            event_id: 9002,
+            date: "2026-07-07",
+            season: "2026",
+            home_team_id: 13,
+            home_team: "Colombia",
+            away_team_id: 14,
+            away_team: "Ghana",
+            home_score: null,
+            away_score: null,
+            status: "notstarted",
+        });
+        const pairs = buildWorldCupSlotCandidatePairs([sourceMatch], new Map([[9002, 92]]));
+        const pair = candidatePairForWinnerPlaceholder("W92", pairs);
+
+        expect(pair?.winner).toBeUndefined();
+        expect(formatWorldCupSlotCandidatePair(pair!, " / ")).toBe("Colombia / Ghana");
+    });
+
+    it("collapses a winner placeholder when the result is only available in the prediction report", () => {
+        const sourceMatch = match({
+            event_id: 9003,
+            date: "2026-07-05",
+            season: "2026",
+            home_team_id: 15,
+            home_team: "Brazil",
+            away_team_id: 16,
+            away_team: "Norway",
+            home_score: null,
+            away_score: null,
+            status: "notstarted",
+        });
+        const reportMatch = {
+            event_id: 9003,
+            home_team: "Brazil",
+            away_team: "Norway",
+            status: "finished",
+            actual_result: "AWAY",
+            actual_score: "1-2",
+        } as PredictionMatch;
+        const pairs = buildWorldCupSlotCandidatePairs([sourceMatch], new Map([[9003, 93]]), [reportMatch]);
+        const pair = candidatePairForWinnerPlaceholder("W93", pairs);
+
+        expect(pair?.winner?.teamName).toBe("Norway");
+        expect(formatWorldCupSlotCandidatePair(pair!, " / ")).toBe("Norway");
     });
 });

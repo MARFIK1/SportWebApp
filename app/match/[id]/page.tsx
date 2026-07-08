@@ -390,7 +390,15 @@ function MatchHeaderTeam({ teamId, teamName, candidatePair }: { teamId: number; 
     return (
         <div className="flex min-w-0 flex-col items-center">
             <div className="flex h-16 w-full items-center justify-center sm:h-24">
-                {candidatePair ? (
+                {candidatePair?.winner ? (
+                    <TeamLogo
+                        teamId={candidatePair.winner.teamId}
+                        alt={candidatePair.winner.teamName}
+                        size={96}
+                        loading="eager"
+                        className="h-14 w-14 object-contain sm:h-20 sm:w-20"
+                    />
+                ) : candidatePair ? (
                     <div className="flex items-center justify-center -space-x-3" title={label}>
                         <span className="flex h-14 w-14 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-20 sm:w-20">
                             <TeamLogo
@@ -469,7 +477,7 @@ export async function generateMetadata({ params, searchParams }: PageProps): Pro
         ? computeWorldCupBracketSlots(metadataSeasonMatches, metadataFormat)
         : new Map<number, number>();
     const metadataCandidatePairs = metadataFormat
-        ? buildWorldCupSlotCandidatePairs(resolvedMetadataMatches, metadataSlotByEventId)
+        ? buildWorldCupSlotCandidatePairs(resolvedMetadataMatches, metadataSlotByEventId, predictionMatches)
         : new Map<number, WorldCupSlotCandidatePair>();
     const metadataHomeTeam = displayTeamName(match.home_team, candidatePairForWinnerPlaceholder(match.home_team, metadataCandidatePairs));
     const metadataAwayTeam = displayTeamName(match.away_team, candidatePairForWinnerPlaceholder(match.away_team, metadataCandidatePairs));
@@ -540,7 +548,7 @@ export default async function Match({ params, searchParams }: PageProps) {
         ? computeWorldCupBracketSlots(rawWorldCupSeasonMatches, worldCupFormat)
         : new Map<number, number>();
     const worldCupSlotCandidatePairs = worldCupFormat
-        ? buildWorldCupSlotCandidatePairs(sameSeasonMatches, knockoutSlotByEventId)
+        ? buildWorldCupSlotCandidatePairs(sameSeasonMatches, knockoutSlotByEventId, predictionMatches)
         : new Map<number, WorldCupSlotCandidatePair>();
     const homeCandidatePair = candidatePairForWinnerPlaceholder(match.home_team, worldCupSlotCandidatePairs);
     const awayCandidatePair = candidatePairForWinnerPlaceholder(match.away_team, worldCupSlotCandidatePairs);

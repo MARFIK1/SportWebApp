@@ -18,6 +18,7 @@ export interface WorldCupSlotCandidate {
 export interface WorldCupSlotCandidatePair {
     home: WorldCupSlotCandidate;
     away: WorldCupSlotCandidate;
+    winner?: WorldCupSlotCandidate;
 }
 
 const WORLD_CUP_SLOT_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+|TBD)$/i;
@@ -84,6 +85,11 @@ function predictionMatchesByEventId(predictionMatches: PredictionMatch[]): Map<n
     return byEventId;
 }
 
+function predictionMatchMap(predictionMatches?: PredictionMatch[] | Map<number, PredictionMatch>): Map<number, PredictionMatch> {
+    if (!predictionMatches) return new Map<number, PredictionMatch>();
+    return predictionMatches instanceof Map ? predictionMatches : predictionMatchesByEventId(predictionMatches);
+}
+
 function teamNameForWinnerSide(sourceMatch: SofascoreMatch, reportMatch: PredictionMatch | undefined, side: "HOME" | "AWAY"): string | null {
     const reportName = side === "HOME" ? reportMatch?.home_team : reportMatch?.away_team;
     if (reportName && !isWorldCupPlaceholderTeamName(reportName)) return reportName;
@@ -148,17 +154,27 @@ function candidateForSide(match: SofascoreMatch, side: "HOME" | "AWAY"): WorldCu
 }
 
 export function formatWorldCupSlotCandidatePair(pair: WorldCupSlotCandidatePair, separator = "/"): string {
+    if (pair.winner) return pair.winner.teamName;
     return `${pair.home.teamName}${separator}${pair.away.teamName}`;
 }
 
-export function buildWorldCupSlotCandidatePairs(sourceMatches: SofascoreMatch[], slotByEventId: Map<number, number>): Map<number, WorldCupSlotCandidatePair> {
+export function buildWorldCupSlotCandidatePairs(sourceMatches: SofascoreMatch[], slotByEventId: Map<number, number>, predictionMatches?: PredictionMatch[] | Map<number, PredictionMatch>): Map<number, WorldCupSlotCandidatePair> {
     const pairs = new Map<number, WorldCupSlotCandidatePair>();
+    const predictionByEventId = predictionMatchMap(predictionMatches);
     for (const match of sourceMatches) {
         const slot = slotByEventId.get(match.event_id);
         if (slot == null) continue;
         const home = candidateForSide(match, "HOME");
         const away = candidateForSide(match, "AWAY");
-        if (home && away) pairs.set(slot, { home, away });
+        if (!home || !away) continue;
+
+        const state = resolveSofascoreMatchResult(match, predictionByEventId.get(match.event_id) ?? null);
+        const winner = state.isFinished && state.actualResult === "HOME"
+            ? home
+            : state.isFinished && state.actualResult === "AWAY"
+                ? away
+                : undefined;
+        pairs.set(slot, { home, away, winner });
     }
     return pairs;
 }
