@@ -16,6 +16,7 @@ const VIEWBOX = 1000;
 const CENTER = VIEWBOX / 2;
 const TWO_PI = Math.PI * 2;
 const PLACEHOLDER_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+)$/;
+const CREST_IMAGE_CLASS = "block h-full w-full rounded-full object-cover object-center";
 
 function isPlaceholderTeam(name: string): boolean {
     return !name || PLACEHOLDER_TEAM_RE.test(name.trim());
@@ -74,10 +75,20 @@ function pct(value: number): string {
     return `${(value / VIEWBOX) * 100}%`;
 }
 
-function scoreLabel(state: ResolvedMatchResult, t: (key: string) => string): string | null {
+function scoreLabel(state: ResolvedMatchResult, t: (key: string) => string, sideOrder: [MatchSide, MatchSide] = ["HOME", "AWAY"]): string | null {
     if (!state.regularScore) return null;
-    const base = `${state.regularScore.home}-${state.regularScore.away}`;
-    if (state.penaltyScore) return `${base} \u00b7 ${t("penalties")} ${state.penaltyScore.home}-${state.penaltyScore.away}`;
+    const regularScores = {
+        HOME: state.regularScore.home,
+        AWAY: state.regularScore.away,
+    };
+    const base = `${regularScores[sideOrder[0]]}-${regularScores[sideOrder[1]]}`;
+    if (state.penaltyScore) {
+        const penaltyScores = {
+            HOME: state.penaltyScore.home,
+            AWAY: state.penaltyScore.away,
+        };
+        return `${base} \u00b7 ${t("penalties")} ${penaltyScores[sideOrder[0]]}-${penaltyScores[sideOrder[1]]}`;
+    }
     if (state.wentToExtraTime) return `${base} AET`;
     return base;
 }
@@ -124,6 +135,68 @@ function displaySideName(side: Side, candidatePair: WorldCupSlotCandidatePair | 
     return side.isPlaceholder ? t("to_be_decided") : side.teamName;
 }
 
+function sameTeam(left: Pick<Side, "teamId" | "teamName">, right: Pick<Side, "teamId" | "teamName">): boolean {
+    if (validTeamId(left.teamId) && validTeamId(right.teamId) && left.teamId === right.teamId) return true;
+    const leftName = left.teamName.trim().toLowerCase();
+    const rightName = right.teamName.trim().toLowerCase();
+    return leftName !== "" && leftName === rightName;
+}
+
+function sourcePositionForSide(format: TournamentFormat, slot: number, target: Pick<Side, "teamId" | "teamName">, intervals: Map<number, Interval>, matchesBySlot: Map<number, SofascoreMatch>): { x: number; y: number } | null {
+    const interval = intervals.get(slot);
+    if (!interval) return null;
+
+    const kids = format.children[slot];
+    if (kids) {
+        for (const kid of kids) {
+            const hit = sourcePositionForSide(format, kid, target, intervals, matchesBySlot);
+            if (hit) return hit;
+        }
+    } else {
+        const match = matchesBySlot.get(slot);
+        const { home, away } = sidesOf(match);
+        if (sameTeam(home, target)) return polar(TEAM_RADIUS, slotAngle(format, interval.s + 0.5));
+        if (sameTeam(away, target)) return polar(TEAM_RADIUS, slotAngle(format, interval.s + 1.5));
+    }
+
+    const match = matchesBySlot.get(slot);
+    if (!match) return null;
+    const { home, away } = sidesOf(match);
+    if (sameTeam(home, target) || sameTeam(away, target)) return nodePosition(format, slot, interval);
+    return null;
+}
+
+function sourcePositionForRenderSide<TRenderSide extends { side: Side; candidatePair: WorldCupSlotCandidatePair | null }>(format: TournamentFormat, parentSlot: number, renderSide: TRenderSide, intervals: Map<number, Interval>, matchesBySlot: Map<number, SofascoreMatch>): { x: number; y: number } | null {
+    const childSlots = format.children[parentSlot];
+    if (!childSlots) return null;
+
+    const target = renderSide.candidatePair?.winner ?? renderSide.side;
+    for (const childSlot of childSlots) {
+        const hit = sourcePositionForSide(format, childSlot, target, intervals, matchesBySlot);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+function orderRadialPairSides<TRenderSide extends { side: Side; candidatePair: WorldCupSlotCandidatePair | null }>(format: TournamentFormat, parentSlot: number, sides: TRenderSide[], intervals: Map<number, Interval>, matchesBySlot: Map<number, SofascoreMatch>): TRenderSide[] {
+    if (sides.length !== 2) return sides;
+
+    const positioned = sides.map((side) => ({
+        side,
+        position: sourcePositionForRenderSide(format, parentSlot, side, intervals, matchesBySlot),
+    }));
+    if (positioned.some((item) => item.position == null)) return sides;
+
+    return positioned
+        .sort((left, right) => {
+            if (!left.position || !right.position) return 0;
+            const xDelta = left.position.x - right.position.x;
+            if (Math.abs(xDelta) > 0.5) return xDelta;
+            return left.position.y - right.position.y;
+        })
+        .map((item) => item.side);
+}
+
 function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null }: TeamCrestProps) {
     const ring =
         highlight === "current"
@@ -133,22 +206,22 @@ function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null }: Te
                 : "border-white/15";
     return (
         <div
-            className={`flex h-full w-full items-center justify-center rounded-full border bg-gray-950/80 p-[10%] shadow-md transition ${ring} ${dim ? "opacity-35 grayscale" : ""}`}
+            className={`flex h-full w-full items-center justify-center overflow-hidden rounded-full border bg-gray-950/80 p-[10%] shadow-md transition ${ring} ${dim ? "opacity-60 saturate-50" : ""}`}
         >
             {candidatePair?.winner ? (
                 <TeamLogo
                     teamId={candidatePair.winner.teamId}
                     alt={candidatePair.winner.teamName}
                     size={size}
-                    className="h-full w-full object-contain"
+                    className={CREST_IMAGE_CLASS}
                 />
             ) : candidatePair ? (
                 <span className="flex h-full w-full items-center justify-center -space-x-1">
-                    <span className="flex h-[78%] w-[78%] items-center justify-center rounded-full bg-gray-950/80 p-[4%]">
-                        <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={size} className="h-full w-full object-contain" />
+                    <span className="flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-full bg-gray-950/80 p-[4%]">
+                        <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={size} className={CREST_IMAGE_CLASS} />
                     </span>
-                    <span className="flex h-[78%] w-[78%] items-center justify-center rounded-full bg-gray-950/80 p-[4%]">
-                        <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={size} className="h-full w-full object-contain" />
+                    <span className="flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-full bg-gray-950/80 p-[4%]">
+                        <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={size} className={CREST_IMAGE_CLASS} />
                     </span>
                 </span>
             ) : validTeamId(side.teamId) && !side.isPlaceholder ? (
@@ -156,7 +229,7 @@ function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null }: Te
                     teamId={side.teamId}
                     alt={side.teamName}
                     size={size}
-                    className="h-full w-full object-contain"
+                    className={CREST_IMAGE_CLASS}
                 />
             ) : (
                 <span className="text-[9px] font-black text-gray-500">?</span>
@@ -399,7 +472,6 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                         const pos = nodePosition(format, num, interval);
                         const match = byNumber.get(num);
                         const state = match ? resultOf(match) : null;
-                        const label = state ? scoreLabel(state, t) : null;
                         const winner = state?.isFinished ? state.actualResult : null;
                         const onPath = pathNumbers.has(num);
                         const isCurrent = currentNumber === num;
@@ -409,13 +481,12 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                         const crestSize = stage === "R16" ? 4.8 : stage === "QF" ? 4.2 : 3.6;
                         const homeCandidatePair = candidatePairForWinnerPlaceholder(home.teamName, candidatePairs);
                         const awayCandidatePair = candidatePairForWinnerPlaceholder(away.teamName, candidatePairs);
-                        const homeTitle = displaySideName(home, homeCandidatePair, t);
-                        const awayTitle = displaySideName(away, awayCandidatePair, t);
-                        const sides: { side: Side; isWinner: boolean; isLoser: boolean; candidatePair: WorldCupSlotCandidatePair | null }[] = [
-                            { side: home, isWinner: winner === "HOME", isLoser: winner === "AWAY", candidatePair: homeCandidatePair },
-                            { side: away, isWinner: winner === "AWAY", isLoser: winner === "HOME", candidatePair: awayCandidatePair },
-                        ];
-                        const title = `${homeTitle} vs ${awayTitle}${label ? ` \u00b7 ${label}` : ""}`;
+                        const sides = orderRadialPairSides(format, num, [
+                            { side: home, matchSide: "HOME" as const, isWinner: winner === "HOME", isLoser: winner === "AWAY", candidatePair: homeCandidatePair },
+                            { side: away, matchSide: "AWAY" as const, isWinner: winner === "AWAY", isLoser: winner === "HOME", candidatePair: awayCandidatePair },
+                        ], intervals, byNumber);
+                        const label = state ? scoreLabel(state, t, [sides[0].matchSide, sides[1].matchSide]) : null;
+                        const title = `${sides.map(({ side, candidatePair }) => displaySideName(side, candidatePair, t)).join(" vs ")}${label ? ` \u00b7 ${label}` : ""}`;
 
                         const pairing = (
                             <div
