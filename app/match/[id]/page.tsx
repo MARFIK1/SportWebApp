@@ -736,7 +736,7 @@ export default async function Match({ params, searchParams }: PageProps) {
 
                     {(predMatch || analysis) && (
                         <div className="mb-6 space-y-6">
-                            {analysis && <TeamRadar analysis={analysis} homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} />}
+                            {(analysis || displayPredMatch) && <TeamRadar analysis={analysis} homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} />}
                             {displayPredMatch && <PredictionTriangle homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} actualResult={isFinished ? actualResult : null} />}
                         </div>
                     )}

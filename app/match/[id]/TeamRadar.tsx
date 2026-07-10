@@ -24,6 +24,8 @@ const SIZE = 380;
 const CENTER = 190;
 const RADIUS = 136;
 
+const MIN_RADAR_METRICS = 3;
+
 function clamp(value: number, min = 8, max = 100): number {
     return Math.max(min, Math.min(max, value));
 }
@@ -176,7 +178,36 @@ export default function TeamRadar({ analysis, homeTeam, awayTeam }: TeamRadarPro
             }));
     }, [analysis, t]);
 
-    if (metrics.length < 3) return null;
+    if (metrics.length < MIN_RADAR_METRICS) {
+        return (
+            <section className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-gray-900/50 sm:p-6">
+                <div className="mb-5">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-cyan-400">{t("team_style_profile")}</p>
+                    <h3 className="mt-1 text-lg font-black text-gray-900 dark:text-white sm:text-xl">{t("matchup_radar")}</h3>
+                </div>
+                <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+                    <div className="flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-full border border-cyan-400/35 bg-cyan-400/10 text-cyan-300">
+                        <span className="text-2xl font-black leading-none">{metrics.length}</span>
+                        <span className="mt-1 text-[10px] font-bold uppercase tracking-[0.16em]">/ {MIN_RADAR_METRICS}</span>
+                    </div>
+                    <div className="min-w-0">
+                        <h4 className="text-base font-black text-gray-900 dark:text-white">{t("matchup_radar_unavailable")}</h4>
+                        <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">{t("matchup_radar_unavailable_hint")}</p>
+                        {metrics.length > 0 && (
+                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">{t("matchup_radar_available_metrics")}</span>
+                                {metrics.map((metric) => (
+                                    <span key={metric.key} className="rounded-full border border-white/10 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 dark:bg-gray-800/60 dark:text-gray-200">
+                                        {metric.label}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </section>
+        );
+    }
 
     return (
         <section className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/10 dark:bg-gray-900/50 sm:p-6">
