@@ -363,7 +363,7 @@ class TemporalStackingClassifier(BaseEstimator, ClassifierMixin):
 
 
 META_COLUMNS = {
-    'event_id', 'date', 'round', 'home_team', 'away_team',
+    'event_id', 'date', 'time', 'round', 'season', 'home_team', 'away_team',
     'home_team_id', 'away_team_id',
     'comp_type', 'country', 'competition', 'league',
     'home_score', 'away_score', 'home_score_ht', 'away_score_ht', 'status',
@@ -380,6 +380,7 @@ LABEL_COLUMNS = {
 FEATURE_COLUMNS = [
     'home_rest_days', 'away_rest_days', 'rest_days_diff',
     'home_is_congested', 'away_is_congested',
+    'home_form_matches', 'away_form_matches',
     'home_form_points', 'away_form_points', 'form_points_diff',
     'home_form_avg_points', 'away_form_avg_points',
     'home_form_wins', 'away_form_wins',
@@ -391,7 +392,9 @@ FEATURE_COLUMNS = [
     'home_form_xg_for', 'away_form_xg_for',
     'home_form_xg_against', 'away_form_xg_against',
     'home_form_xg_diff', 'away_form_xg_diff', 'xg_form_diff',
+    'home_form_xg_matches', 'away_form_xg_matches',
     'home_form_clean_sheets', 'away_form_clean_sheets',
+    'home_form10_matches', 'away_form10_matches',
     'home_form10_points', 'away_form10_points', 'form10_points_diff',
     'home_form10_avg_points', 'away_form10_avg_points',
     'home_form10_wins', 'away_form10_wins',
@@ -400,6 +403,7 @@ FEATURE_COLUMNS = [
     'home_form10_goal_diff', 'away_form10_goal_diff',
     'home_form10_xg_for', 'away_form10_xg_for',
     'home_form10_xg_diff', 'away_form10_xg_diff',
+    'home_form10_xg_matches', 'away_form10_xg_matches',
     'home_form10_clean_sheets', 'away_form10_clean_sheets',
     'home_avg_player_rating', 'away_avg_player_rating', 'player_rating_diff',
     'home_top_scorer_goals', 'away_top_scorer_goals',
@@ -427,6 +431,13 @@ FEATURE_COLUMNS = [
     'home_sos_avg_ppg', 'away_sos_avg_ppg',
     'home_clean_sheet_pct', 'away_clean_sheet_pct',
     'home_failed_to_score_pct', 'away_failed_to_score_pct',
+    'home_corner_form_for', 'away_corner_form_for',
+    'home_corner_form_against', 'away_corner_form_against',
+    'home_corner_form_avg_for', 'away_corner_form_avg_for',
+    'home_corner_form_matches', 'away_corner_form_matches', 'corner_form_avg_total',
+    'home_card_form_total', 'away_card_form_total',
+    'home_card_form_avg', 'away_card_form_avg',
+    'home_card_form_matches', 'away_card_form_matches', 'card_form_avg_total',
     'home_elo', 'away_elo', 'elo_diff',
     'home_wform_ppg', 'away_wform_ppg', 'wform_ppg_diff',
     'home_wform_goals_for', 'away_wform_goals_for',
