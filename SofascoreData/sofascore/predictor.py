@@ -41,6 +41,7 @@ from sofascore.config import COMPETITIONS
 from sofascore.data_layout import competition_features_path, discover_feature_competitions
 from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
 from sofascore.temporal_validation import build_temporal_holdout
+from sofascore.training_report import METRIC_CONTRACT
 import optuna
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -167,6 +168,13 @@ def _align_predict_proba(model, X, class_labels: List[int]) -> Optional[np.ndarr
         raw_idx = class_to_pos.get(cls)
         if raw_idx is not None and raw_idx < raw.shape[1]:
             aligned[:, out_idx] = raw[:, raw_idx]
+
+    aligned = np.nan_to_num(aligned, nan=0.0, posinf=0.0, neginf=0.0)
+    aligned = np.clip(aligned, 0.0, None)
+    row_sums = aligned.sum(axis=1, keepdims=True)
+    valid_rows = row_sums[:, 0] > 0
+    aligned[valid_rows] /= row_sums[valid_rows]
+    aligned[~valid_rows] = 1.0 / len(class_labels)
     return aligned
 
 
@@ -224,6 +232,23 @@ def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int])
         metrics['ece'] = None
 
     return metrics
+
+
+def _classification_selection_metric(target: str) -> str:
+    return 'macro_f1' if target == 'result' else 'accuracy'
+
+
+def _select_best_classification_model(target: str, detailed_metrics: Dict) -> Tuple[str, str, float]:
+    metric = _classification_selection_metric(target)
+    scores = {
+        name: values.get(metric)
+        for name, values in detailed_metrics.items()
+        if isinstance(values.get(metric), (int, float))
+    }
+    if not scores:
+        return '?', metric, 0.0
+    best = max(scores, key=scores.get)
+    return best, metric, float(scores[best])
 
 
 def _json_safe(value):
@@ -901,7 +926,8 @@ class UniversalPredictor:
     
     def train_all_models(self, df: pd.DataFrame, test_size: float = 0.2,
                          targets: Optional[List[str]] = None,
-                         odds_requirements: Optional[Dict[str, List[str]]] = None) -> Dict:
+                         odds_requirements: Optional[Dict[str, List[str]]] = None,
+                         optuna_trials: int = 50) -> Dict:
         if targets is None:
             targets = ['result', 'btts', 'over_2_5', 'over_1_5']
 
@@ -926,7 +952,13 @@ class UniversalPredictor:
             print(f"  TRAINING TARGET: {target.upper()} [{task_label}]")
             print(f"{'='*70}")
 
-            results = self._train_target(target_df, target, test_size, odds_requirements)
+            results = self._train_target(
+                target_df,
+                target,
+                test_size,
+                odds_requirements,
+                optuna_trials,
+            )
             all_results[target] = results
 
         self.trained = True
@@ -947,8 +979,12 @@ class UniversalPredictor:
                 best = min(results, key=results.get)
                 print(f"  {target:20s}: best = {best} (MAE={results[best]:.3f})")
             else:
-                best = max(results, key=results.get)
-                print(f"  {target:20s}: best = {best} ({results[best]:.1%})")
+                best, metric, score = _select_best_classification_model(
+                    target,
+                    self.training_stats.get(target, {}).get('detailed_metrics', {}),
+                )
+                print(f"{target:20s}: best = {best} "
+                      f"({metric}={score:.1%})")
 
         return all_results
 
@@ -956,6 +992,8 @@ class UniversalPredictor:
         config = TARGET_CONFIGS[target]
         is_binary = config['task'] == 'binary'
         tscv = TimeSeriesSplit(n_splits=3)
+        scoring = 'f1_macro' if target == 'result' else 'accuracy'
+        score_label = 'macro_f1' if target == 'result' else 'accuracy'
 
         xgb_best = {}
         lgb_best = {}
@@ -978,14 +1016,14 @@ class UniversalPredictor:
                 params['eval_metric'] = 'mlogloss'
             model = XGBClassifier(**params)
             scores = cross_val_score(model, X_train, y_train, cv=tscv,
-                                     scoring='accuracy', n_jobs=-1,
+                                     scoring=scoring, n_jobs=-1,
                                      params={'sample_weight': sample_weights})
             return scores.mean()
 
         study = optuna.create_study(direction='maximize')
         study.optimize(xgb_objective, n_trials=n_trials, show_progress_bar=False)
         xgb_best = study.best_params
-        print(f"Optuna XGBoost: acc={study.best_value:.4f} ({n_trials} trials)")
+        print(f"Optuna XGBoost: {score_label}={study.best_value:.4f} ({n_trials} trials)")
 
         def lgb_objective(trial):
             params = {
@@ -997,21 +1035,20 @@ class UniversalPredictor:
                 'min_child_samples': trial.suggest_int('min_child_samples', 15, 40),
                 'reg_alpha': trial.suggest_float('reg_alpha', 0.05, 0.5),
                 'reg_lambda': trial.suggest_float('reg_lambda', 0.05, 0.5),
-                'is_unbalance': True,
                 'random_state': 42, 'n_jobs': -1, 'verbose': -1,
             }
             if is_binary:
                 params['objective'] = 'binary'
             model = LGBMClassifier(**params)
             scores = cross_val_score(model, X_train, y_train, cv=tscv,
-                                     scoring='accuracy', n_jobs=-1,
+                                     scoring=scoring, n_jobs=-1,
                                      params={'sample_weight': sample_weights})
             return scores.mean()
 
         study = optuna.create_study(direction='maximize')
         study.optimize(lgb_objective, n_trials=n_trials, show_progress_bar=False)
         lgb_best = study.best_params
-        print(f"Optuna LightGBM: acc={study.best_value:.4f} ({n_trials} trials)")
+        print(f"Optuna LightGBM: {score_label}={study.best_value:.4f} ({n_trials} trials)")
 
         return xgb_best, lgb_best
 
@@ -1076,7 +1113,7 @@ class UniversalPredictor:
 
         lgb_defaults = dict(
             n_estimators=400, max_depth=12, learning_rate=0.03,
-            subsample=0.8, colsample_bytree=0.8, is_unbalance=True,
+            subsample=0.8, colsample_bytree=0.8,
             min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
             random_state=42, n_jobs=-1, verbose=-1,
         )
@@ -1090,7 +1127,7 @@ class UniversalPredictor:
         model_configs['LightGBM'] = {
             'model': LGBMClassifier(**lgb_defaults),
             'scaled': False,
-            'sample_weight': False,
+            'sample_weight': True,
         }
 
         return model_configs
@@ -1101,6 +1138,7 @@ class UniversalPredictor:
         target: str,
         test_size: float,
         odds_requirements: Optional[Dict[str, List[str]]] = None,
+        optuna_trials: int = 50,
     ) -> Dict:
         config = TARGET_CONFIGS[target]
         is_regression = config.get('task') == 'regression'
@@ -1287,9 +1325,13 @@ class UniversalPredictor:
         if model_train_dates is not None:
             print("Chronological order enforced for tuning and meta-model training")
 
-        xgb_tuned, lgb_tuned = self._optuna_tune(
-            X_model_train, y_model_train, sample_weights_model, target, n_trials=50
-        )
+        if optuna_trials > 0:
+            xgb_tuned, lgb_tuned = self._optuna_tune(
+                X_model_train, y_model_train, sample_weights_model, target, n_trials=optuna_trials
+            )
+        else:
+            print("Optuna tuning skipped; using default tree parameters")
+            xgb_tuned, lgb_tuned = {}, {}
 
         model_configs = self._build_model_configs(
             target, y_train=y_model_train,
@@ -1742,13 +1784,23 @@ class UniversalPredictor:
             except Exception as e:
                 print(f"    LSTM: error ({e})")
 
+        best, selection_metric, best_score = _select_best_classification_model(
+            target,
+            detailed_metrics,
+        )
         self.training_stats[target] = {
+            'class_labels': class_labels,
             'total_matches': len(X),
             'train_matches': len(X_train),
             'test_matches': len(X_test),
             'features': len(feature_cols),
             'feature_names': feature_cols,
             'feature_set': self.feature_sets_by_target.get(target),
+            'selection': {
+                'metric': selection_metric,
+                'best_model': best,
+                'best_score': round(best_score, 4),
+            },
             'validation': {
                 'strategy': validation_strategy,
                 'test_cutoff': test_cutoff.isoformat() if test_cutoff is not None else None,
@@ -1773,9 +1825,8 @@ class UniversalPredictor:
             'cv_results': cv_results,
         }
 
-        best = max(results, key=results.get) if results else '?'
-        best_acc = results.get(best, 0)
-        print(f"\n  Best for {target}: {best} ({best_acc:.1%})")
+        print(f"\nBest for {target}: {best} "
+              f"({selection_metric}={best_score:.1%})")
 
         return results
 
@@ -2288,6 +2339,7 @@ class UniversalPredictor:
                 target: stats.get('detailed_metrics', {})
                 for target, stats in self.training_stats.items()
             },
+            'metric_contract': METRIC_CONTRACT,
         }
     
     def save_models(self, path: str):

@@ -43,6 +43,28 @@ class TrainingReportTests(unittest.TestCase):
             self.assertTrue(Path(paths["csv"]).exists())
             self.assertIn("global_temporal", Path(paths["json"]).read_text(encoding="utf-8"))
 
+    def test_converts_legacy_multiclass_brier_before_comparison(self):
+        stats = {
+            "result": {
+                "class_labels": [0, 1, 2],
+                "detailed_metrics": {"Model": {"brier_score": 0.60}},
+            }
+        }
+        baseline = {
+            "metrics_by_target": {"result": {"Model": {"brier_score": 0.20}}},
+        }
+
+        report = build_training_comparison(stats, baseline, "without_odds", {})
+        target = report["targets"]["result"]
+        brier = target["models"][0]["metrics"]["brier_score"]
+
+        self.assertAlmostEqual(brier["baseline"], 0.60)
+        self.assertAlmostEqual(brier["improvement"], 0.0)
+        self.assertEqual(
+            target["metric_contract"]["baseline_conversion_factor"],
+            3,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

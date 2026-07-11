@@ -38,6 +38,16 @@ def parse_targets(value: str):
     return targets
 
 
+def parse_non_negative_int(value: str):
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return parsed
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Train Backend v2 football models with temporal validation.",
@@ -51,6 +61,7 @@ def parse_args():
     )
     parser.add_argument("--targets", type=parse_targets, default=list(DEFAULT_TARGETS))
     parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--optuna-trials", type=parse_non_negative_int, default=50)
     parser.add_argument(
         "--feature-set",
         choices=tuple(sorted(FEATURE_SETS)),
@@ -145,6 +156,7 @@ def main():
         "targets": args.targets,
         "variants": _variant_names(args.variant),
         "test_size": args.test_size,
+        "optuna_trials": args.optuna_trials,
         "feature_set": args.feature_set,
         "dataset": dataset_summary,
         "outputs": {},
@@ -170,6 +182,7 @@ def main():
             test_size=args.test_size,
             targets=args.targets,
             odds_requirements=odds_requirements,
+            optuna_trials=args.optuna_trials,
         )
         if not results:
             print(f"No targets trained for {variant}.")
