@@ -24,7 +24,7 @@ from sklearn.metrics import (
     accuracy_score, classification_report,
     precision_score, recall_score, f1_score,
     mean_absolute_error, mean_squared_error, r2_score,
-    brier_score_loss, log_loss, confusion_matrix,
+    balanced_accuracy_score, log_loss, confusion_matrix,
 )
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
@@ -37,7 +37,10 @@ import tempfile
 
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
+from sofascore.config import COMPETITIONS
+from sofascore.data_layout import competition_features_path, discover_feature_competitions
 from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
+from sofascore.temporal_validation import build_temporal_holdout
 import optuna
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -191,6 +194,8 @@ def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int])
     metrics = {
         'confusion_matrix': confusion_matrix(y_true, y_pred, labels=class_labels).tolist(),
         'per_class_recall': {},
+        'macro_f1': round(float(f1_score(y_true, y_pred, average='macro', zero_division=0)), 4),
+        'balanced_accuracy': round(float(balanced_accuracy_score(y_true, y_pred)), 4),
     }
 
     cm = np.asarray(metrics['confusion_matrix'])
@@ -208,10 +213,8 @@ def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int])
 
     try:
         y_arr = np.asarray(y_true)
-        briers = []
-        for idx, cls in enumerate(class_labels):
-            briers.append(brier_score_loss((y_arr == cls).astype(int), proba[:, idx]))
-        metrics['brier_score'] = round(float(np.mean(briers)), 4)
+        one_hot = np.column_stack([(y_arr == cls).astype(float) for cls in class_labels])
+        metrics['brier_score'] = round(float(np.mean(np.sum((proba - one_hot) ** 2, axis=1))), 4)
     except Exception:
         metrics['brier_score'] = None
 
@@ -686,40 +689,12 @@ class UniversalPredictor:
         return filtered
         
     def discover_all_competitions(self) -> Dict[str, Dict[str, List[str]]]:
-        discovered = {}
+        return discover_feature_competitions(
+            self.data_dir,
+            COMPETITION_TYPES,
+            COMPETITIONS,
+        )
 
-        for comp_type in COMPETITION_TYPES:
-            comp_dir = self.data_dir / comp_type
-            if not comp_dir.exists():
-                continue
-
-            discovered[comp_type] = {}
-
-            if comp_type == 'european':
-                # european/{competition}/ - flat structure, no country subfolder
-                for comp_subdir in comp_dir.iterdir():
-                    if not comp_subdir.is_dir():
-                        continue
-                    features_dir = comp_subdir / 'features'
-                    if features_dir.exists() and any(features_dir.glob('*.json')):
-                        discovered[comp_type].setdefault('uefa', []).append(comp_subdir.name)
-                continue
-
-            for country_dir in comp_dir.iterdir():
-                if not country_dir.is_dir():
-                    continue
-                country = country_dir.name
-                discovered[comp_type][country] = []
-
-                for comp_subdir in country_dir.iterdir():
-                    if not comp_subdir.is_dir():
-                        continue
-                    features_dir = comp_subdir / 'features'
-                    if features_dir.exists() and any(features_dir.glob('*.json')):
-                        discovered[comp_type][country].append(comp_subdir.name)
-
-        return discovered
-    
     def discover_leagues(self) -> Dict[str, List[str]]:
         """Backwards compatible wrapper for discover_all_competitions."""
         all_comps = self.discover_all_competitions()
@@ -727,10 +702,12 @@ class UniversalPredictor:
     
     def load_competition_data(self, comp_type: str, country: str, competition: str,
                                seasons: Optional[List[str]] = None) -> pd.DataFrame:
-        if comp_type == 'european':
-            features_path = self.data_dir / comp_type / competition / 'features'
-        else:
-            features_path = self.data_dir / comp_type / country / competition / 'features'
+        features_path = competition_features_path(
+            self.data_dir,
+            comp_type,
+            country,
+            competition,
+        )
         
         if not features_path.exists():
             return pd.DataFrame()
@@ -1133,37 +1110,23 @@ class UniversalPredictor:
                 print(f"    {name}: {count} ({count / len(y) * 100:.1f}%)")
 
         dates = meta.get('date')
+        validation_strategy = 'random_stratified'
+        test_cutoff = None
 
         if dates is not None:
-            group_parts = []
-            for col in ['comp_type', 'country', 'competition']:
-                if col in meta:
-                    group_parts.append(meta[col].astype(str))
-
-            if group_parts:
-                comp_groups = group_parts[0]
-                for part in group_parts[1:]:
-                    comp_groups = comp_groups + '/' + part
-            else:
-                comp_groups = pd.Series('all', index=X.index)
-
-            train_idx, test_idx = [], []
-            for group_name in comp_groups.unique():
-                mask = comp_groups == group_name
-                group_dates = dates[mask].sort_values()
-                n = len(group_dates)
-                split = int(n * (1 - test_size))
-
-                if split < 5 or (n - split) < 5:
-                    train_idx.extend(group_dates.index.tolist())
-                    continue
-                train_idx.extend(group_dates.iloc[:split].index.tolist())
-                test_idx.extend(group_dates.iloc[split:].index.tolist())
-
+            temporal_split = build_temporal_holdout(
+                dates,
+                holdout_fraction=test_size,
+                min_train_rows=5,
+                min_holdout_rows=5,
+            )
+            train_idx = temporal_split.train_index
+            test_idx = temporal_split.holdout_index
             X_train, X_test = X.loc[train_idx], X.loc[test_idx]
             y_train, y_test = y.loc[train_idx], y.loc[test_idx]
-            n_comps = comp_groups.nunique()
-            print(f"\n  Per-competition temporal split ({n_comps} competitions):")
+            validation_strategy = 'global_temporal'
+            test_cutoff = temporal_split.cutoff
+            print(f"\nGlobal temporal split (cutoff={test_cutoff.date()}):")
             print(f"    Train: {len(X_train)}, Test: {len(X_test)}")
         else:
             X_train, X_test, y_train, y_test = train_test_split(
@@ -1228,7 +1191,8 @@ class UniversalPredictor:
         if is_regression:
             return self._train_regression_models(
                 target, config, X_train, X_test, X_train_scaled, X_test_scaled,
-                y_train, y_test, feature_cols, scaler, X, meta, df
+                y_train, y_test, feature_cols, scaler, X, meta, df,
+                validation_strategy, test_cutoff,
             )
 
         from sklearn.utils.class_weight import compute_sample_weight
@@ -1250,37 +1214,58 @@ class UniversalPredictor:
         X_cal_raw = None
         X_cal_scaled = None
         y_cal = None
+        calibration_cutoff = None
 
         min_model_rows = max(200, config.get('num_classes', 2) * 50)
+        min_calibration_rows = max(50, config.get('num_classes', 2) * 10)
         desired_cal_size = max(200, int(len(X_train) * 0.15))
         max_cal_size = max(0, len(X_train) - min_model_rows)
         cal_size = min(desired_cal_size, max_cal_size)
 
-        if cal_size >= max(50, config.get('num_classes', 2) * 10):
+        if cal_size >= min_calibration_rows:
+            cal_idx = []
             if train_dates is not None:
-                sorted_dates = pd.to_datetime(train_dates.loc[X_train.index], errors='coerce')
-                sorted_idx = sorted_dates.sort_values().index
-                cal_idx = list(sorted_idx[-cal_size:])
+                try:
+                    calibration_split = build_temporal_holdout(
+                        train_dates.loc[X_train.index],
+                        holdout_fraction=cal_size / len(X_train),
+                        min_train_rows=min_model_rows,
+                        min_holdout_rows=min_calibration_rows,
+                    )
+                    cal_idx = calibration_split.holdout_index
+                    calibration_cutoff = calibration_split.cutoff
+                except ValueError as exc:
+                    print(f"Calibration holdout skipped: {exc}")
             else:
                 rng = np.random.RandomState(42)
                 cal_pos = rng.permutation(len(X_train))[:cal_size]
                 cal_idx = list(X_train.iloc[cal_pos].index)
 
-            cal_idx_set = set(cal_idx)
-            fit_idx = [idx for idx in X_train.index if idx not in cal_idx_set]
-            candidate_y = y_train.loc[fit_idx]
+            if cal_idx:
+                cal_idx_set = set(cal_idx)
+                fit_idx = [idx for idx in X_train.index if idx not in cal_idx_set]
+                candidate_y = y_train.loc[fit_idx]
 
-            if candidate_y.nunique() == y_train.nunique():
-                weights_by_index = pd.Series(sample_weights, index=X_train.index)
-                X_model_train = X_train.loc[fit_idx]
-                y_model_train = candidate_y
-                sample_weights_model = weights_by_index.loc[fit_idx].values
-                X_cal_raw = X_train.loc[cal_idx]
-                X_cal_scaled = scaler.transform(X_cal_raw)
-                y_cal = y_train.loc[cal_idx]
-                print(f"Calibration holdout: train={len(X_model_train)}, cal={len(X_cal_raw)}")
-            else:
-                print("Calibration holdout skipped: not all classes remain in training split")
+                if candidate_y.nunique() == y_train.nunique():
+                    weights_by_index = pd.Series(sample_weights, index=X_train.index)
+                    X_model_train = X_train.loc[fit_idx]
+                    y_model_train = candidate_y
+                    sample_weights_model = weights_by_index.loc[fit_idx].values
+                    X_cal_raw = X_train.loc[cal_idx]
+                    X_cal_scaled = scaler.transform(X_cal_raw)
+                    y_cal = y_train.loc[cal_idx]
+                    cutoff_text = (
+                        f", cutoff={calibration_cutoff.date()}"
+                        if calibration_cutoff is not None
+                        else ""
+                    )
+                    print(
+                        f"Calibration holdout: train={len(X_model_train)}, "
+                        f"cal={len(X_cal_raw)}{cutoff_text}"
+                    )
+                else:
+                    calibration_cutoff = None
+                    print("Calibration holdout skipped: not all classes remain in training split")
 
         X_model_train, y_model_train, sample_weights_model, model_train_dates = _sort_training_rows_by_date(
             X_model_train,
@@ -1364,6 +1349,8 @@ class UniversalPredictor:
                 'brier_score': prob_metrics.get('brier_score'),
                 'log_loss': prob_metrics.get('log_loss'),
                 'ece': prob_metrics.get('ece'),
+                'macro_f1': prob_metrics.get('macro_f1'),
+                'balanced_accuracy': prob_metrics.get('balanced_accuracy'),
                 'train_time_s': round(train_time, 2),
                 'predict_time_ms': round(predict_time_ms, 2),
                 'cpu_time_s': round(cpu_train_s, 2),
@@ -1377,6 +1364,8 @@ class UniversalPredictor:
                 'brier_score': prob_metrics.get('brier_score'),
                 'log_loss': prob_metrics.get('log_loss'),
                 'ece': prob_metrics.get('ece'),
+                'macro_f1': prob_metrics.get('macro_f1'),
+                'balanced_accuracy': prob_metrics.get('balanced_accuracy'),
                 'per_class_recall': prob_metrics.get('per_class_recall'),
                 'confusion_matrix': prob_metrics.get('confusion_matrix'),
                 'train_time_s': round(train_time, 2),
@@ -1399,11 +1388,76 @@ class UniversalPredictor:
                     X_cal = X_cal_scaled if mdata['scaled'] else X_cal_raw
                     cal_model.fit(X_cal, y_cal)
                     self.models[target][name]['calibrated_model'] = cal_model
-                    print(f"{name}: calibrated (sigmoid/Platt)")
+
+                    X_test_calibrated = X_test_scaled if mdata['scaled'] else X_test
+                    calibrated_pred = cal_model.predict(X_test_calibrated)
+                    calibrated_proba = _align_predict_proba(
+                        cal_model,
+                        X_test_calibrated,
+                        class_labels,
+                    )
+                    calibrated_metrics = _classification_eval_metrics(
+                        y_test,
+                        calibrated_pred,
+                        calibrated_proba,
+                        class_labels,
+                    )
+                    calibrated_accuracy = accuracy_score(y_test, calibrated_pred)
+                    calibrated_precision = precision_score(
+                        y_test,
+                        calibrated_pred,
+                        average=avg_method,
+                        zero_division=0,
+                    )
+                    calibrated_recall = recall_score(
+                        y_test,
+                        calibrated_pred,
+                        average=avg_method,
+                        zero_division=0,
+                    )
+                    calibrated_f1 = f1_score(
+                        y_test,
+                        calibrated_pred,
+                        average=avg_method,
+                        zero_division=0,
+                    )
+
+                    mdata.update({
+                        'accuracy': calibrated_accuracy,
+                        'precision': calibrated_precision,
+                        'recall': calibrated_recall,
+                        'f1': calibrated_f1,
+                        'brier_score': calibrated_metrics.get('brier_score'),
+                        'log_loss': calibrated_metrics.get('log_loss'),
+                        'ece': calibrated_metrics.get('ece'),
+                        'macro_f1': calibrated_metrics.get('macro_f1'),
+                        'balanced_accuracy': calibrated_metrics.get('balanced_accuracy'),
+                    })
+                    results[name] = calibrated_accuracy
+                    detailed_metrics[name].update({
+                        'accuracy': round(calibrated_accuracy, 4),
+                        'precision': round(calibrated_precision, 4),
+                        'recall': round(calibrated_recall, 4),
+                        'f1': round(calibrated_f1, 4),
+                        'brier_score': calibrated_metrics.get('brier_score'),
+                        'log_loss': calibrated_metrics.get('log_loss'),
+                        'ece': calibrated_metrics.get('ece'),
+                        'macro_f1': calibrated_metrics.get('macro_f1'),
+                        'balanced_accuracy': calibrated_metrics.get('balanced_accuracy'),
+                        'per_class_recall': calibrated_metrics.get('per_class_recall'),
+                        'confusion_matrix': calibrated_metrics.get('confusion_matrix'),
+                        'calibrated': True,
+                    })
+                    print(
+                        f"{name}: calibrated (sigmoid/Platt), "
+                        f"test acc={calibrated_accuracy:.1%}, "
+                        f"Brier={calibrated_metrics.get('brier_score')}"
+                    )
                 except Exception as e:
                     print(f"{name}: calibration skipped ({e})")
         else:
             print("\n  Calibration skipped: not enough training rows for a separate holdout")
+
         feature_importances = {}
         for name in ['Random Forest', 'XGBoost', 'LightGBM']:
             if name in self.models[target]:
@@ -1493,6 +1547,8 @@ class UniversalPredictor:
                 'brier_score': ens_prob_metrics.get('brier_score'),
                 'log_loss': ens_prob_metrics.get('log_loss'),
                 'ece': ens_prob_metrics.get('ece'),
+                'macro_f1': ens_prob_metrics.get('macro_f1'),
+                'balanced_accuracy': ens_prob_metrics.get('balanced_accuracy'),
                 'train_time_s': round(ens_time, 2),
                 'predict_time_ms': round(pred_time_ens, 2),
                 'cpu_time_s': round(cpu_ens_s, 2),
@@ -1505,6 +1561,8 @@ class UniversalPredictor:
                 'brier_score': ens_prob_metrics.get('brier_score'),
                 'log_loss': ens_prob_metrics.get('log_loss'),
                 'ece': ens_prob_metrics.get('ece'),
+                'macro_f1': ens_prob_metrics.get('macro_f1'),
+                'balanced_accuracy': ens_prob_metrics.get('balanced_accuracy'),
                 'per_class_recall': ens_prob_metrics.get('per_class_recall'),
                 'confusion_matrix': ens_prob_metrics.get('confusion_matrix'),
                 'train_time_s': round(ens_time, 2), 'predict_time_ms': round(pred_time_ens, 2),
@@ -1557,6 +1615,8 @@ class UniversalPredictor:
                 'brier_score': stack_prob_metrics.get('brier_score'),
                 'log_loss': stack_prob_metrics.get('log_loss'),
                 'ece': stack_prob_metrics.get('ece'),
+                'macro_f1': stack_prob_metrics.get('macro_f1'),
+                'balanced_accuracy': stack_prob_metrics.get('balanced_accuracy'),
                 'train_time_s': round(stack_time, 2),
                 'predict_time_ms': round(pred_time_st, 2),
                 'cpu_time_s': round(cpu_stack_s, 2),
@@ -1569,6 +1629,8 @@ class UniversalPredictor:
                 'brier_score': stack_prob_metrics.get('brier_score'),
                 'log_loss': stack_prob_metrics.get('log_loss'),
                 'ece': stack_prob_metrics.get('ece'),
+                'macro_f1': stack_prob_metrics.get('macro_f1'),
+                'balanced_accuracy': stack_prob_metrics.get('balanced_accuracy'),
                 'per_class_recall': stack_prob_metrics.get('per_class_recall'),
                 'confusion_matrix': stack_prob_metrics.get('confusion_matrix'),
                 'train_time_s': round(stack_time, 2), 'predict_time_ms': round(pred_time_st, 2),
@@ -1636,6 +1698,8 @@ class UniversalPredictor:
                             'brier_score': lstm_prob_metrics.get('brier_score'),
                             'log_loss': lstm_prob_metrics.get('log_loss'),
                             'ece': lstm_prob_metrics.get('ece'),
+                            'macro_f1': lstm_prob_metrics.get('macro_f1'),
+                            'balanced_accuracy': lstm_prob_metrics.get('balanced_accuracy'),
                             'type': 'lstm',
                             'train_time_s': round(lstm_time, 2),
                             'predict_time_ms': round(pred_time_lstm, 2),
@@ -1651,6 +1715,8 @@ class UniversalPredictor:
                             'brier_score': lstm_prob_metrics.get('brier_score'),
                             'log_loss': lstm_prob_metrics.get('log_loss'),
                             'ece': lstm_prob_metrics.get('ece'),
+                            'macro_f1': lstm_prob_metrics.get('macro_f1'),
+                            'balanced_accuracy': lstm_prob_metrics.get('balanced_accuracy'),
                             'per_class_recall': lstm_prob_metrics.get('per_class_recall'),
                             'confusion_matrix': lstm_prob_metrics.get('confusion_matrix'),
                             'train_time_s': round(lstm_time, 2),
@@ -1672,6 +1738,16 @@ class UniversalPredictor:
             'features': len(feature_cols),
             'feature_names': feature_cols,
             'feature_set': self.feature_sets_by_target.get(target),
+            'validation': {
+                'strategy': validation_strategy,
+                'test_cutoff': test_cutoff.isoformat() if test_cutoff is not None else None,
+                'calibration_cutoff': (
+                    calibration_cutoff.isoformat()
+                    if calibration_cutoff is not None
+                    else None
+                ),
+                'strict_temporal_order': validation_strategy == 'global_temporal',
+            },
             'date_ranges': {
                 'all': _date_range_summary(dates),
                 'train': _date_range_summary(train_dates.loc[X_train.index] if train_dates is not None else None),
@@ -1737,7 +1813,8 @@ class UniversalPredictor:
     def _train_regression_models(self, target, config, X_train, X_test,
                                   X_train_scaled, X_test_scaled,
                                   y_train, y_test, feature_cols, scaler,
-                                  X, meta, df) -> Dict:
+                                  X, meta, df, validation_strategy,
+                                  test_cutoff) -> Dict:
         model_configs = self._build_regression_configs()
         self.models[target] = {}
         results = {}
@@ -1802,6 +1879,12 @@ class UniversalPredictor:
             'features': len(feature_cols),
             'feature_names': feature_cols,
             'feature_set': self.feature_sets_by_target.get(target),
+            'validation': {
+                'strategy': validation_strategy,
+                'test_cutoff': test_cutoff.isoformat() if test_cutoff is not None else None,
+                'calibration_cutoff': None,
+                'strict_temporal_order': validation_strategy == 'global_temporal',
+            },
             'date_ranges': {
                 'all': _date_range_summary(meta.get('date') if meta else None),
                 'train': _date_range_summary(meta.get('date').loc[X_train.index] if meta and meta.get('date') is not None else None),
