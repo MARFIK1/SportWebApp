@@ -397,6 +397,7 @@ def combine_all_seasons_data(dm):
     all_matches = []
     all_features = []
     seasons_found = []
+    feature_builder_versions = set()
     
     if os.path.exists(dm.paths['raw']):
         for filename in sorted(os.listdir(dm.paths['raw'])):
@@ -415,12 +416,22 @@ def combine_all_seasons_data(dm):
                 data = load_existing_data(filepath)
                 if data and 'samples' in data:
                     all_features.extend(data['samples'])
+                    metadata = data.get('metadata', {})
+                    feature_builder_versions.add(
+                        metadata.get('dataset_builder_version', 'legacy')
+                    )
     
     if not all_matches:
         return
     
     all_matches, raw_duplicates = deduplicate_matches(all_matches)
     all_features, feature_duplicates = deduplicate_samples(all_features)
+    source_builder_versions = sorted(feature_builder_versions, key=str)
+    combined_builder_version = (
+        DATASET_BUILDER_VERSION
+        if feature_builder_versions == {DATASET_BUILDER_VERSION}
+        else 'mixed'
+    )
 
     with open(os.path.join(dm.paths['raw'], 'all_seasons.json'), 'w', encoding='utf-8') as raw_file:
         json.dump({
@@ -437,7 +448,8 @@ def combine_all_seasons_data(dm):
     with open(os.path.join(dm.paths['features'], 'features_all_seasons.json'), 'w', encoding='utf-8') as feature_file:
         json.dump({
             'metadata': {
-                'dataset_builder_version': DATASET_BUILDER_VERSION,
+                'dataset_builder_version': combined_builder_version,
+                'source_builder_versions': source_builder_versions,
                 'total_samples': len(all_features),
                 'duplicates_removed': feature_duplicates,
                 'seasons': seasons_found,

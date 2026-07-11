@@ -231,6 +231,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
     regenerated = 0
     cached = 0
     has_player_stats = False
+    builder_versions = set()
     for raw_file, season in all_season_files:
         feat_file = os.path.join(features_path, f'features_{comp_name}_{season}.json')
         can_regenerate = not current_only or season in selected_seasons
@@ -246,6 +247,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 samples = cached_data.get('samples', [])
                 all_samples.extend(samples)
                 metadata = cached_data.get('metadata', {})
+                builder_versions.add(metadata.get('dataset_builder_version', 'legacy'))
                 has_player_stats = has_player_stats or bool(metadata.get('has_player_stats'))
                 fin = metadata.get('finished_samples', 0)
                 upc = metadata.get('upcoming_samples', 0)
@@ -300,6 +302,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
             json.dump(output_data, feature_file, ensure_ascii=False, indent=2)
 
         all_samples.extend(result.samples)
+        builder_versions.add(DATASET_BUILDER_VERSION)
         regenerated += 1
         print(
             f"  Season {season}: {result.finished_samples} fin + "
@@ -313,6 +316,12 @@ def regenerate_competition_features(comp_type, country, comp_name,
         for sample in all_samples
     )
     total_upcoming = len(all_samples) - total_finished
+    source_builder_versions = sorted(builder_versions, key=str)
+    combined_builder_version = (
+        DATASET_BUILDER_VERSION
+        if builder_versions == {DATASET_BUILDER_VERSION}
+        else 'mixed'
+    )
 
     if all_samples:
         all_seasons_file = os.path.join(features_path, 'features_all_seasons.json')
@@ -321,7 +330,8 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 'comp_type': comp_type,
                 'country': country,
                 'competition': comp_name,
-                'dataset_builder_version': DATASET_BUILDER_VERSION,
+                'dataset_builder_version': combined_builder_version,
+                'source_builder_versions': source_builder_versions,
                 'total_samples': len(all_samples),
                 'finished_samples': total_finished,
                 'upcoming_samples': total_upcoming,
@@ -348,24 +358,20 @@ def discover_competitions(comp_type):
     if not os.path.exists(base_dir):
         return []
     comps = []
-    seen_comp_names = set()
     for entry1 in sorted(os.listdir(base_dir)):
         entry1_path = os.path.join(base_dir, entry1)
         if not os.path.isdir(entry1_path):
             continue
 
         if os.path.exists(os.path.join(entry1_path, 'raw')):
-            if entry1 not in seen_comp_names:
-                comps.append((entry1, entry1))
-                seen_comp_names.add(entry1)
+            comps.append((entry1, entry1))
         elif comp_type not in ('european', 'international'):
             for entry2 in sorted(os.listdir(entry1_path)):
                 entry2_path = os.path.join(entry1_path, entry2)
                 if os.path.isdir(entry2_path):
                     raw_path = os.path.join(entry2_path, 'raw')
-                    if os.path.exists(raw_path) and entry2 not in seen_comp_names:
+                    if os.path.exists(raw_path):
                         comps.append((entry1, entry2))
-                        seen_comp_names.add(entry2)
     return comps
 
 
