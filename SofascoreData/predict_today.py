@@ -2587,6 +2587,7 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
             'prediction': model_pred,
             'confidence': pred_data.get('confidence'),
             'probabilities': pred_data.get('probabilities', {}),
+            'decision_policy_applied': pred_data.get('decision_policy_applied', False),
             'correct': is_correct
         }
 
@@ -2602,7 +2603,8 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
         'agreement_pct': cons.get('agreement_pct'),
         'votes': cons.get('votes', {}),
         'avg_probabilities': cons.get('avg_probabilities', {}),
-        'correct': cons_correct
+        'correct': cons_correct,
+        'decision_policy_applied': cons.get('decision_policy_applied', False),
     }
 
     market_data = {}

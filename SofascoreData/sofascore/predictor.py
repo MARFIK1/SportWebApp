@@ -39,6 +39,11 @@ from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from sofascore.config import COMPETITIONS
 from sofascore.data_layout import competition_features_path, discover_feature_competitions
+from sofascore.decision_policy import (
+    apply_decision_policy,
+    fit_result_decision_policy,
+    weighted_average_probabilities,
+)
 from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
 from sofascore.temporal_validation import build_temporal_holdout
 from sofascore.training_report import METRIC_CONTRACT
@@ -615,6 +620,7 @@ class UniversalPredictor:
         self.feature_columns = []   # Backward compat (result target)
         self.training_stats = {}
         self.feature_sets_by_target = {}
+        self.decision_policies = {}
 
     def _get_consensus_weights(self, target: str) -> Dict[str, float]:
         target_weights = CONSENSUS_WEIGHTS_BY_TARGET.get(target, {})
@@ -1264,6 +1270,13 @@ class UniversalPredictor:
         X_cal_scaled = None
         y_cal = None
         calibration_cutoff = None
+        X_probability_cal_raw = None
+        X_probability_cal_scaled = None
+        y_probability_cal = None
+        X_policy_raw = None
+        X_policy_scaled = None
+        y_policy = None
+        policy_cutoff = None
 
         min_model_rows = max(200, config.get('num_classes', 2) * 50)
         min_calibration_rows = max(50, config.get('num_classes', 2) * 10)
@@ -1315,6 +1328,44 @@ class UniversalPredictor:
                 else:
                     calibration_cutoff = None
                     print("Calibration holdout skipped: not all classes remain in training split")
+
+        X_probability_cal_raw = X_cal_raw
+        X_probability_cal_scaled = X_cal_scaled
+        y_probability_cal = y_cal
+
+        if target == 'result' and X_cal_raw is not None and train_dates is not None:
+            min_policy_rows = max(100, config.get('num_classes', 3) * 30)
+            try:
+                policy_split = build_temporal_holdout(
+                    train_dates.loc[X_cal_raw.index],
+                    holdout_fraction=0.35,
+                    min_train_rows=min_policy_rows,
+                    min_holdout_rows=min_policy_rows,
+                )
+                probability_idx = policy_split.train_index
+                policy_idx = policy_split.holdout_index
+                probability_y = y_cal.loc[probability_idx]
+                policy_y = y_cal.loc[policy_idx]
+                expected_classes = y_cal.nunique()
+                if (
+                    probability_y.nunique() == expected_classes
+                    and policy_y.nunique() == expected_classes
+                ):
+                    X_probability_cal_raw = X_cal_raw.loc[probability_idx]
+                    X_probability_cal_scaled = scaler.transform(X_probability_cal_raw)
+                    y_probability_cal = probability_y
+                    X_policy_raw = X_cal_raw.loc[policy_idx]
+                    X_policy_scaled = scaler.transform(X_policy_raw)
+                    y_policy = policy_y
+                    policy_cutoff = policy_split.cutoff
+                    print(
+                        f"Decision policy split: calibration={len(X_probability_cal_raw)}, "
+                        f"policy={len(X_policy_raw)}, cutoff={policy_cutoff.date()}"
+                    )
+                else:
+                    print("Decision policy skipped: not all classes exist on both sides")
+            except ValueError as exc:
+                print(f"Decision policy split skipped: {exc}")
 
         X_model_train, y_model_train, sample_weights_model, model_train_dates = _sort_training_rows_by_date(
             X_model_train,
@@ -1429,8 +1480,12 @@ class UniversalPredictor:
             }
             print(f"    {name}: acc={acc:.1%} f1={f1:.1%} [{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
 
-        if X_cal_raw is not None and y_cal is not None:
-            print(f"\n  Calibrating models (holdout={len(X_cal_raw)})...")
+        policy_probabilities = {}
+        test_probabilities = {}
+        decision_policy_test_evaluation = None
+        if X_probability_cal_raw is not None and y_probability_cal is not None:
+            policy_rows = len(X_policy_raw) if X_policy_raw is not None else 0
+            print(f"\nCalibrating models (probability={len(X_probability_cal_raw)}, policy={policy_rows})...")
             for name, mdata in list(self.models[target].items()):
                 try:
                     if FrozenEstimator is not None:
@@ -1438,17 +1493,36 @@ class UniversalPredictor:
                         cal_model = CalibratedClassifierCV(estimator, method='sigmoid')
                     else:
                         cal_model = CalibratedClassifierCV(mdata['model'], cv='prefit', method='sigmoid')
-                    X_cal = X_cal_scaled if mdata['scaled'] else X_cal_raw
-                    cal_model.fit(X_cal, y_cal)
+                    X_cal = X_probability_cal_scaled if mdata['scaled'] else X_probability_cal_raw
+                    cal_model.fit(X_cal, y_probability_cal)
                     self.models[target][name]['calibrated_model'] = cal_model
+                    decision_policy = None
+                    if target == 'result' and X_policy_raw is not None and y_policy is not None:
+                        X_policy = X_policy_scaled if mdata['scaled'] else X_policy_raw
+                        policy_proba = _align_predict_proba(
+                            cal_model,
+                            X_policy,
+                            class_labels,
+                        )
+                        decision_policy = fit_result_decision_policy(
+                            y_policy,
+                            policy_proba,
+                            class_labels,
+                        )
+                        mdata['decision_policy'] = decision_policy
+                        policy_probabilities[name] = policy_proba
 
                     X_test_calibrated = X_test_scaled if mdata['scaled'] else X_test
-                    calibrated_pred = cal_model.predict(X_test_calibrated)
                     calibrated_proba = _align_predict_proba(
                         cal_model,
                         X_test_calibrated,
                         class_labels,
                     )
+                    test_probabilities[name] = calibrated_proba
+                    if decision_policy:
+                        calibrated_pred = apply_decision_policy(calibrated_proba, decision_policy, class_labels)
+                    else:
+                        calibrated_pred = cal_model.predict(X_test_calibrated)
                     calibrated_metrics = _classification_eval_metrics(
                         y_test,
                         calibrated_pred,
@@ -1500,6 +1574,7 @@ class UniversalPredictor:
                         'per_class_recall': calibrated_metrics.get('per_class_recall'),
                         'confusion_matrix': calibrated_metrics.get('confusion_matrix'),
                         'calibrated': True,
+                        'decision_policy': decision_policy,
                     })
                     print(
                         f"{name}: calibrated (sigmoid/Platt), "
@@ -1508,6 +1583,94 @@ class UniversalPredictor:
                     )
                 except Exception as e:
                     print(f"{name}: calibration skipped ({e})")
+            if target == 'result' and y_policy is not None and policy_probabilities:
+                consensus_policy_proba = weighted_average_probabilities(
+                    policy_probabilities,
+                    self._get_consensus_weights(target),
+                )
+                if consensus_policy_proba is not None:
+                    consensus_policy = fit_result_decision_policy(
+                        y_policy,
+                        consensus_policy_proba,
+                        class_labels,
+                    )
+                    self.decision_policies[target] = consensus_policy
+                    baseline_macro = consensus_policy['baseline_metrics']['macro_f1']
+                    tuned_macro = consensus_policy['tuned_metrics']['macro_f1']
+                    print(
+                        f"Consensus decision policy: macro_f1 "
+                        f"{baseline_macro:.1%} -> {tuned_macro:.1%}"
+                    )
+                    consensus_test_proba = weighted_average_probabilities(
+                        test_probabilities,
+                        self._get_consensus_weights(target),
+                    )
+                    if consensus_test_proba is not None:
+                        baseline_pred = apply_decision_policy(
+                            consensus_test_proba,
+                            None,
+                            class_labels,
+                        )
+                        policy_pred = apply_decision_policy(
+                            consensus_test_proba,
+                            consensus_policy,
+                            class_labels,
+                        )
+                        decision_policy_test_evaluation = {}
+                        for label, predicted in (
+                            ('Consensus Argmax', baseline_pred),
+                            ('Consensus Policy', policy_pred),
+                        ):
+                            metrics = _classification_eval_metrics(
+                                y_test,
+                                predicted,
+                                consensus_test_proba,
+                                class_labels,
+                            )
+                            accuracy = accuracy_score(y_test, predicted)
+                            precision = precision_score(
+                                y_test,
+                                predicted,
+                                average=avg_method,
+                                zero_division=0,
+                            )
+                            recall = recall_score(
+                                y_test,
+                                predicted,
+                                average=avg_method,
+                                zero_division=0,
+                            )
+                            weighted_f1 = f1_score(
+                                y_test,
+                                predicted,
+                                average=avg_method,
+                                zero_division=0,
+                            )
+                            detailed_metrics[label] = {
+                                'accuracy': round(accuracy, 4),
+                                'precision': round(precision, 4),
+                                'recall': round(recall, 4),
+                                'f1': round(weighted_f1, 4),
+                                'brier_score': metrics.get('brier_score'),
+                                'log_loss': metrics.get('log_loss'),
+                                'ece': metrics.get('ece'),
+                                'macro_f1': metrics.get('macro_f1'),
+                                'balanced_accuracy': metrics.get('balanced_accuracy'),
+                                'per_class_recall': metrics.get('per_class_recall'),
+                                'confusion_matrix': metrics.get('confusion_matrix'),
+                                'decision_policy': (
+                                    consensus_policy
+                                    if label == 'Consensus Policy'
+                                    else None
+                                ),
+                            }
+                            results[label] = accuracy
+                            decision_policy_test_evaluation[label] = detailed_metrics[label]
+                        print(
+                            f"Consensus test macro_f1: "
+                            f"{detailed_metrics['Consensus Argmax']['macro_f1']:.1%} -> "
+                            f"{detailed_metrics['Consensus Policy']['macro_f1']:.1%}"
+                        )
         else:
             print("\n  Calibration skipped: not enough training rows for a separate holdout")
 
@@ -1801,6 +1964,8 @@ class UniversalPredictor:
                 'best_model': best,
                 'best_score': round(best_score, 4),
             },
+            'decision_policy': self.decision_policies.get(target),
+            'decision_policy_test_evaluation': decision_policy_test_evaluation,
             'validation': {
                 'strategy': validation_strategy,
                 'test_cutoff': test_cutoff.isoformat() if test_cutoff is not None else None,
@@ -1810,12 +1975,25 @@ class UniversalPredictor:
                     else None
                 ),
                 'strict_temporal_order': validation_strategy == 'global_temporal',
+                'decision_policy_cutoff': (
+                    policy_cutoff.isoformat()
+                    if policy_cutoff is not None
+                    else None
+                ),
             },
             'date_ranges': {
                 'all': _date_range_summary(dates),
                 'train': _date_range_summary(train_dates.loc[X_train.index] if train_dates is not None else None),
                 'model_train': _date_range_summary(model_train_dates),
                 'calibration': _date_range_summary(train_dates.loc[X_cal_raw.index] if train_dates is not None and X_cal_raw is not None else None),
+                'probability_calibration': _date_range_summary(
+                    train_dates.loc[X_probability_cal_raw.index]
+                    if train_dates is not None and X_probability_cal_raw is not None else None
+                ),
+                'decision_policy': _date_range_summary(
+                    train_dates.loc[X_policy_raw.index]
+                    if train_dates is not None and X_policy_raw is not None else None
+                ),
                 'test': _date_range_summary(dates.loc[X_test.index] if dates is not None else None),
             },
             'mi_scores_top10': mi_series.head(10).to_dict(),
@@ -2021,14 +2199,25 @@ class UniversalPredictor:
         cal_model = model_data.get('calibrated_model')
         predict_model = cal_model if cal_model is not None else model
 
-        pred = predict_model.predict(X_pred)[0]
-        proba = predict_model.predict_proba(X_pred)[0] if hasattr(predict_model, 'predict_proba') else None
+        class_labels = list(class_names)
+        proba_matrix = _align_predict_proba(predict_model, X_pred, class_labels)
+        proba = proba_matrix[0] if proba_matrix is not None else None
+        decision_policy = model_data.get('decision_policy')
+        if proba is not None and decision_policy:
+            pred = apply_decision_policy(
+                proba,
+                decision_policy,
+                class_labels,
+            )[0]
+        else:
+            pred = predict_model.predict(X_pred)[0]
 
         result = {
             'prediction': class_names.get(int(pred), str(pred)),
             'prediction_int': int(pred),
             'model': model_name,
             'calibrated': cal_model is not None,
+            'decision_policy_applied': decision_policy is not None,
         }
 
         if proba is not None:
@@ -2036,7 +2225,9 @@ class UniversalPredictor:
                 class_names[i]: round(float(p) * 100, 1)
                 for i, p in enumerate(proba)
             }
-            result['confidence'] = round(float(max(proba)) * 100, 1)
+            prediction_position = class_labels.index(int(pred))
+            selected_probability = proba[prediction_position]
+            result['confidence'] = round(float(selected_probability) * 100, 1)
 
         return result
 
@@ -2106,8 +2297,20 @@ class UniversalPredictor:
 
         top_vote = vote_counter.most_common(1)[0]
         if avg_probabilities:
-            best_label = max(avg_probabilities, key=avg_probabilities.get)
-            consensus_prediction = best_label
+            consensus_policy = self.decision_policies.get(target)
+            if consensus_policy:
+                class_labels = list(class_names)
+                probability_row = [[
+                    avg_probabilities[class_names[label]] for label in class_labels
+                ]]
+                prediction_int = apply_decision_policy(
+                    probability_row,
+                    consensus_policy,
+                    class_labels,
+                )[0]
+                consensus_prediction = class_names[int(prediction_int)]
+            else:
+                consensus_prediction = max(avg_probabilities, key=avg_probabilities.get)
         else:
             consensus_prediction = class_names.get(top_vote[0], str(top_vote[0]))
         consensus_vote_count = votes_breakdown.get(consensus_prediction, 0)
@@ -2118,6 +2321,7 @@ class UniversalPredictor:
             'agreement_pct': round(consensus_vote_count / len(votes) * 100, 1),
             'votes': votes_breakdown,
             'avg_probabilities': avg_probabilities,
+            'decision_policy_applied': bool(self.decision_policies.get(target)),
         }
 
         return predictions
@@ -2329,6 +2533,7 @@ class UniversalPredictor:
             'dataset_hash_total_bytes': dataset_hash_info.get('total_bytes'),
             'code_hash': code_hash,
             'feature_sets_by_target': self.feature_sets_by_target,
+            'decision_policies': self.decision_policies,
             'feature_columns_by_target': self.feature_columns_by_target,
             'targets': sorted(self.models.keys()),
             'date_ranges_by_target': {
@@ -2373,6 +2578,7 @@ class UniversalPredictor:
             'scalers': self.scalers,
             'feature_columns_by_target': self.feature_columns_by_target,
             'feature_sets_by_target': self.feature_sets_by_target,
+            'decision_policies': self.decision_policies,
             'training_stats': self.training_stats,
             'lstm_states': lstm_states,
             'manifest': manifest,
@@ -2397,6 +2603,7 @@ class UniversalPredictor:
             self.scalers = save_data.get('scalers', {})
             self.feature_columns_by_target = save_data.get('feature_columns_by_target', {})
             self.feature_sets_by_target = save_data.get('feature_sets_by_target', {})
+            self.decision_policies = save_data.get('decision_policies', {})
             self.training_stats = save_data.get('training_stats', {})
 
             lstm_states = save_data.get('lstm_states', {})
@@ -2415,6 +2622,7 @@ class UniversalPredictor:
                 'result': save_data.get('feature_columns', [])
             }
             self.feature_sets_by_target = {'result': 'legacy'}
+            self.decision_policies = {}
             self.training_stats = save_data.get('training_stats', {})
 
         if 'result' in self.feature_columns_by_target:
