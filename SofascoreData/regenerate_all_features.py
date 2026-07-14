@@ -231,6 +231,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
     regenerated = 0
     cached = 0
     has_player_stats = False
+    invalid_scores_removed = 0
     builder_versions = set()
     for raw_file, season in all_season_files:
         feat_file = os.path.join(features_path, f'features_{comp_name}_{season}.json')
@@ -249,6 +250,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 metadata = cached_data.get('metadata', {})
                 builder_versions.add(metadata.get('dataset_builder_version', 'legacy'))
                 has_player_stats = has_player_stats or bool(metadata.get('has_player_stats'))
+                invalid_scores_removed += metadata.get('invalid_scores_removed', 0)
                 fin = metadata.get('finished_samples', 0)
                 upc = metadata.get('upcoming_samples', 0)
                 cached += 1
@@ -293,6 +295,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 'finished_samples': result.finished_samples,
                 'upcoming_samples': result.pending_samples,
                 'duplicates_removed': result.duplicates_removed,
+                'invalid_scores_removed': result.invalid_scores_removed,
                 'has_player_stats': bool(player_stats),
                 'generated_at': datetime.now().isoformat(),
             },
@@ -302,6 +305,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
             json.dump(output_data, feature_file, ensure_ascii=False, indent=2)
 
         all_samples.extend(result.samples)
+        invalid_scores_removed += result.invalid_scores_removed
         builder_versions.add(DATASET_BUILDER_VERSION)
         regenerated += 1
         print(
@@ -336,6 +340,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 'finished_samples': total_finished,
                 'upcoming_samples': total_upcoming,
                 'duplicates_removed': raw_duplicates + sample_duplicates,
+                'invalid_scores_removed': invalid_scores_removed,
                 'has_player_stats': has_player_stats,
                 'generated_at': datetime.now().isoformat(),
             },
@@ -349,6 +354,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
         'finished': total_finished,
         'upcoming': total_upcoming,
         'duplicates_removed': raw_duplicates + sample_duplicates,
+        'invalid_scores_removed': invalid_scores_removed,
         'regenerated': regenerated,
         'cached': cached,
     }

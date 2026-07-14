@@ -1,8 +1,9 @@
 from dataclasses import dataclass
+import math
 from typing import Dict, Iterable, List, Optional, Sequence
 
 
-DATASET_BUILDER_VERSION = 2
+DATASET_BUILDER_VERSION = 3
 PENDING_STATUSES = frozenset({"upcoming", "notstarted", "postponed", "canceled"})
 
 
@@ -12,6 +13,7 @@ class DatasetBuildResult:
     finished_samples: int
     pending_samples: int
     duplicates_removed: int
+    invalid_scores_removed: int
 
 
 def match_sort_key(match: Dict):
@@ -27,6 +29,105 @@ def is_finished_match(match: Dict) -> bool:
     if status in PENDING_STATUSES:
         return False
     return status == "finished" or match.get("home_score") is not None
+
+
+def _score_int(value) -> Optional[int]:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _first_score_stat(match: Dict, side: str) -> Optional[int]:
+    for key in (f"{side}_shotsongoal", f"{side}_shots_on_goal"):
+        value = _score_int(match.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _looks_like_embedded_shootout(match: Dict, home_score: int, away_score: int) -> bool:
+    total = home_score + away_score
+    if total < 8 or min(home_score, away_score) < 4:
+        return False
+
+    home_ht = _score_int(match.get("home_score_ht"))
+    away_ht = _score_int(match.get("away_score_ht"))
+    if (
+        total >= 10
+        and home_ht is not None
+        and away_ht is not None
+        and home_score - home_ht >= 3
+        and away_score - away_ht >= 3
+    ):
+        return True
+
+    if total >= 14:
+        return True
+
+    home_shots = _first_score_stat(match, "home")
+    away_shots = _first_score_stat(match, "away")
+    if home_shots is not None and away_shots is not None:
+        return home_score > home_shots + 1 or away_score > away_shots + 1
+    return False
+
+
+def normalize_match_scores(match: Dict) -> Optional[Dict]:
+    if not is_finished_match(match):
+        return dict(match)
+
+    home_score = _score_int(match.get("home_score"))
+    away_score = _score_int(match.get("away_score"))
+    if home_score is None or away_score is None:
+        return None
+
+    home_pen = _score_int(match.get("home_score_pen"))
+    away_pen = _score_int(match.get("away_score_pen"))
+    has_penalty_score = home_pen is not None or away_pen is not None
+
+    if has_penalty_score:
+        if home_pen is None or away_pen is None or home_pen == away_pen:
+            return None
+        if home_score != away_score:
+            if home_score < 0 or away_score < 0:
+                candidate = (home_score + home_pen, away_score + away_pen)
+            else:
+                candidate = (home_score - home_pen, away_score - away_pen)
+            resolved = (
+                candidate
+                if min(candidate) >= 0 and candidate[0] == candidate[1]
+                else None
+            )
+            if resolved is None:
+                return None
+            home_score, away_score = resolved
+    elif _looks_like_embedded_shootout(match, home_score, away_score):
+        return None
+
+    if home_score < 0 or away_score < 0:
+        return None
+
+    normalized = dict(match)
+    normalized["home_score"] = home_score
+    normalized["away_score"] = away_score
+    return normalized
+
+
+def _normalize_training_matches(matches: Sequence[Dict]) -> tuple[List[Dict], int]:
+    normalized = []
+    removed = 0
+    for match in matches:
+        prepared = normalize_match_scores(match)
+        if prepared is None:
+            removed += 1
+            continue
+        normalized.append(prepared)
+    return normalized, removed
 
 
 def _record_quality(record: Dict) -> tuple:
@@ -91,12 +192,15 @@ def build_season_feature_samples(
     include_pending: bool = True,
 ) -> DatasetBuildResult:
     season_matches, season_duplicates = deduplicate_matches(matches)
+    season_matches, invalid_scores_removed = _normalize_training_matches(season_matches)
     history_source, _ = deduplicate_matches(
         history_matches if history_matches is not None else season_matches
     )
+    history_source, _ = _normalize_training_matches(history_source)
     elo_source, _ = deduplicate_matches(
         elo_matches if elo_matches is not None else history_source
     )
+    elo_source, _ = _normalize_training_matches(elo_source)
     elo_table = generator._compute_elo_table(elo_source)
 
     samples: List[Dict] = []
@@ -140,6 +244,7 @@ def build_season_feature_samples(
         finished_samples=finished_samples,
         pending_samples=pending_samples,
         duplicates_removed=season_duplicates + sample_duplicates,
+        invalid_scores_removed=invalid_scores_removed,
     )
 
 
@@ -167,6 +272,7 @@ def build_competition_feature_samples(
     samples: List[Dict] = []
     finished_samples = 0
     pending_samples = 0
+    invalid_scores_removed = 0
     for season, season_matches in sorted(
         seasons.items(),
         key=lambda item: min((match_sort_key(match) for match in item[1]), default=("", "", 0)),
@@ -185,6 +291,7 @@ def build_competition_feature_samples(
         samples.extend(result.samples)
         finished_samples += result.finished_samples
         pending_samples += result.pending_samples
+        invalid_scores_removed += result.invalid_scores_removed
         duplicates_removed += result.duplicates_removed
 
     samples, sample_duplicates = deduplicate_samples(samples)
@@ -193,4 +300,5 @@ def build_competition_feature_samples(
         finished_samples=finished_samples,
         pending_samples=pending_samples,
         duplicates_removed=duplicates_removed + sample_duplicates,
+        invalid_scores_removed=invalid_scores_removed,
     )

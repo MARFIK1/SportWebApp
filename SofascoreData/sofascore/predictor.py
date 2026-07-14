@@ -41,6 +41,7 @@ from sofascore.config import COMPETITIONS
 from sofascore.data_layout import competition_features_path, discover_feature_competitions
 from sofascore.decision_policy import (
     apply_decision_policy,
+    fit_binary_decision_policy,
     fit_result_decision_policy,
     weighted_average_probabilities,
 )
@@ -239,8 +240,75 @@ def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int])
     return metrics
 
 
+def _classification_baseline_metrics(y_train, y_test, class_labels: List[int]) -> Dict:
+    train_values = np.asarray(y_train)
+    test_values = np.asarray(y_test)
+    if len(train_values) == 0 or len(test_values) == 0:
+        raise ValueError("classification baseline requires non-empty train and test labels")
+
+    counts = np.asarray([(train_values == label).sum() for label in class_labels], dtype=float)
+    probabilities = counts / counts.sum()
+    predicted_label = class_labels[int(np.argmax(probabilities))]
+    predictions = np.full(len(test_values), predicted_label)
+    probability_matrix = np.tile(probabilities, (len(test_values), 1))
+    metrics = _classification_eval_metrics(
+        test_values,
+        predictions,
+        probability_matrix,
+        class_labels,
+    )
+    average = 'binary' if len(class_labels) == 2 else 'weighted'
+    metrics.update({
+        'accuracy': round(float(accuracy_score(test_values, predictions)), 4),
+        'precision': round(float(precision_score(
+            test_values, predictions, average=average, zero_division=0
+        )), 4),
+        'recall': round(float(recall_score(
+            test_values, predictions, average=average, zero_division=0
+        )), 4),
+        'f1': round(float(f1_score(
+            test_values, predictions, average=average, zero_division=0
+        )), 4),
+    })
+    return {
+        'strategy': 'train_majority_class',
+        'predicted_class': int(predicted_label),
+        'class_probabilities': {
+            str(label): round(float(probability), 4)
+            for label, probability in zip(class_labels, probabilities)
+        },
+        'metrics': metrics,
+    }
+
+
+def _nonnegative_count_predictions(values) -> np.ndarray:
+    return np.maximum(np.asarray(values, dtype=float), 0.0)
+
+
+def _regression_eval_metrics(y_true, y_pred) -> Dict[str, float]:
+    predictions = _nonnegative_count_predictions(y_pred)
+    return {
+        'mae': round(float(mean_absolute_error(y_true, predictions)), 4),
+        'rmse': round(float(np.sqrt(mean_squared_error(y_true, predictions))), 4),
+        'r2': round(float(r2_score(y_true, predictions)), 4),
+    }
+
+
+def _regression_baseline_metrics(y_train, y_test) -> Dict:
+    train_values = np.asarray(y_train, dtype=float)
+    if len(train_values) == 0 or len(y_test) == 0:
+        raise ValueError("regression baseline requires non-empty train and test labels")
+    baseline_value = max(0.0, float(np.median(train_values)))
+    predictions = np.full(len(y_test), baseline_value)
+    return {
+        'strategy': 'train_median',
+        'prediction': round(baseline_value, 4),
+        'metrics': _regression_eval_metrics(y_test, predictions),
+    }
+
+
 def _classification_selection_metric(target: str) -> str:
-    return 'macro_f1' if target == 'result' else 'accuracy'
+    return 'macro_f1'
 
 
 def _select_best_classification_model(target: str, detailed_metrics: Dict) -> Tuple[str, str, float]:
@@ -998,8 +1066,8 @@ class UniversalPredictor:
         config = TARGET_CONFIGS[target]
         is_binary = config['task'] == 'binary'
         tscv = TimeSeriesSplit(n_splits=3)
-        scoring = 'f1_macro' if target == 'result' else 'accuracy'
-        score_label = 'macro_f1' if target == 'result' else 'accuracy'
+        scoring = 'f1_macro'
+        score_label = 'macro_f1'
 
         xgb_best = {}
         lgb_best = {}
@@ -1333,7 +1401,7 @@ class UniversalPredictor:
         X_probability_cal_scaled = X_cal_scaled
         y_probability_cal = y_cal
 
-        if target == 'result' and X_cal_raw is not None and train_dates is not None:
+        if X_cal_raw is not None and train_dates is not None:
             min_policy_rows = max(100, config.get('num_classes', 3) * 30)
             try:
                 policy_split = build_temporal_holdout(
@@ -1396,6 +1464,17 @@ class UniversalPredictor:
         is_binary = config['task'] == 'binary'
         avg_method = 'binary' if is_binary else 'weighted'
         class_labels = sorted(config['class_names'].keys())
+        policy_fitter = fit_binary_decision_policy if is_binary else fit_result_decision_policy
+        classification_baseline = _classification_baseline_metrics(
+            y_model_train,
+            y_test,
+            class_labels,
+        )
+        baseline_metrics = classification_baseline['metrics']
+        print(
+            f"Train-majority baseline: acc={baseline_metrics['accuracy']:.1%}, "
+            f"macro_f1={baseline_metrics['macro_f1']:.1%}"
+        )
 
         print(f"\n  Training models...")
         for name, mc in model_configs.items():
@@ -1497,14 +1576,14 @@ class UniversalPredictor:
                     cal_model.fit(X_cal, y_probability_cal)
                     self.models[target][name]['calibrated_model'] = cal_model
                     decision_policy = None
-                    if target == 'result' and X_policy_raw is not None and y_policy is not None:
+                    if X_policy_raw is not None and y_policy is not None:
                         X_policy = X_policy_scaled if mdata['scaled'] else X_policy_raw
                         policy_proba = _align_predict_proba(
                             cal_model,
                             X_policy,
                             class_labels,
                         )
-                        decision_policy = fit_result_decision_policy(
+                        decision_policy = policy_fitter(
                             y_policy,
                             policy_proba,
                             class_labels,
@@ -1583,13 +1662,13 @@ class UniversalPredictor:
                     )
                 except Exception as e:
                     print(f"{name}: calibration skipped ({e})")
-            if target == 'result' and y_policy is not None and policy_probabilities:
+            if y_policy is not None and policy_probabilities:
                 consensus_policy_proba = weighted_average_probabilities(
                     policy_probabilities,
                     self._get_consensus_weights(target),
                 )
                 if consensus_policy_proba is not None:
-                    consensus_policy = fit_result_decision_policy(
+                    consensus_policy = policy_fitter(
                         y_policy,
                         consensus_policy_proba,
                         class_labels,
@@ -1704,14 +1783,14 @@ class UniversalPredictor:
                         cv_estimator = clone(mdata['model'])
                     scores = cross_val_score(
                         cv_estimator, X_train_sorted, y_train_sorted,
-                        cv=tscv, scoring='accuracy', n_jobs=-1
+                        cv=tscv, scoring='f1_macro', n_jobs=-1
                     )
                     cv_results[name] = {
                         'mean': round(float(scores.mean()), 4),
                         'std': round(float(scores.std()), 4),
                         'folds': [round(float(s), 4) for s in scores],
                     }
-                    print(f"{name}: CV={scores.mean():.1%} (+/- {scores.std():.1%})")
+                    print(f"{name}: CV macro_f1={scores.mean():.1%} (+/- {scores.std():.1%})")
                 except Exception as e:
                     print(f"{name}: CV skipped ({e})")
 
@@ -1951,6 +2030,7 @@ class UniversalPredictor:
             target,
             detailed_metrics,
         )
+        baseline_score = float(baseline_metrics.get(selection_metric, 0.0))
         self.training_stats[target] = {
             'class_labels': class_labels,
             'total_matches': len(X),
@@ -1963,7 +2043,10 @@ class UniversalPredictor:
                 'metric': selection_metric,
                 'best_model': best,
                 'best_score': round(best_score, 4),
+                'baseline_score': round(baseline_score, 4),
+                'improvement_over_baseline': round(best_score - baseline_score, 4),
             },
+            'baseline': classification_baseline,
             'decision_policy': self.decision_policies.get(target),
             'decision_policy_test_evaluation': decision_policy_test_evaluation,
             'validation': {
@@ -2003,8 +2086,11 @@ class UniversalPredictor:
             'cv_results': cv_results,
         }
 
-        print(f"\nBest for {target}: {best} "
-              f"({selection_metric}={best_score:.1%})")
+        print(
+            f"\nBest for {target}: {best} "
+            f"({selection_metric}={best_score:.1%}, "
+            f"baseline_delta={best_score - baseline_score:+.1%})"
+        )
 
         return results
 
@@ -2059,6 +2145,12 @@ class UniversalPredictor:
         self.models[target] = {}
         results = {}
         detailed_metrics = {}
+        regression_baseline = _regression_baseline_metrics(y_train, y_test)
+        baseline_metrics = regression_baseline['metrics']
+        print(
+            f"Train-median baseline: value={regression_baseline['prediction']:.2f}, "
+            f"MAE={baseline_metrics['mae']:.3f}"
+        )
 
         print(f"\n  Training regression models...")
         for name, mc in model_configs.items():
@@ -2077,12 +2169,13 @@ class UniversalPredictor:
             mem_delta = max(0.1, proc.memory_info().rss / 1024 / 1024 - mem_before)
 
             t_pred = time.time()
-            y_pred = model.predict(X_te)
+            y_pred = _nonnegative_count_predictions(model.predict(X_te))
             predict_time_ms = (time.time() - t_pred) * 1000
 
-            mae = mean_absolute_error(y_test, y_pred)
-            rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
-            r2 = r2_score(y_test, y_pred)
+            evaluation = _regression_eval_metrics(y_test, y_pred)
+            mae = evaluation['mae']
+            rmse = evaluation['rmse']
+            r2 = evaluation['r2']
 
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
                 tmp_path = tmp.name
@@ -2109,9 +2202,12 @@ class UniversalPredictor:
                 'memory_mb': round(mem_delta, 1),
                 'model_size_kb': round(model_size_kb, 1),
             }
-            print(f"    {name}: MAE={mae:.3f} RMSE={rmse:.3f} R²={r2:.3f} "
+            print(f"    {name}: MAE={mae:.3f} RMSE={rmse:.3f} R2={r2:.3f} "
                   f"[{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
 
+        best = min(results, key=results.get) if results else '?'
+        best_score = float(results.get(best, 0.0))
+        baseline_score = float(baseline_metrics['mae'])
         self.training_stats[target] = {
             'total_matches': len(X),
             'train_matches': len(X_train),
@@ -2130,12 +2226,22 @@ class UniversalPredictor:
                 'train': _date_range_summary(meta.get('date').loc[X_train.index] if meta and meta.get('date') is not None else None),
                 'test': _date_range_summary(meta.get('date').loc[X_test.index] if meta and meta.get('date') is not None else None),
             },
+            'selection': {
+                'metric': 'mae',
+                'best_model': best,
+                'best_score': round(best_score, 4),
+                'baseline_score': round(baseline_score, 4),
+                'improvement_over_baseline': round(baseline_score - best_score, 4),
+            },
+            'baseline': regression_baseline,
             'results': results,
             'detailed_metrics': detailed_metrics,
         }
 
-        best = min(results, key=results.get) if results else '?'
-        print(f"\n  Best for {target}: {best} (MAE={results.get(best, 0):.3f})")
+        print(
+            f"\nBest for {target}: {best} "
+            f"(MAE={best_score:.3f}, baseline_delta={baseline_score - best_score:+.3f})"
+        )
         return results
     
     def predict_match(self, features: Dict, model_name: str = 'Ensemble',
@@ -2159,7 +2265,7 @@ class UniversalPredictor:
             feature_values = [[features.get(col, 0) for col in feat_cols]]
             X = pd.DataFrame(feature_values, columns=feat_cols)
             X_pred = scaler.transform(X) if model_data.get('scaled') else X
-            y_pred = model.predict(X_pred)[0]
+            y_pred = _nonnegative_count_predictions(model.predict(X_pred))[0]
             return {
                 'prediction': round(float(y_pred), 2),
                 'model': model_name,
@@ -2723,6 +2829,8 @@ class UniversalPredictor:
 
             t_pred = time.time()
             y_pred = model.predict(X_te)
+            if is_regression:
+                y_pred = _nonnegative_count_predictions(y_pred)
             predict_time_ms = (time.time() - t_pred) * 1000
 
             entry = {
@@ -2741,7 +2849,7 @@ class UniversalPredictor:
                 rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
                 r2 = r2_score(y_test, y_pred)
                 entry.update({'mae': round(mae, 4), 'rmse': round(rmse, 4), 'r2': round(r2, 4)})
-                print(f"    {frac*100:5.0f}% ({n_train:>6} rows): MAE={mae:.3f} R²={r2:.3f} "
+                print(f"{frac*100:5.0f}% ({n_train:>6} rows): MAE={mae:.3f} R2={r2:.3f} "
                       f"[train={train_time:.1f}s, pred={predict_time_ms:.1f}ms, RAM={mem_delta:.1f}MB]")
             else:
                 acc = accuracy_score(y_test, y_pred)

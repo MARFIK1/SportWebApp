@@ -7,6 +7,7 @@ from sklearn.metrics import f1_score
 
 from sofascore.decision_policy import (
     apply_decision_policy,
+    fit_binary_decision_policy,
     fit_result_decision_policy,
     weighted_average_probabilities,
 )
@@ -64,6 +65,32 @@ class DecisionPolicyTests(unittest.TestCase):
             policy["tuned_metrics"]["accuracy"],
             policy["baseline_metrics"]["accuracy"],
         )
+
+    def test_binary_policy_recovers_both_classes_from_majority_argmax(self):
+        probabilities = np.array(
+            [
+                [0.46, 0.54],
+                [0.45, 0.55],
+                [0.35, 0.65],
+                [0.20, 0.80],
+            ]
+        )
+        y_true = np.array([0, 0, 1, 1])
+        baseline = apply_decision_policy(probabilities, None, [0, 1])
+
+        policy = fit_binary_decision_policy(
+            y_true,
+            probabilities,
+            max_accuracy_drop=0.50,
+        )
+        tuned = apply_decision_policy(probabilities, policy, [0, 1])
+
+        self.assertGreater(
+            f1_score(y_true, tuned, average="macro"),
+            f1_score(y_true, baseline, average="macro"),
+        )
+        self.assertLess(policy["log_offsets"][1], 0)
+        self.assertEqual(policy["type"], "binary_log_offset")
 
     def test_weighted_average_uses_only_configured_models(self):
         probabilities = {

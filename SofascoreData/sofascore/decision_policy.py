@@ -126,6 +126,73 @@ def fit_result_decision_policy(
     }
 
 
+def fit_binary_decision_policy(
+    y_true,
+    probabilities,
+    class_labels: Sequence[int] = (0, 1),
+    max_accuracy_drop: float = 0.06,
+) -> Dict:
+    labels = list(class_labels)
+    if labels != [0, 1]:
+        raise ValueError("binary decision policy requires labels [0, 1]")
+
+    normalized = normalize_probabilities(probabilities)
+    y_values = np.asarray(y_true)
+    if len(y_values) != len(normalized):
+        raise ValueError("labels and probabilities must contain the same rows")
+    if len(y_values) == 0:
+        raise ValueError("decision policy requires at least one row")
+
+    baseline_pred = apply_decision_policy(normalized, None, labels)
+    baseline = _decision_metrics(y_values, baseline_pred)
+    accuracy_floor = max(0.0, baseline["accuracy"] - max_accuracy_drop)
+    best_offset = 0.0
+    best_metrics = baseline
+    best_key = (
+        baseline["macro_f1"],
+        baseline["balanced_accuracy"],
+        baseline["accuracy"],
+        0.0,
+    )
+
+    for positive_offset in np.round(np.arange(-1.50, 1.501, 0.025), 3):
+        candidate = {
+            "class_labels": labels,
+            "log_offsets": [0.0, float(positive_offset)],
+        }
+        predicted = apply_decision_policy(normalized, candidate, labels)
+        metrics = _decision_metrics(y_values, predicted)
+        if metrics["accuracy"] + 1e-12 < accuracy_floor:
+            continue
+        key = (
+            metrics["macro_f1"],
+            metrics["balanced_accuracy"],
+            metrics["accuracy"],
+            -abs(float(positive_offset)),
+        )
+        if key > best_key:
+            best_key = key
+            best_offset = float(positive_offset)
+            best_metrics = metrics
+
+    return {
+        "version": DECISION_POLICY_VERSION,
+        "type": "binary_log_offset",
+        "class_labels": labels,
+        "log_offsets": [0.0, round(best_offset, 4)],
+        "selection_metric": "macro_f1",
+        "fit_rows": int(len(y_values)),
+        "max_accuracy_drop": float(max_accuracy_drop),
+        "accuracy_floor": round(float(accuracy_floor), 4),
+        "baseline_metrics": {
+            key: round(value, 4) for key, value in baseline.items()
+        },
+        "tuned_metrics": {
+            key: round(value, 4) for key, value in best_metrics.items()
+        },
+    }
+
+
 def weighted_average_probabilities(
     probabilities_by_model: Mapping[str, np.ndarray],
     weights: Optional[Mapping[str, float]] = None,
