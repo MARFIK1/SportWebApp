@@ -5,7 +5,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 const SOURCE_DATA = path.join(ROOT, "SofascoreData", "data");
-const SOURCE_REPORTS = path.join(ROOT, "SofascoreData", "reports");
+const SOURCE_REPORTS = process.env.SOFASCORE_REPORTS_DIR
+    ? path.resolve(process.env.SOFASCORE_REPORTS_DIR)
+    : path.join(ROOT, "SofascoreData", "reports");
 const SOURCE_MODELS = path.join(ROOT, "SofascoreData", "data", "models");
 const SOURCE_LOGS = process.env.PREBUILD_LOGS_DIR
     ? path.resolve(ROOT, process.env.PREBUILD_LOGS_DIR)

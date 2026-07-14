@@ -12,6 +12,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from sofascore.config import COMPETITIONS
 from sofascore.dataset_audit import audit_feature_datasets
 from sofascore.dataset_builder import DATASET_BUILDER_VERSION
+from sofascore.model_acceptance import build_acceptance_report, write_acceptance_report
 from sofascore.predictor import (
     COMPETITION_TYPES,
     FEATURE_SETS,
@@ -198,9 +199,32 @@ def main():
             dataset_summary,
         )
         comparison_paths = write_training_comparison(comparison, variant_dir)
+        acceptance = build_acceptance_report(
+            predictor.training_stats,
+            {
+                target: TARGET_CONFIGS[target].get("task", "classification")
+                for target in predictor.training_stats
+            },
+            variant,
+        )
+        acceptance_path = write_acceptance_report(
+            acceptance,
+            variant_dir / "acceptance.json",
+        )
+        predictor.artifact_metadata = {
+            **predictor.artifact_metadata,
+            "training": {
+                "variant": variant,
+                "targets": sorted(predictor.training_stats),
+                "feature_set": args.feature_set,
+                "accepted_targets": acceptance["accepted_targets"],
+                "rejected_targets": acceptance["rejected_targets"],
+            },
+        }
         variant_output = {
             "training_metrics": str(metrics_path),
             "comparison": comparison_paths,
+            "acceptance": acceptance_path,
             "baseline_manifest": str(baseline_path),
         }
 

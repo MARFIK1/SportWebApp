@@ -689,6 +689,7 @@ class UniversalPredictor:
         self.training_stats = {}
         self.feature_sets_by_target = {}
         self.decision_policies = {}
+        self.artifact_metadata = {}
 
     def _get_consensus_weights(self, target: str) -> Dict[str, float]:
         target_weights = CONSENSUS_WEIGHTS_BY_TARGET.get(target, {})
@@ -2353,13 +2354,20 @@ class UniversalPredictor:
 
         if config.get('task') == 'regression':
             values = [p['prediction'] for p in predictions.values() if 'prediction' in p]
-            avg_val = round(np.mean(values), 2) if values else 0
+            selection = self.training_stats.get(target, {}).get('selection', {})
+            selected_model = selection.get('best_model')
+            selected_prediction = predictions.get(selected_model, {}).get('prediction')
+            if selected_prediction is None:
+                selected_prediction = round(np.mean(values), 2) if values else 0
+                selected_model = None
             predictions['consensus'] = {
-                'prediction': avg_val,
+                'prediction': selected_prediction,
                 'min': round(min(values), 2) if values else 0,
                 'max': round(max(values), 2) if values else 0,
                 'n_models': len(values),
                 'task': 'regression',
+                'strategy': 'best_temporal_mae' if selected_model else 'mean_fallback',
+                'model': selected_model,
             }
             return predictions
 
@@ -2651,6 +2659,7 @@ class UniversalPredictor:
                 for target, stats in self.training_stats.items()
             },
             'metric_contract': METRIC_CONTRACT,
+            'metadata': self.artifact_metadata,
         }
     
     def save_models(self, path: str):
@@ -2688,6 +2697,7 @@ class UniversalPredictor:
             'training_stats': self.training_stats,
             'lstm_states': lstm_states,
             'manifest': manifest,
+            'artifact_metadata': self.artifact_metadata,
         }
 
         joblib.dump(save_data, path, compress=3)
@@ -2711,6 +2721,7 @@ class UniversalPredictor:
             self.feature_sets_by_target = save_data.get('feature_sets_by_target', {})
             self.decision_policies = save_data.get('decision_policies', {})
             self.training_stats = save_data.get('training_stats', {})
+            self.artifact_metadata = save_data.get('artifact_metadata', {})
 
             lstm_states = save_data.get('lstm_states', {})
             for key, state in lstm_states.items():
@@ -2730,6 +2741,7 @@ class UniversalPredictor:
             self.feature_sets_by_target = {'result': 'legacy'}
             self.decision_policies = {}
             self.training_stats = save_data.get('training_stats', {})
+            self.artifact_metadata = save_data.get('artifact_metadata', {})
 
         if 'result' in self.feature_columns_by_target:
             self.feature_columns = self.feature_columns_by_target['result']
