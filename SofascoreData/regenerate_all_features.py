@@ -14,6 +14,10 @@ import re
 import time
 import argparse
 from datetime import datetime
+from pathlib import Path
+
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def get_current_season() -> str:
@@ -27,27 +31,23 @@ def get_current_season() -> str:
         return f"{year-1:02d}_{year:02d}"
 
 
-sys.path.insert(0, os.getcwd())
+sys.path.insert(0, SCRIPT_DIR)
+from sofascore.data_layout import competition_features_path
+from sofascore.dataset_builder import (
+    DATASET_BUILDER_VERSION,
+    build_season_feature_samples,
+    deduplicate_matches,
+    deduplicate_samples,
+)
 from sofascore.features import MLFeatureGenerator
 
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DATA_DIR = os.environ.get('SOFASCORE_DATA_DIR', os.path.join(SCRIPT_DIR, 'data'))
 
 
 def create_generator():
     return MLFeatureGenerator(data_manager=None)
 
-
-def is_match_finished(match):
-    """Check if match is finished (backwards compatible)."""
-    if match.get('status') in ('postponed', 'canceled'):
-        return False
-    if match.get('status') == 'finished':
-        return True
-    if match.get('status') == 'upcoming':
-        return False
-    return match.get('home_score') is not None
 
 
 def load_all_league_player_stats(data_dir=None):
@@ -155,205 +155,177 @@ def is_season_stale(raw_path, features_path, raw_file, comp_name, season):
 
     if not os.path.exists(feat_file_path):
         return True
+    if os.path.getmtime(raw_file_path) > os.path.getmtime(feat_file_path):
+        return True
 
-    raw_mtime = os.path.getmtime(raw_file_path)
-    feat_mtime = os.path.getmtime(feat_file_path)
-    return raw_mtime > feat_mtime
+    try:
+        with open(feat_file_path, 'r', encoding='utf-8') as feature_file:
+            metadata = json.load(feature_file).get('metadata', {})
+        return metadata.get('dataset_builder_version') != DATASET_BUILDER_VERSION
+    except (OSError, ValueError, TypeError):
+        return True
 
-
-def generate_season_features(raw_file_path, matches, player_stats, generator,
-                             lineups=None, club_stats_index=None):
-    """Generate features for a single season. Returns (samples, finished, upcoming)."""
-    elo_table = generator._compute_elo_table(matches)
-
-    season_samples = []
-    finished_count = 0
-    upcoming_count = 0
-
-    for match in matches:
-        status = match.get('status')
-
-        if status in ('postponed', 'canceled', 'upcoming'):
-            season_samples.append({
-                'event_id': match.get('event_id'),
-                'date': match.get('date'),
-                'time': match.get('time', ''),
-                'round': match.get('round'),
-                'status': status,
-                'home_team': match.get('home_team'),
-                'home_team_id': match.get('home_team_id'),
-                'away_team': match.get('away_team'),
-                'away_team_id': match.get('away_team_id'),
-            })
-            upcoming_count += 1
-            continue
-
-        finished = is_match_finished(match)
-        try:
-            if finished:
-                features = generator.generate_match_features(
-                    match=match, all_matches=matches,
-                    player_stats=player_stats, elo_table=elo_table,
-                    lineups=lineups, club_stats_index=club_stats_index
-                )
-                features['event_id'] = match.get('event_id')
-                features['date'] = match.get('date')
-                features['time'] = match.get('time', '')
-                features['round'] = match.get('round')
-                features['status'] = 'finished'
-                features['home_team'] = match.get('home_team')
-                features['home_team_id'] = match.get('home_team_id')
-                features['away_team'] = match.get('away_team')
-                features['away_team_id'] = match.get('away_team_id')
-
-                home_score = match.get('home_score', 0) or 0
-                away_score = match.get('away_score', 0) or 0
-                total_goals = home_score + away_score
-
-                if home_score > away_score:
-                    result, result_int = 'H', 0
-                elif home_score < away_score:
-                    result, result_int = 'A', 2
-                else:
-                    result, result_int = 'D', 1
-
-                features['label_home_goals'] = home_score
-                features['label_away_goals'] = away_score
-                features['label_total_goals'] = total_goals
-                features['label_result'] = result
-                features['label_result_int'] = result_int
-                features['label_btts'] = 1 if home_score > 0 and away_score > 0 else 0
-                features['label_over_2_5'] = 1 if total_goals > 2.5 else 0
-                features['label_over_1_5'] = 1 if total_goals > 1.5 else 0
-                finished_count += 1
-            season_samples.append(features)
-        except Exception:
-            continue
-
-    return season_samples, finished_count, upcoming_count
-
+def generate_season_features(matches, player_stats, generator, season,
+                             lineups=None, club_stats_index=None,
+                             history_matches=None, elo_matches=None):
+    return build_season_feature_samples(
+        matches=matches,
+        generator=generator,
+        season=season,
+        player_stats=player_stats,
+        lineups=lineups,
+        club_stats_index=club_stats_index,
+        history_matches=history_matches,
+        elo_matches=elo_matches,
+    )
 
 def regenerate_competition_features(comp_type, country, comp_name,
                                     force=False, current_only=False,
                                     club_stats_index=None):
-    if comp_type in ('european', 'international') or country == comp_name:
-        base_path = f'data/{comp_type}/{comp_name}'
-    else:
-        base_path = f'data/{comp_type}/{country}/{comp_name}'
+    base_path = str(
+        competition_features_path(
+            Path(DEFAULT_DATA_DIR),
+            comp_type,
+            country,
+            comp_name,
+        ).parent
+    )
     raw_path = os.path.join(base_path, 'raw')
     features_path = os.path.join(base_path, 'features')
     os.makedirs(features_path, exist_ok=True)
 
-    current_season = get_current_season()
-    season_files = get_season_files(base_path)
-    if not season_files:
+    all_season_files = get_season_files(base_path)
+    if not all_season_files:
         return None
 
+    selected_seasons = {season for _, season in all_season_files}
     if current_only:
+        current_season = get_current_season()
         current_year = str(datetime.now().year)
-        season_files = [(f, s) for f, s in season_files
-                        if s == current_season or s == current_year]
-        if not season_files:
+        selected_seasons = {
+            season
+            for _, season in all_season_files
+            if season in (current_season, current_year)
+        }
+        if not selected_seasons:
             return None
 
+    raw_matches_by_file = {}
+    history_matches = []
+    for raw_file, _ in all_season_files:
+        raw_file_full = os.path.join(raw_path, raw_file)
+        try:
+            with open(raw_file_full, 'r', encoding='utf-8') as source_file:
+                matches = json.load(source_file).get('matches', [])
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"[ERROR] {raw_file}: {exc}")
+            continue
+        raw_matches_by_file[raw_file] = matches
+        history_matches.extend(matches)
+
+    history_matches, raw_duplicates = deduplicate_matches(history_matches)
     player_stats = None
     generator = None
     lineups_data = None
-
     all_samples = []
-    total_finished = 0
-    total_upcoming = 0
     regenerated = 0
     cached = 0
-
-    for raw_file, season in season_files:
-        raw_file_full = os.path.join(raw_path, raw_file)
+    has_player_stats = False
+    invalid_scores_removed = 0
+    builder_versions = set()
+    for raw_file, season in all_season_files:
         feat_file = os.path.join(features_path, f'features_{comp_name}_{season}.json')
+        can_regenerate = not current_only or season in selected_seasons
+        needs_regen = can_regenerate and (
+            force
+            or is_season_stale(raw_path, features_path, raw_file, comp_name, season)
+        )
 
-        needs_regen = force or is_season_stale(raw_path, features_path,
-                                                raw_file, comp_name, season)
-
-        if not needs_regen:
+        if not needs_regen and os.path.exists(feat_file):
             try:
-                with open(feat_file, 'r', encoding='utf-8') as f:
-                    cached_data = json.load(f)
+                with open(feat_file, 'r', encoding='utf-8') as feature_file:
+                    cached_data = json.load(feature_file)
                 samples = cached_data.get('samples', [])
-                fin = cached_data.get('metadata', {}).get('finished_samples', 0)
-                upc = cached_data.get('metadata', {}).get('upcoming_samples', 0)
                 all_samples.extend(samples)
-                total_finished += fin
-                total_upcoming += upc
+                metadata = cached_data.get('metadata', {})
+                builder_versions.add(metadata.get('dataset_builder_version', 'legacy'))
+                has_player_stats = has_player_stats or bool(metadata.get('has_player_stats'))
+                invalid_scores_removed += metadata.get('invalid_scores_removed', 0)
+                fin = metadata.get('finished_samples', 0)
+                upc = metadata.get('upcoming_samples', 0)
                 cached += 1
                 print(f"  Season {season}: {fin} fin + {upc} up [CACHE]")
                 continue
-            except Exception:
-                pass  # fallback: regenerate
+            except (OSError, ValueError, TypeError):
+                if not can_regenerate:
+                    continue
+                needs_regen = True
 
-        if player_stats is None:
-            player_stats = load_player_stats(base_path)
-            generator = create_generator()
-
-        if comp_type in ('european', 'international') and lineups_data is None:
-            lineups_data = load_lineups(base_path)
-
-        try:
-            with open(raw_file_full, 'r', encoding='utf-8') as f:
-                raw_data = json.load(f)
-        except Exception as e:
-            print(f"  [ERROR] {raw_file}: {e}")
+        if not needs_regen:
             continue
-
-        matches = raw_data.get('matches', [])
+        matches = raw_matches_by_file.get(raw_file, [])
         if not matches:
             continue
 
-        season_samples, fin, upc = generate_season_features(
-            raw_file_full, matches, player_stats, generator,
-            lineups=lineups_data, club_stats_index=club_stats_index
+        if generator is None:
+            generator = create_generator()
+            player_stats = load_player_stats(base_path)
+            has_player_stats = has_player_stats or bool(player_stats)
+        if comp_type in ('european', 'international') and lineups_data is None:
+            lineups_data = load_lineups(base_path)
+
+        result = generate_season_features(
+            matches=matches,
+            player_stats=player_stats,
+            generator=generator,
+            season=season,
+            lineups=lineups_data,
+            club_stats_index=club_stats_index,
+            history_matches=history_matches,
+            elo_matches=history_matches,
+        )
+        output_data = {
+            'metadata': {
+                'comp_type': comp_type,
+                'country': country,
+                'competition': comp_name,
+                'season': season,
+                'dataset_builder_version': DATASET_BUILDER_VERSION,
+                'total_samples': len(result.samples),
+                'finished_samples': result.finished_samples,
+                'upcoming_samples': result.pending_samples,
+                'duplicates_removed': result.duplicates_removed,
+                'invalid_scores_removed': result.invalid_scores_removed,
+                'has_player_stats': bool(player_stats),
+                'generated_at': datetime.now().isoformat(),
+            },
+            'samples': result.samples,
+        }
+        with open(feat_file, 'w', encoding='utf-8') as feature_file:
+            json.dump(output_data, feature_file, ensure_ascii=False, indent=2)
+
+        all_samples.extend(result.samples)
+        invalid_scores_removed += result.invalid_scores_removed
+        builder_versions.add(DATASET_BUILDER_VERSION)
+        regenerated += 1
+        print(
+            f"  Season {season}: {result.finished_samples} fin + "
+            f"{result.pending_samples} up [REGENERATED]"
         )
 
-        if season_samples:
-            output_data = {
-                'metadata': {
-                    'comp_type': comp_type,
-                    'country': country,
-                    'competition': comp_name,
-                    'total_samples': len(season_samples),
-                    'finished_samples': fin,
-                    'upcoming_samples': upc,
-                    'generated_at': datetime.now().isoformat()
-                },
-                'samples': season_samples
-            }
-            with open(feat_file, 'w', encoding='utf-8') as f:
-                json.dump(output_data, f, ensure_ascii=False, indent=2)
-
-            all_samples.extend(season_samples)
-            total_finished += fin
-            total_upcoming += upc
-            regenerated += 1
-            print(f"  Season {season}: {fin} fin + {upc} up [REGENERATED]")
-
-    if current_only:
-        current_year = str(datetime.now().year)
-        old_season_files = get_season_files(base_path)
-        for raw_file, season in old_season_files:
-            if season == current_season or season == current_year:
-                continue  # already recalculated above
-            feat_file = os.path.join(features_path,
-                                     f'features_{comp_name}_{season}.json')
-            if os.path.exists(feat_file):
-                try:
-                    with open(feat_file, 'r', encoding='utf-8') as f:
-                        cached_data = json.load(f)
-                    samples = cached_data.get('samples', [])
-                    fin = cached_data.get('metadata', {}).get('finished_samples', 0)
-                    upc = cached_data.get('metadata', {}).get('upcoming_samples', 0)
-                    all_samples.extend(samples)
-                    total_finished += fin
-                    total_upcoming += upc
-                except Exception:
-                    pass
+    all_samples, sample_duplicates = deduplicate_samples(all_samples)
+    total_finished = sum(
+        sample.get('label_result_int') is not None
+        or sample.get('status') == 'finished'
+        for sample in all_samples
+    )
+    total_upcoming = len(all_samples) - total_finished
+    source_builder_versions = sorted(builder_versions, key=str)
+    combined_builder_version = (
+        DATASET_BUILDER_VERSION
+        if builder_versions == {DATASET_BUILDER_VERSION}
+        else 'mixed'
+    )
 
     if all_samples:
         all_seasons_file = os.path.join(features_path, 'features_all_seasons.json')
@@ -362,49 +334,50 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 'comp_type': comp_type,
                 'country': country,
                 'competition': comp_name,
+                'dataset_builder_version': combined_builder_version,
+                'source_builder_versions': source_builder_versions,
                 'total_samples': len(all_samples),
                 'finished_samples': total_finished,
                 'upcoming_samples': total_upcoming,
-                'has_player_stats': player_stats is not None and len(player_stats) > 0,
-                'generated_at': datetime.now().isoformat()
+                'duplicates_removed': raw_duplicates + sample_duplicates,
+                'invalid_scores_removed': invalid_scores_removed,
+                'has_player_stats': has_player_stats,
+                'generated_at': datetime.now().isoformat(),
             },
-            'samples': all_samples
+            'samples': all_samples,
         }
-        with open(all_seasons_file, 'w', encoding='utf-8') as f:
-            json.dump(combined_data, f, ensure_ascii=False, indent=2)
+        with open(all_seasons_file, 'w', encoding='utf-8') as feature_file:
+            json.dump(combined_data, feature_file, ensure_ascii=False, indent=2)
 
     return {
         'total': len(all_samples),
         'finished': total_finished,
         'upcoming': total_upcoming,
+        'duplicates_removed': raw_duplicates + sample_duplicates,
+        'invalid_scores_removed': invalid_scores_removed,
         'regenerated': regenerated,
         'cached': cached,
     }
 
-
 def discover_competitions(comp_type):
-    base_dir = f'data/{comp_type}'
+    base_dir = os.path.join(DEFAULT_DATA_DIR, comp_type)
     if not os.path.exists(base_dir):
         return []
     comps = []
-    seen_comp_names = set()
     for entry1 in sorted(os.listdir(base_dir)):
         entry1_path = os.path.join(base_dir, entry1)
         if not os.path.isdir(entry1_path):
             continue
 
         if os.path.exists(os.path.join(entry1_path, 'raw')):
-            if entry1 not in seen_comp_names:
-                comps.append((entry1, entry1))
-                seen_comp_names.add(entry1)
+            comps.append((entry1, entry1))
         elif comp_type not in ('european', 'international'):
             for entry2 in sorted(os.listdir(entry1_path)):
                 entry2_path = os.path.join(entry1_path, entry2)
                 if os.path.isdir(entry2_path):
                     raw_path = os.path.join(entry2_path, 'raw')
-                    if os.path.exists(raw_path) and entry2 not in seen_comp_names:
+                    if os.path.exists(raw_path):
                         comps.append((entry1, entry2))
-                        seen_comp_names.add(entry2)
     return comps
 
 

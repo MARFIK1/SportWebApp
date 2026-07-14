@@ -15,24 +15,33 @@ class MLFeatureGenerator:
         val = data.get(key)
         return val if val is not None else default
 
-    def _get_xg(self, match, side, default=0):
-        """Read xG from all known Sofascore field variants."""
+    def _first_present(self, data, *keys):
+        for key in keys:
+            value = data.get(key)
+            if value not in (None, ''):
+                return value
+        return None
+
+    def _get_optional_xg(self, match, side):
         for key in (
             f'{side}_xg',
             f'{side}_expectedgoals',
             f'{side}_expected_goals',
             f'{side}_expectedGoals',
         ):
-            val = match.get(key)
-            if val not in (None, ''):
-                try:
-                    val = float(val)
-                except (TypeError, ValueError):
-                    continue
-                if val != 0:
-                    return val
-        return default
-    
+            value = match.get(key)
+            if value in (None, ''):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _get_xg(self, match, side, default=0):
+        value = self._get_optional_xg(match, side)
+        return default if value is None else value
+
     def _get_team_matches(self, team, matches, before_date):
         return [
             m for m in matches 
@@ -79,42 +88,47 @@ class MLFeatureGenerator:
             return {f'form_{k}': 0 for k in [
                 'matches', 'points', 'avg_points', 'wins', 'draws', 'losses',
                 'goals_for', 'goals_against', 'goal_diff',
-                'xg_for', 'xg_against', 'xg_diff',
+                'xg_for', 'xg_against', 'xg_diff', 'xg_matches',
                 'shots', 'shots_on_target', 'clean_sheets'
             ]}
         
         stats = {'points': 0, 'wins': 0, 'draws': 0, 'losses': 0,
                  'goals_for': 0, 'goals_against': 0,
-                 'xg_for': 0, 'xg_against': 0,
+                 'xg_for': 0, 'xg_against': 0, 'xg_matches': 0,
                  'shots': 0, 'shots_on_target': 0, 'clean_sheets': 0}
         
         for m in team_matches:
             is_home = m.get('home_team') == team
             hs, as_ = m.get('home_score') or 0, m.get('away_score') or 0
+            home_xg = self._get_optional_xg(m, 'home')
+            away_xg = self._get_optional_xg(m, 'away')
             
             if is_home:
                 stats['goals_for'] += hs
                 stats['goals_against'] += as_
-                stats['xg_for'] += self._get_xg(m, 'home')
-                stats['xg_against'] += self._get_xg(m, 'away')
                 stats['shots'] += self._safe_get(m, 'home_totalshotsongoal')
                 stats['shots_on_target'] += self._safe_get(m, 'home_shotsongoal')
                 if as_ == 0: stats['clean_sheets'] += 1
                 if hs > as_: stats['points'] += 3; stats['wins'] += 1
                 elif hs == as_: stats['points'] += 1; stats['draws'] += 1
                 else: stats['losses'] += 1
+                xg_for, xg_against = home_xg, away_xg
             else:
                 stats['goals_for'] += as_
                 stats['goals_against'] += hs
-                stats['xg_for'] += self._get_xg(m, 'away')
-                stats['xg_against'] += self._get_xg(m, 'home')
                 stats['shots'] += self._safe_get(m, 'away_totalshotsongoal')
                 stats['shots_on_target'] += self._safe_get(m, 'away_shotsongoal')
                 if hs == 0: stats['clean_sheets'] += 1
                 if as_ > hs: stats['points'] += 3; stats['wins'] += 1
                 elif hs == as_: stats['points'] += 1; stats['draws'] += 1
                 else: stats['losses'] += 1
-        
+                xg_for, xg_against = away_xg, home_xg
+
+            if xg_for is not None and xg_against is not None:
+                stats['xg_for'] += xg_for
+                stats['xg_against'] += xg_against
+                stats['xg_matches'] += 1
+
         n = len(team_matches)
         return {
             'form_matches': n,
@@ -131,6 +145,7 @@ class MLFeatureGenerator:
             'form_xg_for': round(stats['xg_for'], 2),
             'form_xg_against': round(stats['xg_against'], 2),
             'form_xg_diff': round(stats['xg_for'] - stats['xg_against'], 2),
+            'form_xg_matches': stats['xg_matches'],
             'form_shots': stats['shots'],
             'form_shots_on_target': stats['shots_on_target'],
             'form_avg_shots': round(stats['shots'] / n, 1),
@@ -434,7 +449,7 @@ class MLFeatureGenerator:
         team_matches = sorted(team_matches, key=lambda x: x.get('date') or '', reverse=True)[:n_matches]
 
         if not team_matches:
-            return {'corner_form_for': 0, 'corner_form_against': 0, 'corner_form_avg_for': 0}
+            return {'corner_form_for': 0, 'corner_form_against': 0, 'corner_form_avg_for': 0, 'corner_form_matches': 0}
 
         corners_for, corners_against, n_with_data = 0, 0, 0
         for m in team_matches:
@@ -448,12 +463,13 @@ class MLFeatureGenerator:
             n_with_data += 1
 
         if n_with_data == 0:
-            return {'corner_form_for': 0, 'corner_form_against': 0, 'corner_form_avg_for': 0}
+            return {'corner_form_for': 0, 'corner_form_against': 0, 'corner_form_avg_for': 0, 'corner_form_matches': 0}
 
         return {
             'corner_form_for': corners_for,
             'corner_form_against': corners_against,
             'corner_form_avg_for': round(corners_for / n_with_data, 2),
+            'corner_form_matches': n_with_data,
         }
 
     def compute_card_form(self, team, matches, before_date, n_matches=8):
@@ -461,12 +477,12 @@ class MLFeatureGenerator:
         team_matches = sorted(team_matches, key=lambda x: x.get('date') or '', reverse=True)[:n_matches]
 
         if not team_matches:
-            return {'card_form_total': 0, 'card_form_avg': 0}
+            return {'card_form_total': 0, 'card_form_avg': 0, 'card_form_matches': 0}
 
         cards, n_with_data = 0, 0
         for m in team_matches:
-            hy = m.get('home_yellow_cards_calc') or m.get('home_yellowcards')
-            ay = m.get('away_yellow_cards_calc') or m.get('away_yellowcards')
+            hy = self._first_present(m, 'home_yellow_cards_calc', 'home_yellowcards')
+            ay = self._first_present(m, 'away_yellow_cards_calc', 'away_yellowcards')
             if hy is None or ay is None:
                 continue
             is_home = m.get('home_team') == team
@@ -474,11 +490,12 @@ class MLFeatureGenerator:
             n_with_data += 1
 
         if n_with_data == 0:
-            return {'card_form_total': 0, 'card_form_avg': 0}
+            return {'card_form_total': 0, 'card_form_avg': 0, 'card_form_matches': 0}
 
         return {
             'card_form_total': cards,
             'card_form_avg': round(cards / n_with_data, 2),
+            'card_form_matches': n_with_data,
         }
 
     def compute_detailed_stats_form(self, team, matches, before_date, n_matches=8):
@@ -497,7 +514,7 @@ class MLFeatureGenerator:
             ('finalthirdentries', 'final_third_entries'),
         ]
 
-        defaults = {}
+        defaults = {'stats_matches': 0}
         for _, out_name in STATS:
             defaults[f'stats_{out_name}_for'] = 0
             defaults[f'stats_{out_name}_against'] = 0
@@ -505,7 +522,7 @@ class MLFeatureGenerator:
         if not team_matches:
             return defaults
 
-        accum = {k: 0 for k in defaults}
+        accum = {k: 0 for k in defaults if k != 'stats_matches'}
         n_with_data = 0
 
         for m in team_matches:
@@ -531,7 +548,7 @@ class MLFeatureGenerator:
         if n_with_data == 0:
             return defaults
 
-        result = {}
+        result = {'stats_matches': n_with_data}
         for k, total in accum.items():
             result[k] = round(total / n_with_data, 2)
         return result
@@ -587,7 +604,7 @@ class MLFeatureGenerator:
             return (
                 match.get('date') or '',
                 match.get('time') or match.get('start_time') or '',
-                match.get('event_id') or 0,
+                str(match.get('event_id') or ''),
             )
 
         def update_group_key(match):
@@ -876,6 +893,15 @@ class MLFeatureGenerator:
         away_team = match.get('away_team')
         match_date = match.get('date')
         recent_matches = team_history_matches if team_history_matches is not None else all_matches
+        match_season = match.get('season')
+        if match_season not in (None, ''):
+            table_matches = [
+                candidate
+                for candidate in all_matches
+                if candidate.get('season') == match_season
+            ]
+        else:
+            table_matches = all_matches
         
         features = {
             'event_id': match.get('event_id'),
@@ -915,11 +941,11 @@ class MLFeatureGenerator:
         
         features['form10_points_diff'] = features.get('home_form10_points', 0) - features.get('away_form10_points', 0)
 
-        home_pos = self.compute_table_position(home_team, all_matches, match_date)
+        home_pos = self.compute_table_position(home_team, table_matches, match_date)
         for k, v in home_pos.items():
             features[f'home_{k}'] = v
         
-        away_pos = self.compute_table_position(away_team, all_matches, match_date)
+        away_pos = self.compute_table_position(away_team, table_matches, match_date)
         for k, v in away_pos.items():
             features[f'away_{k}'] = v
         
@@ -962,11 +988,11 @@ class MLFeatureGenerator:
         
         features['fatigue_diff'] = features['home_fatigue_matches'] - features['away_fatigue_matches']
         
-        home_sos = self.compute_strength_of_schedule(home_team, all_matches, match_date)
+        home_sos = self.compute_strength_of_schedule(home_team, table_matches, match_date)
         for k, v in home_sos.items():
             features[f'home_{k}'] = v
         
-        away_sos = self.compute_strength_of_schedule(away_team, all_matches, match_date)
+        away_sos = self.compute_strength_of_schedule(away_team, table_matches, match_date)
         for k, v in away_sos.items():
             features[f'away_{k}'] = v
         
@@ -1167,8 +1193,8 @@ class MLFeatureGenerator:
         features['label_over_2_5'] = 1 if (home_score + away_score) > 2.5 else 0
         features['label_over_1_5'] = 1 if (home_score + away_score) > 1.5 else 0
 
-        home_corners = match.get('home_cornerkicks')
-        away_corners = match.get('away_cornerkicks')
+        home_corners = self._first_present(match, 'home_corner_kicks_calc', 'home_cornerkicks')
+        away_corners = self._first_present(match, 'away_corner_kicks_calc', 'away_cornerkicks')
         if home_corners is not None and away_corners is not None:
             total_corners = int(home_corners) + int(away_corners)
             features['label_total_corners'] = total_corners
@@ -1179,8 +1205,8 @@ class MLFeatureGenerator:
             features['label_corners_over_8_5'] = None
             features['label_corners_over_10_5'] = None
 
-        home_yellows = match.get('home_yellow_cards_calc') or match.get('home_yellowcards')
-        away_yellows = match.get('away_yellow_cards_calc') or match.get('away_yellowcards')
+        home_yellows = self._first_present(match, 'home_yellow_cards_calc', 'home_yellowcards')
+        away_yellows = self._first_present(match, 'away_yellow_cards_calc', 'away_yellowcards')
         if home_yellows is not None and away_yellows is not None:
             total_cards = int(home_yellows) + int(away_yellows)
             features['label_total_cards'] = total_cards
@@ -1193,21 +1219,12 @@ class MLFeatureGenerator:
 
         return features
     
-    def generate_dataset(self, matches_data, min_round=5):
-        """Generate ML dataset from finished matches only (skips upcoming, postponed, first N rounds)"""
-        sorted_matches = sorted(matches_data, key=lambda x: (x.get('date') or '', x.get('round') or 0))
+    def generate_dataset(self, matches_data, min_round=None):
+        from sofascore.dataset_builder import build_competition_feature_samples
 
-        elo_table = self._compute_elo_table(sorted_matches)
-
-        dataset = []
-        for match in sorted_matches:
-            if match.get('home_score') is None:
-                continue
-            if match.get('status') in ('postponed', 'canceled', 'upcoming'):
-                continue
-            if match.get('round', 0) and match.get('round') < min_round:
-                continue
-            features = self.generate_match_features(match, sorted_matches, elo_table=elo_table)
-            dataset.append(features)
-
-        return dataset
+        result = build_competition_feature_samples(
+            matches=matches_data,
+            generator=self,
+            include_pending=False,
+        )
+        return result.samples

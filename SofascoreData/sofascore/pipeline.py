@@ -10,6 +10,12 @@ from tqdm import tqdm
 
 from .config import BASE_DIR, get_competition
 from .managers import FootballDataManager, PlayerDataManager
+from .dataset_builder import (
+    DATASET_BUILDER_VERSION,
+    build_season_feature_samples,
+    deduplicate_matches,
+    deduplicate_samples,
+)
 from .features import MLFeatureGenerator
 from .utils import (
     scrape_full_match_data,
@@ -132,37 +138,37 @@ def scrape_season_matches_incremental(scraper, dm, fg, tournament_id, season_id,
 
     def regenerate_features(all_matches_data):
         dm.save_processed_data(season_name, all_matches_data)
-        dataset = fg.generate_dataset(all_matches_data, min_round=5)
+        history_matches = []
+        all_seasons_path = os.path.join(dm.paths['raw'], 'all_seasons.json')
+        combined = load_existing_data(all_seasons_path)
+        if combined and isinstance(combined.get('matches'), list):
+            history_matches.extend(combined['matches'])
+        history_matches.extend(all_matches_data)
+        history_matches, _ = deduplicate_matches(history_matches)
 
-        # Add upcoming/postponed/canceled matches as basic entries
-        for m in all_matches_data:
-            status = m.get('status')
-            if status in ('upcoming', 'postponed', 'canceled'):
-                dataset.append({
-                    'event_id': m.get('event_id'),
-                    'date': m.get('date'),
-                    'time': m.get('time', ''),
-                    'round': m.get('round'),
-                    'status': status,
-                    'home_team': m.get('home_team'),
-                    'home_team_id': m.get('home_team_id'),
-                    'away_team': m.get('away_team'),
-                    'away_team_id': m.get('away_team_id'),
-                })
-
-        dataset.sort(key=lambda x: (x.get('date') or '', x.get('round') or 0))
-
+        result = build_season_feature_samples(
+            matches=all_matches_data,
+            generator=fg,
+            season=season_name,
+            history_matches=history_matches,
+            elo_matches=history_matches,
+        )
         features_path = os.path.join(dm.paths['features'], f'features_{slug}.json')
-        with open(features_path, 'w', encoding='utf-8') as f:
+        with open(features_path, 'w', encoding='utf-8') as feature_file:
             json.dump({
                 'metadata': {
                     'season': season_name,
-                    'total_samples': len(dataset),
+                    'dataset_builder_version': DATASET_BUILDER_VERSION,
+                    'total_samples': len(result.samples),
+                    'finished_samples': result.finished_samples,
+                    'upcoming_samples': result.pending_samples,
+                    'duplicates_removed': result.duplicates_removed,
+                    'invalid_scores_removed': result.invalid_scores_removed,
                     'last_update': datetime.now().isoformat(),
                 },
-                'samples': dataset
-            }, f, ensure_ascii=False, indent=2)
-        return dataset
+                'samples': result.samples,
+            }, feature_file, ensure_ascii=False, indent=2)
+        return result.samples
 
     if not matches_to_fetch:
         if basic_to_save:
@@ -392,6 +398,7 @@ def combine_all_seasons_data(dm):
     all_matches = []
     all_features = []
     seasons_found = []
+    feature_builder_versions = set()
     
     if os.path.exists(dm.paths['raw']):
         for filename in sorted(os.listdir(dm.paths['raw'])):
@@ -410,35 +417,53 @@ def combine_all_seasons_data(dm):
                 data = load_existing_data(filepath)
                 if data and 'samples' in data:
                     all_features.extend(data['samples'])
+                    metadata = data.get('metadata', {})
+                    feature_builder_versions.add(
+                        metadata.get('dataset_builder_version', 'legacy')
+                    )
     
     if not all_matches:
         return
     
-    all_matches = sorted(all_matches, key=lambda x: (x.get('date') or '', x.get('round') or 0))
-    all_features = sorted(all_features, key=lambda x: (x.get('date') or '', x.get('round') or 0))
+    all_matches, raw_duplicates = deduplicate_matches(all_matches)
+    all_features, feature_duplicates = deduplicate_samples(all_features)
+    source_builder_versions = sorted(feature_builder_versions, key=str)
+    combined_builder_version = (
+        DATASET_BUILDER_VERSION
+        if feature_builder_versions == {DATASET_BUILDER_VERSION}
+        else 'mixed'
+    )
 
-    with open(os.path.join(dm.paths['raw'], 'all_seasons.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(dm.paths['raw'], 'all_seasons.json'), 'w', encoding='utf-8') as raw_file:
         json.dump({
             'metadata': {
+                'dataset_builder_version': DATASET_BUILDER_VERSION,
                 'total_matches': len(all_matches),
+                'duplicates_removed': raw_duplicates,
                 'seasons': seasons_found,
                 'last_update': datetime.now().isoformat(),
             },
-            'matches': all_matches
-        }, f, ensure_ascii=False, indent=2)
+            'matches': all_matches,
+        }, raw_file, ensure_ascii=False, indent=2)
     
-    with open(os.path.join(dm.paths['features'], 'features_all_seasons.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(dm.paths['features'], 'features_all_seasons.json'), 'w', encoding='utf-8') as feature_file:
         json.dump({
             'metadata': {
+                'dataset_builder_version': combined_builder_version,
+                'source_builder_versions': source_builder_versions,
                 'total_samples': len(all_features),
+                'duplicates_removed': feature_duplicates,
                 'seasons': seasons_found,
                 'last_update': datetime.now().isoformat(),
             },
-            'samples': all_features
-        }, f, ensure_ascii=False, indent=2)
-    
-    print(f"   [COMBINED] {len(all_matches)} matches, {len(all_features)} features from {len(seasons_found)} seasons")
+            'samples': all_features,
+        }, feature_file, ensure_ascii=False, indent=2)
 
+    print(
+        f"[COMBINED] {len(all_matches)} matches, {len(all_features)} features "
+        f"from {len(seasons_found)} seasons; removed "
+        f"{raw_duplicates + feature_duplicates} duplicates"
+    )
 
 def scrape_upcoming_matches(scraper, dm, fg, tournament_id, season_id, season_name, delay=0.5):
     from .utils import extract_match_data, extract_referee_data, load_existing_data

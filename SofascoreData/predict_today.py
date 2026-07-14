@@ -32,6 +32,7 @@ for stream in (sys.stdout, sys.stderr):
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get('SOFASCORE_DATA_DIR', SCRIPT_DIR / 'data')).resolve()
 REPORTS_DIR = Path(os.environ.get('SOFASCORE_REPORTS_DIR', SCRIPT_DIR / 'reports')).resolve()
+MODELS_DIR = Path(os.environ.get('SOFASCORE_MODELS_DIR', DATA_DIR / 'models')).resolve()
 
 sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -167,7 +168,7 @@ def load_models(variant_names: Optional[List[str]] = None):
         if selected_variants is not None and variant_name not in selected_variants:
             continue
 
-        models_path = data_dir / 'models' / variant_config['filename']
+        models_path = MODELS_DIR / variant_config['filename']
 
         if models_path.exists():
             print(f"Loading {variant_name} models from {models_path}...")
@@ -2587,6 +2588,7 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
             'prediction': model_pred,
             'confidence': pred_data.get('confidence'),
             'probabilities': pred_data.get('probabilities', {}),
+            'decision_policy_applied': pred_data.get('decision_policy_applied', False),
             'correct': is_correct
         }
 
@@ -2602,7 +2604,8 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
         'agreement_pct': cons.get('agreement_pct'),
         'votes': cons.get('votes', {}),
         'avg_probabilities': cons.get('avg_probabilities', {}),
-        'correct': cons_correct
+        'correct': cons_correct,
+        'decision_policy_applied': cons.get('decision_policy_applied', False),
     }
 
     market_data = {}

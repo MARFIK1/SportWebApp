@@ -83,7 +83,7 @@ SofascoreData/
   predict_today.py           # update/scrape/predict entry point
   scrape_all.py              # competition season scraper
   regenerate_all_features.py # feature rebuild step
-  train_models.ipynb         # training workflow
+  train_models.py            # reproducible training and v1/v2 comparison
 ```
 
 Typical workflow:
@@ -99,10 +99,14 @@ Common Python commands:
 ```bash
 cd SofascoreData
 python scrape_all.py
-python regenerate_all_features.py
+python regenerate_all_features.py --force
+python train_models.py --audit-only
+python train_models.py --variant without_odds --targets result
 python predict_today.py 2026-05-15 --update
 python predict_today.py 2026-05-15 --scrape
 ```
+
+`train_models.py` writes Backend v2 experiments under `data/models/experiments/` and never overwrites production artifacts. With `--save-models`, candidate model files are saved inside the experiment directory. Run the dataset audit after feature regeneration; training is blocked when cached feature files contain legacy or mixed builder versions. Use `--variant both --targets all --save-models` only for a deliberate full training run. The notebooks remain available for exploratory analysis and charts.
 
 ## Model Diagnostics
 
