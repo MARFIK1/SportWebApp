@@ -20,11 +20,11 @@ from sofascore.predictor import (
     UniversalPredictor,
 )
 from sofascore.training_report import build_training_comparison, write_training_comparison
+from sofascore.paired_benchmark import BASE_ODDS_REQUIREMENTS, build_common_odds_sample
 
 
 ALL_TARGETS = tuple(TARGET_CONFIGS)
 DEFAULT_TARGETS = ("result",)
-BASE_ODDS_REQUIREMENTS = ("odds_home_win", "odds_draw", "odds_away_win")
 
 
 def parse_targets(value: str):
@@ -72,6 +72,11 @@ def parse_args():
     parser.add_argument("--allow-legacy-features", action="store_true")
     parser.add_argument("--audit-only", action="store_true")
     parser.add_argument("--save-models", action="store_true")
+    parser.add_argument(
+        "--paired-common-sample",
+        action="store_true",
+        help="Train both variants on identical rows with complete positive 1X2 odds.",
+    )
     return parser.parse_args()
 
 
@@ -86,10 +91,10 @@ def _variant_names(value: str):
     return ["without_odds", "with_odds"] if value == "both" else [value]
 
 
-def _dataset_summary(df, audit: dict):
+def _dataset_summary(df, audit: dict, sample_metadata: dict):
     dates = df.get("date")
     valid_dates = dates.dropna().astype(str) if dates is not None else []
-    return {
+    summary = {
         "rows": len(df),
         "date_min": min(valid_dates) if len(valid_dates) else None,
         "date_max": max(valid_dates) if len(valid_dates) else None,
@@ -98,6 +103,8 @@ def _dataset_summary(df, audit: dict):
         "feature_dataset_samples": audit.get("total_samples"),
         "dataset_builder_version": audit.get("expected_builder_version"),
     }
+    summary["sample"] = sample_metadata
+    return summary
 
 
 def _print_audit(audit: dict):
@@ -145,12 +152,35 @@ def main():
         print("No finished feature rows found.")
         return 3
 
+    sample_metadata = {
+        "policy": "variant_specific",
+        "rows_before": len(dataframe),
+        "rows": len(dataframe),
+        "rows_removed": 0,
+        "coverage": 1.0,
+        "sample_hash": None,
+    }
+    if args.paired_common_sample:
+        if args.variant != "both":
+            print("--paired-common-sample requires --variant both.")
+            return 2
+        try:
+            dataframe, sample_metadata = build_common_odds_sample(dataframe)
+        except ValueError as exc:
+            print(f"Paired common sample failed: {exc}")
+            return 3
+        print(
+            "Paired common sample: "
+            f"{sample_metadata['rows']} / {sample_metadata['rows_before']} rows "
+            f"({sample_metadata['coverage']:.2%}), "
+            f"hash={sample_metadata['sample_hash'][:12]}"
+        )
     run_name = datetime.now(timezone.utc).strftime("backend_v2_%Y%m%dT%H%M%SZ")
     output_dir = (args.output_dir or data_dir / "models" / "experiments" / run_name).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    dataset_summary = _dataset_summary(dataframe, audit)
+    dataset_summary = _dataset_summary(dataframe, audit, sample_metadata)
     run_summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "data_dir": str(data_dir),
         "output_dir": str(output_dir),
@@ -159,6 +189,7 @@ def main():
         "test_size": args.test_size,
         "optuna_trials": args.optuna_trials,
         "feature_set": args.feature_set,
+        "paired_common_sample": args.paired_common_sample,
         "dataset": dataset_summary,
         "outputs": {},
     }

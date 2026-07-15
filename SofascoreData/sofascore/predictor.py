@@ -204,6 +204,59 @@ def _expected_calibration_error(y_true, proba, class_labels: List[int], n_bins: 
     return ece
 
 
+def _classification_calibration_bins(
+    y_true,
+    proba,
+    class_labels: List[int],
+    n_bins: int = 10,
+) -> Dict:
+    y_arr = np.asarray(y_true)
+    probabilities = np.asarray(proba, dtype=float)
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+
+    def build_rows(values, outcomes):
+        rows = []
+        for index, (lower, upper) in enumerate(zip(edges[:-1], edges[1:])):
+            if index == n_bins - 1:
+                mask = (values >= lower) & (values <= upper)
+            else:
+                mask = (values >= lower) & (values < upper)
+            count = int(mask.sum())
+            rows.append({
+                'lower': round(float(lower), 4),
+                'upper': round(float(upper), 4),
+                'count': count,
+                'mean_probability': (
+                    round(float(values[mask].mean()), 4) if count else None
+                ),
+                'observed_frequency': (
+                    round(float(outcomes[mask].mean()), 4) if count else None
+                ),
+            })
+        return rows
+
+    predicted_positions = np.argmax(probabilities, axis=1)
+    predicted_labels = np.asarray([
+        class_labels[position] for position in predicted_positions
+    ])
+    top_label = build_rows(
+        np.max(probabilities, axis=1),
+        (predicted_labels == y_arr).astype(float),
+    )
+    per_class = {
+        str(label): build_rows(
+            probabilities[:, position],
+            (y_arr == label).astype(float),
+        )
+        for position, label in enumerate(class_labels)
+    }
+    return {
+        'n_bins': n_bins,
+        'top_label': top_label,
+        'per_class': per_class,
+    }
+
+
 def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int]) -> Dict:
     metrics = {
         'confusion_matrix': confusion_matrix(y_true, y_pred, labels=class_labels).tolist(),
@@ -236,6 +289,15 @@ def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int])
         metrics['ece'] = round(_expected_calibration_error(y_true, proba, class_labels), 4)
     except Exception:
         metrics['ece'] = None
+
+    try:
+        metrics['calibration_bins'] = _classification_calibration_bins(
+            y_true,
+            proba,
+            class_labels,
+        )
+    except Exception:
+        metrics['calibration_bins'] = None
 
     return metrics
 
@@ -1050,16 +1112,19 @@ class UniversalPredictor:
             if not results:
                 continue
             config = TARGET_CONFIGS.get(target, {})
+            stats = self.training_stats.get(target, {})
+            selection = stats.get('selection', {})
+            best = selection.get('best_model', '?')
             if config.get('task') == 'regression':
-                best = min(results, key=results.get)
-                print(f"  {target:20s}: best = {best} (MAE={results[best]:.3f})")
+                score = selection.get('test_score', selection.get('best_score', 0.0))
+                print(f"  {target:20s}: best = {best} (test MAE={score:.3f})")
             else:
-                best, metric, score = _select_best_classification_model(
-                    target,
-                    self.training_stats.get(target, {}).get('detailed_metrics', {}),
+                metric = selection.get('metric', 'macro_f1')
+                score = selection.get('test_score', selection.get('best_score', 0.0))
+                print(
+                    f"{target:20s}: best = {best} "
+                    f"(test {metric}={score:.1%})"
                 )
-                print(f"{target:20s}: best = {best} "
-                      f"({metric}={score:.1%})")
 
         return all_results
 
@@ -1552,6 +1617,7 @@ class UniversalPredictor:
                 'balanced_accuracy': prob_metrics.get('balanced_accuracy'),
                 'per_class_recall': prob_metrics.get('per_class_recall'),
                 'confusion_matrix': prob_metrics.get('confusion_matrix'),
+                'calibration_bins': prob_metrics.get('calibration_bins'),
                 'train_time_s': round(train_time, 2),
                 'predict_time_ms': round(predict_time_ms, 2),
                 'cpu_time_s': round(cpu_train_s, 2),
@@ -1653,6 +1719,7 @@ class UniversalPredictor:
                         'balanced_accuracy': calibrated_metrics.get('balanced_accuracy'),
                         'per_class_recall': calibrated_metrics.get('per_class_recall'),
                         'confusion_matrix': calibrated_metrics.get('confusion_matrix'),
+                        'calibration_bins': calibrated_metrics.get('calibration_bins'),
                         'calibrated': True,
                         'decision_policy': decision_policy,
                     })
@@ -1738,6 +1805,7 @@ class UniversalPredictor:
                                 'balanced_accuracy': metrics.get('balanced_accuracy'),
                                 'per_class_recall': metrics.get('per_class_recall'),
                                 'confusion_matrix': metrics.get('confusion_matrix'),
+                                'calibration_bins': metrics.get('calibration_bins'),
                                 'decision_policy': (
                                     consensus_policy
                                     if label == 'Consensus Policy'
@@ -1861,6 +1929,7 @@ class UniversalPredictor:
                 'balanced_accuracy': ens_prob_metrics.get('balanced_accuracy'),
                 'per_class_recall': ens_prob_metrics.get('per_class_recall'),
                 'confusion_matrix': ens_prob_metrics.get('confusion_matrix'),
+                'calibration_bins': ens_prob_metrics.get('calibration_bins'),
                 'train_time_s': round(ens_time, 2), 'predict_time_ms': round(pred_time_ens, 2),
                 'cpu_time_s': round(cpu_ens_s, 2), 'memory_mb': round(mem_ens, 1),
             }
@@ -1929,6 +1998,7 @@ class UniversalPredictor:
                 'balanced_accuracy': stack_prob_metrics.get('balanced_accuracy'),
                 'per_class_recall': stack_prob_metrics.get('per_class_recall'),
                 'confusion_matrix': stack_prob_metrics.get('confusion_matrix'),
+                'calibration_bins': stack_prob_metrics.get('calibration_bins'),
                 'train_time_s': round(stack_time, 2), 'predict_time_ms': round(pred_time_st, 2),
                 'cpu_time_s': round(cpu_stack_s, 2), 'memory_mb': round(mem_stack, 1),
             }
@@ -2015,6 +2085,7 @@ class UniversalPredictor:
                             'balanced_accuracy': lstm_prob_metrics.get('balanced_accuracy'),
                             'per_class_recall': lstm_prob_metrics.get('per_class_recall'),
                             'confusion_matrix': lstm_prob_metrics.get('confusion_matrix'),
+                            'calibration_bins': lstm_prob_metrics.get('calibration_bins'),
                             'train_time_s': round(lstm_time, 2),
                             'predict_time_ms': round(pred_time_lstm, 2),
                             'cpu_time_s': round(cpu_lstm_s, 2),
@@ -2027,10 +2098,25 @@ class UniversalPredictor:
             except Exception as e:
                 print(f"    LSTM: error ({e})")
 
-        best, selection_metric, best_score = _select_best_classification_model(
+        test_best, selection_metric, test_best_score = _select_best_classification_model(
             target,
             detailed_metrics,
         )
+        cv_candidates = {
+            name: values.get('mean')
+            for name, values in cv_results.items()
+            if name in detailed_metrics
+            and isinstance(values.get('mean'), (int, float))
+        }
+        if cv_candidates:
+            best = max(cv_candidates, key=cv_candidates.get)
+            selection_source = 'temporal_cross_validation'
+            validation_score = float(cv_candidates[best])
+        else:
+            best = test_best
+            selection_source = 'test_fallback'
+            validation_score = None
+        best_score = float(detailed_metrics.get(best, {}).get(selection_metric, 0.0))
         baseline_score = float(baseline_metrics.get(selection_metric, 0.0))
         self.training_stats[target] = {
             'class_labels': class_labels,
@@ -2042,8 +2128,18 @@ class UniversalPredictor:
             'feature_set': self.feature_sets_by_target.get(target),
             'selection': {
                 'metric': selection_metric,
+                'source': selection_source,
+                'validation_metric': 'macro_f1',
+                'validation_score': (
+                    round(validation_score, 4)
+                    if validation_score is not None
+                    else None
+                ),
                 'best_model': best,
                 'best_score': round(best_score, 4),
+                'test_score': round(best_score, 4),
+                'test_best_model': test_best,
+                'test_best_score': round(test_best_score, 4),
                 'baseline_score': round(baseline_score, 4),
                 'improvement_over_baseline': round(best_score - baseline_score, 4),
             },
@@ -2087,9 +2183,14 @@ class UniversalPredictor:
             'cv_results': cv_results,
         }
 
+        selection_detail = (
+            f"CV {validation_score:.1%}, test {selection_metric}={best_score:.1%}"
+            if validation_score is not None
+            else f"test fallback {selection_metric}={best_score:.1%}"
+        )
         print(
             f"\nBest for {target}: {best} "
-            f"({selection_metric}={best_score:.1%}, "
+            f"({selection_detail}, "
             f"baseline_delta={best_score - baseline_score:+.1%})"
         )
 
@@ -2206,7 +2307,58 @@ class UniversalPredictor:
             print(f"    {name}: MAE={mae:.3f} RMSE={rmse:.3f} R2={r2:.3f} "
                   f"[{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
 
-        best = min(results, key=results.get) if results else '?'
+        cv_results = {}
+        train_dates = meta.get('date') if meta else None
+        if train_dates is not None and len(X_train) >= 12:
+            X_cv, y_cv, _, _ = _sort_training_rows_by_date(
+                X_train,
+                y_train,
+                train_dates,
+            )
+            print("\nTemporal regression cross-validation (5-fold)...")
+            tscv = TimeSeriesSplit(n_splits=5)
+            for name, mc in model_configs.items():
+                try:
+                    if mc['scaled']:
+                        cv_estimator = Pipeline([
+                            ('scaler', StandardScaler()),
+                            ('model', clone(mc['model'])),
+                        ])
+                    else:
+                        cv_estimator = clone(mc['model'])
+                    scores = -cross_val_score(
+                        cv_estimator,
+                        X_cv,
+                        y_cv,
+                        cv=tscv,
+                        scoring='neg_mean_absolute_error',
+                        n_jobs=-1,
+                    )
+                    cv_results[name] = {
+                        'mean': round(float(scores.mean()), 4),
+                        'std': round(float(scores.std()), 4),
+                        'folds': [round(float(score), 4) for score in scores],
+                    }
+                    print(
+                        f"{name}: CV MAE={scores.mean():.3f} "
+                        f"(+/- {scores.std():.3f})"
+                    )
+                except Exception as exc:
+                    print(f"{name}: regression CV skipped ({exc})")
+
+        cv_candidates = {
+            name: values.get('mean')
+            for name, values in cv_results.items()
+            if name in results and isinstance(values.get('mean'), (int, float))
+        }
+        if cv_candidates:
+            best = min(cv_candidates, key=cv_candidates.get)
+            selection_source = 'temporal_cross_validation'
+            validation_score = float(cv_candidates[best])
+        else:
+            best = min(results, key=results.get) if results else '?'
+            selection_source = 'test_fallback'
+            validation_score = None
         best_score = float(results.get(best, 0.0))
         baseline_score = float(baseline_metrics['mae'])
         self.training_stats[target] = {
@@ -2229,19 +2381,34 @@ class UniversalPredictor:
             },
             'selection': {
                 'metric': 'mae',
+                'source': selection_source,
+                'validation_metric': 'mae',
+                'validation_score': (
+                    round(validation_score, 4)
+                    if validation_score is not None
+                    else None
+                ),
                 'best_model': best,
                 'best_score': round(best_score, 4),
+                'test_score': round(best_score, 4),
                 'baseline_score': round(baseline_score, 4),
                 'improvement_over_baseline': round(baseline_score - best_score, 4),
             },
             'baseline': regression_baseline,
             'results': results,
             'detailed_metrics': detailed_metrics,
+            'cv_results': cv_results,
         }
 
+        selection_detail = (
+            f"CV MAE={validation_score:.3f}, test MAE={best_score:.3f}"
+            if validation_score is not None
+            else f"test fallback MAE={best_score:.3f}"
+        )
         print(
             f"\nBest for {target}: {best} "
-            f"(MAE={best_score:.3f}, baseline_delta={baseline_score - best_score:+.3f})"
+            f"({selection_detail}, "
+            f"baseline_delta={baseline_score - best_score:+.3f})"
         )
         return results
     
