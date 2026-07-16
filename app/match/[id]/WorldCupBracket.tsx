@@ -3,8 +3,9 @@ import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { resolveSofascoreMatchResult, type ResolvedMatchResult } from "@/app/util/predictions/matchResult";
 import {
+    candidatePairForLoserPlaceholder,
     candidatePairForWinnerPlaceholder,
-    formatWorldCupSlotCandidatePair,
+    type WorldCupSlotCandidate,
     type WorldCupSlotCandidatePair,
 } from "@/app/util/predictions/worldCupSlotResolver";
 import type { SofascoreMatch } from "@/types/sofascore";
@@ -16,7 +17,8 @@ const VIEWBOX = 1000;
 const CENTER = VIEWBOX / 2;
 const TWO_PI = Math.PI * 2;
 const PLACEHOLDER_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+)$/;
-const CREST_IMAGE_CLASS = "block h-full w-full rounded-full object-cover object-center";
+const CREST_IMAGE_CLASS = "absolute left-1/2 top-1/2 block h-3/4 w-3/4 -translate-x-1/2 -translate-y-1/2 rounded-full object-cover object-center";
+const RADIAL_LINK_CLASS = "relative z-10 -m-2 block h-[calc(100%+1rem)] w-[calc(100%+1rem)] rounded-full p-2 outline-none transition hover:brightness-110 focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950";
 
 function isPlaceholderTeam(name: string): boolean {
     return !name || PLACEHOLDER_TEAM_RE.test(name.trim());
@@ -107,7 +109,11 @@ interface TeamCrestProps {
     highlight: "none" | "winner" | "current";
     size?: number;
     candidatePair?: WorldCupSlotCandidatePair | null;
+    candidateOutcome?: CandidateOutcome;
+    reverseCandidatePair?: boolean;
 }
+
+type CandidateOutcome = "winner" | "loser";
 
 interface WorldCupBracketProps {
     format: TournamentFormat;
@@ -130,8 +136,19 @@ function sidesOf(match: SofascoreMatch | undefined): { home: Side; away: Side } 
     };
 }
 
-function displaySideName(side: Side, candidatePair: WorldCupSlotCandidatePair | null, t: (key: string) => string): string {
-    if (candidatePair) return formatWorldCupSlotCandidatePair(candidatePair, " / ");
+function selectedCandidate(candidatePair: WorldCupSlotCandidatePair | null, outcome: CandidateOutcome): WorldCupSlotCandidate | undefined {
+    return outcome === "loser" ? candidatePair?.loser : candidatePair?.winner;
+}
+
+function candidatePairSides(candidatePair: WorldCupSlotCandidatePair, outcome: CandidateOutcome, reverse = false): [WorldCupSlotCandidate, WorldCupSlotCandidate] {
+    const sides: [WorldCupSlotCandidate, WorldCupSlotCandidate] = outcome === "loser" ? [candidatePair.away, candidatePair.home] : [candidatePair.home, candidatePair.away];
+    return reverse ? [sides[1], sides[0]] : sides;
+}
+
+function displaySideName(side: Side, candidatePair: WorldCupSlotCandidatePair | null, t: (key: string) => string, outcome: CandidateOutcome = "winner", reverseCandidatePair = false): string {
+    const candidate = selectedCandidate(candidatePair, outcome);
+    if (candidate) return candidate.teamName;
+    if (candidatePair) return candidatePairSides(candidatePair, outcome, reverseCandidatePair).map((item) => item.teamName).join(" / ");
     return side.isPlaceholder ? t("to_be_decided") : side.teamName;
 }
 
@@ -166,24 +183,41 @@ function sourcePositionForSide(format: TournamentFormat, slot: number, target: P
     return null;
 }
 
-function sourcePositionForRenderSide<TRenderSide extends { side: Side; candidatePair: WorldCupSlotCandidatePair | null }>(format: TournamentFormat, parentSlot: number, renderSide: TRenderSide, intervals: Map<number, Interval>, matchesBySlot: Map<number, SofascoreMatch>): { x: number; y: number } | null {
-    const childSlots = format.children[parentSlot];
+function sourcePositionForRenderSide<TRenderSide extends { side: Side; candidatePair: WorldCupSlotCandidatePair | null; candidateOutcome?: CandidateOutcome }>(format: TournamentFormat, parentSlot: number, renderSide: TRenderSide, intervals: Map<number, Interval>, matchesBySlot: Map<number, SofascoreMatch>, sourceSlots?: number[]): { x: number; y: number } | null {
+    const childSlots = sourceSlots ?? format.children[parentSlot];
     if (!childSlots) return null;
 
-    const target = renderSide.candidatePair?.winner ?? renderSide.side;
-    for (const childSlot of childSlots) {
-        const hit = sourcePositionForSide(format, childSlot, target, intervals, matchesBySlot);
-        if (hit) return hit;
+    const findPosition = (target: Pick<Side, "teamId" | "teamName">) => {
+        for (const childSlot of childSlots) {
+            const hit = sourcePositionForSide(format, childSlot, target, intervals, matchesBySlot);
+            if (hit) return hit;
+        }
+        return null;
+    };
+    const resolvedCandidate = selectedCandidate(renderSide.candidatePair, renderSide.candidateOutcome ?? "winner");
+    if (resolvedCandidate) return findPosition(resolvedCandidate);
+
+    if (renderSide.candidatePair) {
+        const candidatePositions = [renderSide.candidatePair.home, renderSide.candidatePair.away]
+            .map(findPosition)
+            .filter((position): position is { x: number; y: number } => position !== null);
+        if (candidatePositions.length > 0) {
+            return {
+                x: candidatePositions.reduce((sum, position) => sum + position.x, 0) / candidatePositions.length,
+                y: candidatePositions.reduce((sum, position) => sum + position.y, 0) / candidatePositions.length,
+            };
+        }
     }
-    return null;
+
+    return findPosition(renderSide.side);
 }
 
-function orderRadialPairSides<TRenderSide extends { side: Side; candidatePair: WorldCupSlotCandidatePair | null }>(format: TournamentFormat, parentSlot: number, sides: TRenderSide[], intervals: Map<number, Interval>, matchesBySlot: Map<number, SofascoreMatch>): TRenderSide[] {
+function orderRadialPairSides<TRenderSide extends { side: Side; candidatePair: WorldCupSlotCandidatePair | null; candidateOutcome?: CandidateOutcome }>(format: TournamentFormat, parentSlot: number, sides: TRenderSide[], intervals: Map<number, Interval>, matchesBySlot: Map<number, SofascoreMatch>, sourceSlots?: number[]): TRenderSide[] {
     if (sides.length !== 2) return sides;
 
     const positioned = sides.map((side) => ({
         side,
-        position: sourcePositionForRenderSide(format, parentSlot, side, intervals, matchesBySlot),
+        position: sourcePositionForRenderSide(format, parentSlot, side, intervals, matchesBySlot, sourceSlots),
     }));
     if (positioned.some((item) => item.position == null)) return sides;
 
@@ -197,7 +231,8 @@ function orderRadialPairSides<TRenderSide extends { side: Side; candidatePair: W
         .map((item) => item.side);
 }
 
-function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null }: TeamCrestProps) {
+function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null, candidateOutcome = "winner", reverseCandidatePair = false }: TeamCrestProps) {
+    const candidate = selectedCandidate(candidatePair, candidateOutcome);
     const ring =
         highlight === "current"
             ? "border-amber-400 ring-2 ring-amber-400/40"
@@ -206,23 +241,22 @@ function TeamCrest({ side, dim, highlight, size = 32, candidatePair = null }: Te
                 : "border-white/15";
     return (
         <div
-            className={`flex h-full w-full items-center justify-center overflow-hidden rounded-full border bg-gray-950/80 p-[10%] shadow-md transition ${ring} ${dim ? "opacity-60 saturate-50" : ""}`}
+            className={`relative flex h-full w-full items-center justify-center overflow-hidden rounded-full border bg-gray-950/80 shadow-md transition ${ring} ${dim ? "opacity-60 saturate-50" : ""}`}
         >
-            {candidatePair?.winner ? (
+            {candidate ? (
                 <TeamLogo
-                    teamId={candidatePair.winner.teamId}
-                    alt={candidatePair.winner.teamName}
+                    teamId={candidate.teamId}
+                    alt={candidate.teamName}
                     size={size}
                     className={CREST_IMAGE_CLASS}
                 />
             ) : candidatePair ? (
                 <span className="flex h-full w-full items-center justify-center -space-x-1">
-                    <span className="flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-full bg-gray-950/80 p-[4%]">
-                        <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={size} className={CREST_IMAGE_CLASS} />
-                    </span>
-                    <span className="flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-full bg-gray-950/80 p-[4%]">
-                        <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={size} className={CREST_IMAGE_CLASS} />
-                    </span>
+                    {candidatePairSides(candidatePair, candidateOutcome, reverseCandidatePair).map((item) => (
+                        <span key={item.teamId} className="relative flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-full bg-gray-950/80">
+                            <TeamLogo teamId={item.teamId} alt={item.teamName} size={size} className={CREST_IMAGE_CLASS} />
+                        </span>
+                    ))}
                 </span>
             ) : validTeamId(side.teamId) && !side.isPlaceholder ? (
                 <TeamLogo
@@ -270,6 +304,15 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
     const entryNumbers = new Set<number>();
     const entryLeafSides = new Map<number, Set<MatchSide>>();
 
+    const childSlotForTeam = (slot: number, target: Side): number | null => {
+        const kids = format.children[slot];
+        if (!kids) return null;
+        for (const kid of kids) {
+            if (sourcePositionForSide(format, kid, target, intervals, byNumber)) return kid;
+        }
+        return null;
+    };
+
     const markLeafSide = (slot: number, side: MatchSide) => {
         const sides = entryLeafSides.get(slot) ?? new Set<MatchSide>();
         sides.add(side);
@@ -295,10 +338,11 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
 
         const match = byNumber.get(slot);
         const state = match ? resultOf(match) : null;
+        const matchSides = sidesOf(match);
         if (state?.isFinished && state.actualResult === "HOME") {
-            collectEntryPath(kids[0]);
+            collectEntryPath(childSlotForTeam(slot, matchSides.home) ?? kids[0]);
         } else if (state?.isFinished && state.actualResult === "AWAY") {
-            collectEntryPath(kids[1]);
+            collectEntryPath(childSlotForTeam(slot, matchSides.away) ?? kids[1]);
         } else {
             collectEntryPath(kids[0]);
             collectEntryPath(kids[1]);
@@ -363,6 +407,23 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
     const finalMatch = byNumber.get(format.finalSlot);
     const finalState = finalMatch ? resultOf(finalMatch) : null;
     const finalSides = sidesOf(finalMatch);
+    const finalHomeCandidatePair = candidatePairForWinnerPlaceholder(finalSides.home.teamName, candidatePairs);
+    const finalAwayCandidatePair = candidatePairForWinnerPlaceholder(finalSides.away.teamName, candidatePairs);
+    const semiFinalSlots = format.stageSlots.SF ?? [];
+    const finalRadialSides = orderRadialPairSides(format, format.finalSlot, [
+        { side: finalSides.home, candidatePair: finalHomeCandidatePair, matchSide: "HOME" as const },
+        { side: finalSides.away, candidatePair: finalAwayCandidatePair, matchSide: "AWAY" as const },
+    ], intervals, byNumber);
+    const thirdPlaceMatch = byNumber.get(format.thirdPlaceSlot);
+    const thirdPlaceState = thirdPlaceMatch ? resultOf(thirdPlaceMatch) : null;
+    const thirdPlaceSides = sidesOf(thirdPlaceMatch);
+    const thirdPlaceHomeCandidatePair = candidatePairForLoserPlaceholder(thirdPlaceSides.home.teamName, candidatePairs);
+    const thirdPlaceAwayCandidatePair = candidatePairForLoserPlaceholder(thirdPlaceSides.away.teamName, candidatePairs);
+    const thirdPlaceRadialSides = orderRadialPairSides(format, format.thirdPlaceSlot, [
+        { side: thirdPlaceSides.home, candidatePair: thirdPlaceHomeCandidatePair, candidateOutcome: "loser" as const, matchSide: "HOME" as const },
+        { side: thirdPlaceSides.away, candidatePair: thirdPlaceAwayCandidatePair, candidateOutcome: "loser" as const, matchSide: "AWAY" as const },
+    ], intervals, byNumber, semiFinalSlots);
+    const thirdPlacePosition = { x: CENTER, y: CENTER + 145 };
     const champion =
         finalState?.isFinished && finalState.actualResult
             ? finalState.actualResult === "HOME"
@@ -371,9 +432,10 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                     ? finalSides.away
                     : null
             : null;
+    const finalTitle = `${t("final")}: ${finalRadialSides.map(({ side, candidatePair }) => displaySideName(side, candidatePair, t, "winner", true)).join(" vs ")}`;
 
     return (
-        <div className="relative mx-auto w-full max-w-[860px]">
+        <div className="relative mx-auto w-full max-w-[760px]">
             <div className="relative aspect-square w-full">
                 <svg viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`} className="absolute inset-0 h-full w-full">
                     <defs>
@@ -413,6 +475,23 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                                 strokeWidth={3.5}
                             />
                         ))}
+                    {semiFinalSlots.map((slot) => {
+                        const interval = intervals.get(slot);
+                        if (!interval) return null;
+                        const position = nodePosition(format, slot, interval);
+                        return (
+                            <line
+                                key={`third-place-${slot}`}
+                                x1={position.x}
+                                y1={position.y}
+                                x2={thirdPlacePosition.x}
+                                y2={thirdPlacePosition.y}
+                                stroke={currentNumber === format.thirdPlaceSlot ? "rgba(52,211,153,0.9)" : "rgba(251,191,36,0.4)"}
+                                strokeDasharray="5 6"
+                                strokeWidth={currentNumber === format.thirdPlaceSlot ? 3.5 : 2}
+                            />
+                        );
+                    })}
                 </svg>
 
                 {leafNumbers.flatMap((num) => {
@@ -436,19 +515,19 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                             <TeamCrest
                                 side={side}
                                 dim={isLoser}
-                                highlight={isCurrent ? "current" : isWinner ? "winner" : "none"}
+                                highlight={isWinner ? "winner" : isCurrent ? "current" : "none"}
                                 candidatePair={candidatePair}
                             />
                         );
                         return (
                             <div
                                 key={key}
-                                className="absolute -translate-x-1/2 -translate-y-1/2"
-                                style={{ left: pct(pos.x), top: pct(pos.y), width: "7%", height: "7%" }}
+                                className="absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 sm:h-9 sm:w-9 lg:h-12 lg:w-12"
+                                style={{ left: pct(pos.x), top: pct(pos.y) }}
                                 title={title}
                             >
                                 {href ? (
-                                    <Link href={href} prefetch={false} className="block h-full w-full">
+                                    <Link href={href} prefetch={false} aria-label={title} className={RADIAL_LINK_CLASS}>
                                         {crest}
                                     </Link>
                                 ) : (
@@ -479,6 +558,7 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                         const href = match ? `/match/${match.event_id}?date=${match.date.slice(0, 10)}` : null;
 
                         const crestSize = stage === "R16" ? 4.8 : stage === "QF" ? 4.2 : 3.6;
+                        const crestClassName = stage === "R16" ? "h-6 w-6 lg:h-7 lg:w-7" : stage === "QF" ? "h-5 w-5 lg:h-6 lg:w-6" : "h-4 w-4 lg:h-5 lg:w-5";
                         const homeCandidatePair = candidatePairForWinnerPlaceholder(home.teamName, candidatePairs);
                         const awayCandidatePair = candidatePairForWinnerPlaceholder(away.teamName, candidatePairs);
                         const sides = orderRadialPairSides(format, num, [
@@ -490,7 +570,7 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
 
                         const pairing = (
                             <div
-                                className={`flex h-full w-full items-center justify-center gap-[8%] rounded-full p-[6%] transition ${
+                                className={`relative h-full w-full rounded-full transition ${
                                     isCurrent
                                         ? "bg-amber-400/15 ring-1 ring-amber-400/50"
                                         : onPath
@@ -499,11 +579,15 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                                 }`}
                             >
                                 {sides.map(({ side, isWinner, isLoser, candidatePair }, index) => (
-                                    <div key={index} className="h-full" style={{ aspectRatio: "1 / 1" }}>
+                                    <div
+                                        key={index}
+                                        className={`absolute ${crestClassName} -translate-x-1/2 -translate-y-1/2`}
+                                        style={{ left: index === 0 ? "29%" : "71%", top: "50%" }}
+                                    >
                                         <TeamCrest
                                             side={side}
                                             dim={isLoser}
-                                            highlight={isCurrent ? "current" : isWinner ? "winner" : "none"}
+                                            highlight={isWinner ? "winner" : isCurrent ? "current" : "none"}
                                             size={20}
                                             candidatePair={candidatePair}
                                         />
@@ -525,7 +609,7 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                                 title={title}
                             >
                                 {href ? (
-                                    <Link href={href} prefetch={false} className="block h-full w-full">
+                                    <Link href={href} prefetch={false} aria-label={title} className={RADIAL_LINK_CLASS}>
                                         {pairing}
                                     </Link>
                                 ) : (
@@ -535,9 +619,49 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                         );
                     })}
 
+                {thirdPlaceMatch && (() => {
+                    const href = `/match/${thirdPlaceMatch.event_id}?date=${thirdPlaceMatch.date.slice(0, 10)}`;
+                    const winner = thirdPlaceState?.isFinished ? thirdPlaceState.actualResult : null;
+                    const title = `${t("third_place")}: ${thirdPlaceRadialSides.map(({ side, candidatePair }) => displaySideName(side, candidatePair, t, "loser")).join(" vs ")}`;
+                    const pairing = (
+                        <div className={`relative h-full w-full rounded-full border transition ${currentNumber === format.thirdPlaceSlot ? "border-amber-400/70 bg-amber-400/15" : "border-amber-400/25 bg-gray-950/55"}`}>
+                            {thirdPlaceRadialSides.map(({ side, candidatePair, matchSide }, index) => (
+                                <div
+                                    key={index}
+                                    className="absolute h-6 w-6 -translate-x-1/2 -translate-y-1/2 lg:h-7 lg:w-7"
+                                    style={{ left: index === 0 ? "25%" : "75%", top: "50%" }}
+                                >
+                                    <TeamCrest
+                                        side={side}
+                                        dim={Boolean(winner && winner !== matchSide)}
+                                        highlight={winner === matchSide ? "winner" : currentNumber === format.thirdPlaceSlot ? "current" : "none"}
+                                        size={20}
+                                        candidatePair={candidatePair}
+                                        candidateOutcome="loser"
+                                    />
+                                </div>
+                            ))}
+                            <span aria-hidden="true" className="absolute left-1/2 top-1/2 flex h-5 min-w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-400/50 bg-gray-950 px-1 text-[8px] font-black text-amber-300 shadow-md">
+                                #3
+                            </span>
+                        </div>
+                    );
+                    return (
+                        <div
+                            className="absolute -translate-x-1/2 -translate-y-1/2"
+                            style={{ left: pct(thirdPlacePosition.x), top: pct(thirdPlacePosition.y), width: "13.5%", height: "6%" }}
+                            title={title}
+                        >
+                            <Link href={href} prefetch={false} aria-label={title} className={RADIAL_LINK_CLASS}>
+                                {pairing}
+                            </Link>
+                        </div>
+                    );
+                })()}
                 <div
                     className="absolute -translate-x-1/2 -translate-y-1/2"
                     style={{ left: "50%", top: "50%", width: "16%", height: "16%" }}
+                    title={finalTitle}
                 >
                     {(() => {
                         const href = finalMatch ? `/match/${finalMatch.event_id}?date=${finalMatch.date.slice(0, 10)}` : null;
@@ -546,14 +670,30 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                                 {champion && validTeamId(champion.teamId) ? (
                                     <TeamLogo teamId={champion.teamId} alt={champion.teamName} size={44} className="h-[46%] w-[46%] object-contain" />
                                 ) : (
-                                    <Image
-                                        src="/icons/world-cup-trophy.svg"
-                                        alt=""
-                                        aria-hidden="true"
-                                        width={64}
-                                        height={64}
-                                        className="h-[70%] w-auto drop-shadow-[0_2px_6px_rgba(251,191,36,0.45)]"
-                                    />
+                                    <>
+                                        <Image
+                                            src="/icons/world-cup-trophy.svg"
+                                            alt=""
+                                            aria-hidden="true"
+                                            width={64}
+                                            height={64}
+                                            className="h-[43%] w-auto drop-shadow-[0_2px_6px_rgba(251,191,36,0.45)]"
+                                        />
+                                        <span className="flex h-[27%] items-center justify-center gap-1">
+                                            {finalRadialSides.map(({ side, candidatePair }, index) => (
+                                                <span key={index} className="relative h-5 w-5 lg:h-6 lg:w-6">
+                                                    <TeamCrest
+                                                        side={side}
+                                                        dim={false}
+                                                        highlight={selectedCandidate(candidatePair, "winner") ? "winner" : "none"}
+                                                        size={20}
+                                                        candidatePair={candidatePair}
+                                                        reverseCandidatePair
+                                                    />
+                                                </span>
+                                            ))}
+                                        </span>
+                                    </>
                                 )}
                                 <span className="text-[8px] font-black uppercase tracking-[0.14em] text-amber-200">
                                     {champion ? t("champion") : t("final")}
@@ -561,7 +701,7 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                             </div>
                         );
                         return href ? (
-                            <Link href={href} prefetch={false} className="block h-full w-full">
+                            <Link href={href} prefetch={false} aria-label={finalTitle} className={RADIAL_LINK_CLASS}>
                                 {core}
                             </Link>
                         ) : (

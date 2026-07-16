@@ -363,9 +363,13 @@ function assignResolvedChildren(
     }
 }
 
-function computeResolvedSlots(rawMatches: SofascoreMatch[], format: TournamentFormat): Map<number, number> {
+function computeResolvedSlots(
+    rawMatches: SofascoreMatch[],
+    format: TournamentFormat,
+    initialSlots: Map<number, number> = new Map(),
+): Map<number, number> {
     const groups = buildStageGroups(rawMatches, format);
-    const slotByEventId = new Map<number, number>();
+    const slotByEventId = new Map(initialSlots);
     const finalMatch = (groups.get("FINAL") ?? [])[0];
     if (finalMatch) slotByEventId.set(finalMatch.event_id, format.finalSlot);
 
@@ -393,13 +397,13 @@ function computeResolvedSlots(rawMatches: SofascoreMatch[], format: TournamentFo
 }
 
 export function computeWorldCupBracketSlots(rawMatches: SofascoreMatch[], format: TournamentFormat): Map<number, number> {
-    const slotByEventId = format.key === "world-cup-48"
+    const scheduledSlots = format.key === "world-cup-48"
         ? computeScheduledFortyEightSlots(rawMatches, format)
         : new Map<number, number>();
-    const resolvedSlots = computeResolvedSlots(rawMatches, format);
+    const slotByEventId = computeResolvedSlots(rawMatches, format, scheduledSlots);
 
-    for (const [eventId, slot] of resolvedSlots) {
-        slotByEventId.set(eventId, slot);
+    for (const [eventId, slot] of scheduledSlots) {
+        if (!slotByEventId.has(eventId)) slotByEventId.set(eventId, slot);
     }
 
     return slotByEventId;

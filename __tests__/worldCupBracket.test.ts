@@ -8,6 +8,7 @@ import {
 } from "@/app/match/[id]/bracketConfig";
 import {
     buildWorldCupSlotCandidatePairs,
+    candidatePairForLoserPlaceholder,
     candidatePairForWinnerPlaceholder,
     formatWorldCupSlotCandidatePair,
 } from "@/app/util/predictions/worldCupSlotResolver";
@@ -169,6 +170,25 @@ describe("World Cup bracket contracts", () => {
         expect(formatWorldCupSlotCandidatePair(pair!, " / ")).toBe("Norway");
     });
 
+    it("resolves a loser placeholder for the third-place match", () => {
+        const sourceMatch = match({
+            event_id: 9010,
+            date: "2026-07-14",
+            season: "2026",
+            home_team_id: 21,
+            home_team: "France",
+            away_team_id: 22,
+            away_team: "Spain",
+            home_score: 0,
+            away_score: 2,
+            status: "finished",
+        });
+        const pairs = buildWorldCupSlotCandidatePairs([sourceMatch], new Map([[9010, 101]]));
+        const pair = candidatePairForLoserPlaceholder("L101", pairs);
+
+        expect(pair?.winner?.teamName).toBe("Spain");
+        expect(pair?.loser?.teamName).toBe("France");
+    });
     it("keeps unresolved winner placeholders as candidate pairs", () => {
         const sourceMatch = match({
             event_id: 9002,

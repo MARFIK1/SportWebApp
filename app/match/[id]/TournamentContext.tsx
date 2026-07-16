@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
+import { ChevronRightIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { computeStandings, type StandingRow } from "@/app/util/data/dataService";
 import { resolveSofascoreMatchResult, type ResolvedMatchResult } from "@/app/util/predictions/matchResult";
 import {
     buildWorldCupSlotCandidatePairs,
+    candidatePairForLoserPlaceholder,
     candidatePairForWinnerPlaceholder,
-    formatWorldCupSlotCandidatePair,
     type WorldCupSlotCandidatePair,
 } from "@/app/util/predictions/worldCupSlotResolver";
 import type { SofascoreMatch } from "@/types/sofascore";
@@ -31,17 +32,23 @@ interface TournamentGroup {
     matches: SofascoreMatch[];
 }
 
+type CandidateOutcome = "winner" | "loser";
+
 interface TeamMarkProps {
     teamId: number;
     teamName: string;
     t: (key: string) => string;
     align?: "left" | "right";
     candidatePair?: WorldCupSlotCandidatePair | null;
+    candidateOutcome?: CandidateOutcome;
+    reverseCandidatePair?: boolean;
+    compact?: boolean;
 }
 
 interface ScoreBadgeProps {
     children: ReactNode;
     tone?: "default" | "current";
+    compact?: boolean;
 }
 
 interface GroupStandingsTableProps {
@@ -69,6 +76,7 @@ interface FeaturedKnockoutMatchProps {
     roundLabel: string;
     predictionsByEventId: Map<number, PredictionMatch>;
     candidatePairs: Map<number, WorldCupSlotCandidatePair>;
+    reverseCandidatePair?: boolean;
     t: (key: string) => string;
 }
 
@@ -77,6 +85,8 @@ interface FeaturedTeamLogoProps {
     teamName: string;
     t: (key: string) => string;
     candidatePair?: WorldCupSlotCandidatePair | null;
+    candidateOutcome?: CandidateOutcome;
+    reverseCandidatePair?: boolean;
 }
 
 interface KnockoutRoundsListProps {
@@ -301,51 +311,75 @@ function formatMatchScore(match: SofascoreMatch, state: ResolvedMatchResult, t: 
     return "vs";
 }
 
-function displayTeamName(name: string, t: (key: string) => string, candidatePair: WorldCupSlotCandidatePair | null = null): string {
-    if (candidatePair) return formatWorldCupSlotCandidatePair(candidatePair, " / ");
+function selectedCandidate(candidatePair: WorldCupSlotCandidatePair | null, outcome: CandidateOutcome) {
+    return outcome === "loser" ? candidatePair?.loser : candidatePair?.winner;
+}
+
+function candidatePairSides(candidatePair: WorldCupSlotCandidatePair, outcome: CandidateOutcome, reverse = false) {
+    const sides = outcome === "loser" ? [candidatePair.away, candidatePair.home] : [candidatePair.home, candidatePair.away];
+    return reverse ? [sides[1], sides[0]] : sides;
+}
+
+function candidateResolution(name: string, candidatePairs: Map<number, WorldCupSlotCandidatePair>): { pair: WorldCupSlotCandidatePair | null; outcome: CandidateOutcome } {
+    const loserPair = candidatePairForLoserPlaceholder(name, candidatePairs);
+    if (loserPair) return { pair: loserPair, outcome: "loser" };
+    return { pair: candidatePairForWinnerPlaceholder(name, candidatePairs), outcome: "winner" };
+}
+
+function displayTeamName(name: string, t: (key: string) => string, candidatePair: WorldCupSlotCandidatePair | null = null, candidateOutcome: CandidateOutcome = "winner", reverseCandidatePair = false): string {
+    const candidate = selectedCandidate(candidatePair, candidateOutcome);
+    if (candidate) return candidate.teamName;
+    if (candidatePair) return candidatePairSides(candidatePair, candidateOutcome, reverseCandidatePair).map((item) => item.teamName).join(" / ");
     return isPlaceholderTeam(name) ? t("to_be_decided") : name;
 }
 
-function TeamMark({ teamId, teamName, t, align = "left", candidatePair = null }: TeamMarkProps) {
+function TeamMark({ teamId, teamName, t, align = "left", candidatePair = null, candidateOutcome = "winner", reverseCandidatePair = false, compact = false }: TeamMarkProps) {
     const placeholder = isPlaceholderTeam(teamName) && !candidatePair;
-    const label = displayTeamName(teamName, t, candidatePair);
+    const candidate = selectedCandidate(candidatePair, candidateOutcome);
+    const label = displayTeamName(teamName, t, candidatePair, candidateOutcome, reverseCandidatePair);
+    const logoSize = compact ? 20 : 24;
+    const logoClass = compact ? "h-5 w-5" : "h-6 w-6";
+    const pairLogoSize = compact ? 16 : logoSize;
+    const pairLogoClass = compact ? "h-4 w-4" : logoClass;
+    const compactLabelClass = candidatePair && !candidate
+        ? "truncate text-[9px] leading-none"
+        : "truncate text-[11px] leading-tight";
     return (
         <div
             title={label}
-            className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}
+            className={`flex min-w-0 items-center ${compact ? "gap-1.5" : "gap-2"} ${align === "right" ? "flex-row-reverse text-right" : ""}`}
         >
-            {candidatePair?.winner ? (
-                <TeamLogo teamId={candidatePair.winner.teamId} alt={candidatePair.winner.teamName} size={24} className="h-6 w-6 shrink-0 object-contain" />
+            {candidate ? (
+                <TeamLogo teamId={candidate.teamId} alt={candidate.teamName} size={logoSize} className={`${logoClass} shrink-0 object-contain`} />
             ) : candidatePair ? (
-                <span className="flex h-6 w-9 shrink-0 items-center justify-center -space-x-1">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-0.5">
-                        <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={24} className="h-full w-full object-contain" />
-                    </span>
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-0.5">
-                        <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={24} className="h-full w-full object-contain" />
-                    </span>
+                <span className={`flex shrink-0 items-center justify-center -space-x-1 ${compact ? "h-5 w-7" : "h-6 w-9"}`}>
+                    {candidatePairSides(candidatePair, candidateOutcome, reverseCandidatePair).map((item) => (
+                        <span key={item.teamId} className={`flex items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-0.5 ${pairLogoClass}`}>
+                            <TeamLogo teamId={item.teamId} alt={item.teamName} size={pairLogoSize} className="h-full w-full object-contain" />
+                        </span>
+                    ))}
                 </span>
             ) : placeholder ? (
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/15 bg-gray-800 text-[9px] font-black text-gray-400">
+                <span className={`flex shrink-0 items-center justify-center rounded-full border border-white/15 bg-gray-800 text-[9px] font-black text-gray-400 ${logoClass}`}>
                     ?
                 </span>
             ) : (
-                <TeamLogo teamId={teamId} alt={label} size={24} className="h-6 w-6 shrink-0 object-contain" />
+                <TeamLogo teamId={teamId} alt={label} size={logoSize} className={`${logoClass} shrink-0 object-contain`} />
             )}
-            <span className={`truncate text-xs font-bold ${placeholder ? "text-gray-400" : "text-gray-900 dark:text-white"}`}>
+            <span className={`${compact ? compactLabelClass : "truncate text-xs"} font-bold ${placeholder ? "text-gray-400" : "text-gray-900 dark:text-white"}`}>
                 {label}
             </span>
         </div>
     );
 }
 
-function ScoreBadge({ children, tone = "default" }: ScoreBadgeProps) {
+function ScoreBadge({ children, tone = "default", compact = false }: ScoreBadgeProps) {
     const cls =
         tone === "current"
             ? "border border-amber-400/50 bg-amber-400/15 text-amber-600 dark:text-amber-200"
             : "border border-white/10 bg-gray-950/60 text-white";
     return (
-        <span className={`shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-center text-[11px] font-black ${cls}`}>
+        <span className={`shrink-0 whitespace-nowrap rounded-md text-center font-black ${compact ? "px-1.5 py-1 text-[10px]" : "px-2 py-1 text-[11px]"} ${cls}`}>
             {children}
         </span>
     );
@@ -490,15 +524,16 @@ function GroupStageSection({ group, homeTeamId, awayTeamId, competitionSlug, cur
 }
 
 
-function FeaturedTeamLogo({ teamId, teamName, t, candidatePair = null }: FeaturedTeamLogoProps) {
+function FeaturedTeamLogo({ teamId, teamName, t, candidatePair = null, candidateOutcome = "winner", reverseCandidatePair = false }: FeaturedTeamLogoProps) {
     if (candidatePair) {
-        const label = formatWorldCupSlotCandidatePair(candidatePair, " / ");
-        if (candidatePair.winner) {
+        const candidate = selectedCandidate(candidatePair, candidateOutcome);
+        const label = candidate?.teamName ?? candidatePairSides(candidatePair, candidateOutcome, reverseCandidatePair).map((item) => item.teamName).join(" / ");
+        if (candidate) {
             return (
                 <span title={label} className="flex h-11 w-11 items-center justify-center sm:h-14 sm:w-14">
                     <TeamLogo
-                        teamId={candidatePair.winner.teamId}
-                        alt={candidatePair.winner.teamName}
+                        teamId={candidate.teamId}
+                        alt={candidate.teamName}
                         size={56}
                         className="h-full w-full object-contain"
                     />
@@ -507,12 +542,11 @@ function FeaturedTeamLogo({ teamId, teamName, t, candidatePair = null }: Feature
         }
         return (
             <span title={label} className="flex h-11 w-20 items-center justify-center -space-x-2 sm:h-14 sm:w-24">
-                <span className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-14 sm:w-14">
-                    <TeamLogo teamId={candidatePair.home.teamId} alt={candidatePair.home.teamName} size={56} className="h-full w-full object-contain" />
-                </span>
-                <span className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-14 sm:w-14">
-                    <TeamLogo teamId={candidatePair.away.teamId} alt={candidatePair.away.teamName} size={56} className="h-full w-full object-contain" />
-                </span>
+                {candidatePairSides(candidatePair, candidateOutcome, reverseCandidatePair).map((item) => (
+                    <span key={item.teamId} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-gray-950/80 p-1 shadow-lg sm:h-14 sm:w-14">
+                        <TeamLogo teamId={item.teamId} alt={item.teamName} size={56} className="h-full w-full object-contain" />
+                    </span>
+                ))}
             </span>
         );
     }
@@ -531,13 +565,13 @@ function FeaturedTeamLogo({ teamId, teamName, t, candidatePair = null }: Feature
     return <TeamLogo teamId={teamId} alt={teamName} size={56} className="h-11 w-11 object-contain sm:h-14 sm:w-14" />;
 }
 
-function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, candidatePairs, t }: FeaturedKnockoutMatchProps) {
+function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, candidatePairs, reverseCandidatePair = false, t }: FeaturedKnockoutMatchProps) {
     const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
     const scoreText = state.isFinished ? compactResultLabel(state, t) : null;
-    const homeCandidatePair = candidatePairForWinnerPlaceholder(match.home_team, candidatePairs);
-    const awayCandidatePair = candidatePairForWinnerPlaceholder(match.away_team, candidatePairs);
-    const homeLabel = displayTeamName(match.home_team, t, homeCandidatePair);
-    const awayLabel = displayTeamName(match.away_team, t, awayCandidatePair);
+    const homeCandidate = candidateResolution(match.home_team, candidatePairs);
+    const awayCandidate = candidateResolution(match.away_team, candidatePairs);
+    const homeLabel = displayTeamName(match.home_team, t, homeCandidate.pair, homeCandidate.outcome, reverseCandidatePair);
+    const awayLabel = displayTeamName(match.away_team, t, awayCandidate.pair, awayCandidate.outcome, reverseCandidatePair);
     const winnerName = state.decidedByPenalties && state.actualResult
         ? (state.actualResult === "HOME" ? match.home_team : state.actualResult === "AWAY" ? match.away_team : null)
         : null;
@@ -558,7 +592,7 @@ function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, candid
             </div>
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-6">
                 <div className="flex min-w-0 flex-col items-center gap-2 text-center">
-                    <FeaturedTeamLogo teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidatePair} t={t} />
+                    <FeaturedTeamLogo teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidate.pair} candidateOutcome={homeCandidate.outcome} reverseCandidatePair={reverseCandidatePair} t={t} />
                     <span title={homeLabel} className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
                         {homeLabel}
                     </span>
@@ -570,7 +604,7 @@ function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, candid
                     <span className="text-[10px] font-bold text-gray-400">{match.date.slice(5, 10)}</span>
                 </div>
                 <div className="flex min-w-0 flex-col items-center gap-2 text-center">
-                    <FeaturedTeamLogo teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} t={t} />
+                    <FeaturedTeamLogo teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidate.pair} candidateOutcome={awayCandidate.outcome} reverseCandidatePair={reverseCandidatePair} t={t} />
                     <span title={awayLabel} className="max-w-full truncate text-sm font-black text-gray-900 dark:text-white">
                         {awayLabel}
                     </span>
@@ -590,11 +624,11 @@ function FeaturedKnockoutMatch({ match, roundLabel, predictionsByEventId, candid
 function roundColumn(stage: KnockoutRoundWithMatches["stage"], hasRoundOf32: boolean): number {
     if (hasRoundOf32) {
         if (stage === "R32") return 0;
-        if (stage === "R16" || stage === "SF") return 1;
+        if (stage === "R16" || stage === "QF") return 1;
         return 2;
     }
     if (stage === "R16") return 0;
-    if (stage === "QF" || stage === "THIRD_PLACE") return 1;
+    if (stage === "QF") return 1;
     return 2;
 }
 
@@ -608,50 +642,61 @@ function groupRoundsIntoColumns(rounds: KnockoutRoundWithMatches[]): KnockoutRou
 function KnockoutRoundsList({ rounds, currentMatchId, predictionsByEventId, candidatePairs, t }: KnockoutRoundsListProps) {
     const columns = groupRoundsIntoColumns(rounds);
     return (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 xl:items-start">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 xl:items-start">
             {columns.map((column, columnIndex) => (
-                <div key={columnIndex} className="space-y-4">
-                    {column.map((round) => (
-                        <div key={round.labelKey} className="rounded-xl border border-white/10 bg-gray-950/25 p-3">
-                            <div className="mb-2 flex items-center justify-between gap-2">
-                                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-                                    {t(round.labelKey)}
-                                </span>
-                                <span className="rounded-full bg-gray-950/60 px-2 py-0.5 text-[10px] font-black text-gray-400">
-                                    {round.matches.length}
-                                </span>
+                <div key={columnIndex} className="relative">
+                    <div className="space-y-4">
+                        {column.map((round) => (
+                            <div key={round.labelKey} className="rounded-xl border border-white/10 bg-gray-950/25 p-3">
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                    <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
+                                        {t(round.labelKey)}
+                                    </span>
+                                    <span className="rounded-full bg-gray-950/60 px-2 py-0.5 text-[10px] font-black text-gray-400">
+                                        {round.matches.length}
+                                    </span>
+                                </div>
+                                <div className="space-y-1.5">
+                                    {round.matches.map((match) => {
+                                        const isCurrent = match.event_id === currentMatchId;
+                                        const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
+                                        const homeCandidate = candidateResolution(match.home_team, candidatePairs);
+                                        const awayCandidate = candidateResolution(match.away_team, candidatePairs);
+                                        const reverseCandidatePair = round.stage === "FINAL";
+                                        const homeLabel = displayTeamName(match.home_team, t, homeCandidate.pair, homeCandidate.outcome, reverseCandidatePair);
+                                        const awayLabel = displayTeamName(match.away_team, t, awayCandidate.pair, awayCandidate.outcome, reverseCandidatePair);
+                                        const scoreText = formatMatchScore(match, state, t);
+                                        return (
+                                            <Link
+                                                key={match.event_id}
+                                                href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
+                                                prefetch={false}
+                                                aria-label={`${homeLabel} ${scoreText} ${awayLabel}`}
+                                                className={`grid min-h-10 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1 rounded-lg border px-1.5 py-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-400/70 ${isCurrent ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-gray-950/40 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
+                                            >
+                                                <TeamMark teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidate.pair} candidateOutcome={homeCandidate.outcome} reverseCandidatePair={reverseCandidatePair} compact t={t} />
+                                                <ScoreBadge tone={isCurrent ? "current" : "default"} compact>{scoreText}</ScoreBadge>
+                                                <TeamMark teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidate.pair} candidateOutcome={awayCandidate.outcome} reverseCandidatePair={reverseCandidatePair} compact t={t} align="right" />
+                                            </Link>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                            <div className="space-y-1.5">
-                                {round.matches.map((match) => {
-                                    const isCurrent = match.event_id === currentMatchId;
-                                    const state = resolveSofascoreMatchResult(match, predictionsByEventId.get(match.event_id) ?? null);
-                                    const homeCandidatePair = candidatePairForWinnerPlaceholder(match.home_team, candidatePairs);
-                                    const awayCandidatePair = candidatePairForWinnerPlaceholder(match.away_team, candidatePairs);
-                                    return (
-                                        <Link
-                                            key={match.event_id}
-                                            href={`/match/${match.event_id}?date=${match.date.slice(0, 10)}`}
-                                            prefetch={false}
-                                            className={`grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors ${isCurrent ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-gray-950/40 hover:border-emerald-400/40 hover:bg-emerald-500/10"}`}
-                                        >
-                                            <TeamMark teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidatePair} t={t} />
-                                            <ScoreBadge tone={isCurrent ? "current" : "default"}>{formatMatchScore(match, state, t)}</ScoreBadge>
-                                            <TeamMark teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} t={t} align="right" />
-                                        </Link>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
+                    {columnIndex < columns.length - 1 && (
+                        <span aria-hidden="true" className="pointer-events-none absolute -right-[18px] top-5 z-10 hidden h-6 w-6 items-center justify-center rounded-full border border-emerald-400/25 bg-gray-950 text-emerald-400 shadow-lg xl:flex">
+                            <ChevronRightIcon className="h-3.5 w-3.5" />
+                        </span>
+                    )}
                 </div>
             ))}
         </div>
     );
 }
-
 function hasCompleteBracket(format: TournamentFormat, slotByEventId: Map<number, number>, currentMatchId: number): boolean {
     const currentSlot = slotByEventId.get(currentMatchId);
-    if (currentSlot == null || format.stageBySlot[currentSlot] === "THIRD_PLACE") return false;
+    if (currentSlot == null) return false;
     const mappedSlots = new Set(slotByEventId.values());
     return format.leafSlots.every((slot) => mappedSlots.has(slot));
 }
@@ -664,7 +709,7 @@ function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEv
     const candidatePairs = buildWorldCupSlotCandidatePairs(matches, slotByEventId, predictionsByEventId);
 
     return (
-        <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
+        <section id="knockout-bracket" className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
@@ -677,13 +722,14 @@ function KnockoutSection({ matches, slotByEventId, currentMatch, predictionsByEv
                 </span>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)] xl:items-start">
                 <div className="space-y-4">
                     <FeaturedKnockoutMatch
                         match={currentMatch}
                         roundLabel={t(currentRound.labelKey)}
                         predictionsByEventId={predictionsByEventId}
                         candidatePairs={candidatePairs}
+                        reverseCandidatePair={currentRound.stage === "FINAL"}
                         t={t}
                     />
                     {hasFullBracket && (

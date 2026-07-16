@@ -19,6 +19,7 @@ export interface WorldCupSlotCandidatePair {
     home: WorldCupSlotCandidate;
     away: WorldCupSlotCandidate;
     winner?: WorldCupSlotCandidate;
+    loser?: WorldCupSlotCandidate;
 }
 
 const WORLD_CUP_SLOT_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+|TBD)$/i;
@@ -34,6 +35,13 @@ function isConcreteWorldCupTeam(teamId: number, teamName: string): boolean {
 
 export function winnerSlotFromTeamName(name: string): number | null {
     const match = /^w(\d+)$/i.exec(name.trim());
+    if (!match) return null;
+    const slot = Number(match[1]);
+    return Number.isFinite(slot) ? slot : null;
+}
+
+export function loserSlotFromTeamName(name: string): number | null {
+    const match = /^l(\d+)$/i.exec(name.trim());
     if (!match) return null;
     const slot = Number(match[1]);
     return Number.isFinite(slot) ? slot : null;
@@ -169,18 +177,22 @@ export function buildWorldCupSlotCandidatePairs(sourceMatches: SofascoreMatch[],
         if (!home || !away) continue;
 
         const state = resolveSofascoreMatchResult(match, predictionByEventId.get(match.event_id) ?? null);
-        const winner = state.isFinished && state.actualResult === "HOME"
-            ? home
-            : state.isFinished && state.actualResult === "AWAY"
-                ? away
-                : undefined;
-        pairs.set(slot, { home, away, winner });
+        const homeWon = state.isFinished && state.actualResult === "HOME";
+        const awayWon = state.isFinished && state.actualResult === "AWAY";
+        const winner = homeWon ? home : awayWon ? away : undefined;
+        const loser = homeWon ? away : awayWon ? home : undefined;
+        pairs.set(slot, { home, away, winner, loser });
     }
     return pairs;
 }
 
 export function candidatePairForWinnerPlaceholder(name: string, candidatePairs: Map<number, WorldCupSlotCandidatePair>): WorldCupSlotCandidatePair | null {
     const slot = winnerSlotFromTeamName(name);
+    return slot == null ? null : candidatePairs.get(slot) ?? null;
+}
+
+export function candidatePairForLoserPlaceholder(name: string, candidatePairs: Map<number, WorldCupSlotCandidatePair>): WorldCupSlotCandidatePair | null {
+    const slot = loserSlotFromTeamName(name);
     return slot == null ? null : candidatePairs.get(slot) ?? null;
 }
 
