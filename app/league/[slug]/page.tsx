@@ -1,7 +1,21 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { detectWorldCupFormat } from "@/app/match/[id]/bracketConfig";
 import { getCompetitionBySlug } from "@/app/util/league/leagueRegistry";
+import { resolveSeasonSelection } from "@/app/util/league/seasonResolver";
+import { todayYmd } from "@/app/util/data/dateUtils";
 import { loadAllSeasons, computeStandings, resolveLeagueTableContext, type StandingRow } from "@/app/util/data/dataService";
+import { loadPredictionReport } from "@/app/util/data/predictionService";
+import {
+    detectTournamentGroups,
+    partitionTournamentMatches,
+    type TournamentGroup,
+} from "@/app/util/tournament/tournamentGroups";
+import {
+    isUpcomingTournamentMatch,
+    normalizeWorldCupTournamentMatches,
+} from "@/app/util/tournament/worldCupTournamentView";
+import type { PredictionMatch } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
@@ -12,50 +26,20 @@ interface PageProps {
     searchParams: Promise<{ season?: string }>;
 }
 
-// Detect groups via connected components - teams that played each other belong to the same group
-function detectGroups(matches: SofascoreMatch[]): Map<string, Set<number>> | null {
-    // Only group stage rounds (1-10)
+function loadTournamentPredictionMatches(matches: SofascoreMatch[]): PredictionMatch[] {
+    const eventIds = new Set(matches.map((match) => match.event_id));
+    const reportDates = new Set(matches.map((match) => match.date.slice(0, 10)));
+    return Array.from(reportDates)
+        .flatMap((date) => loadPredictionReport(date)?.matches ?? [])
+        .filter((match) => typeof match.event_id === "number" && eventIds.has(match.event_id));
+}
+
+function detectLegacyGroups(matches: SofascoreMatch[]): TournamentGroup[] | null {
     const groupMatches = matches.filter((m) => m.round != null && m.round <= 10 && m.status === "finished");
     if (groupMatches.length === 0) return null;
-
-    const teamGroup = new Map<number, number>();
-    const groups = new Map<number, Set<number>>();
-    let nextId = 0;
-
-    for (const m of groupMatches) {
-        const hId = m.home_team_id;
-        const aId = m.away_team_id;
-        const gh = teamGroup.get(hId);
-        const ga = teamGroup.get(aId);
-
-        if (gh == null && ga == null) {
-            const gid = nextId++;
-            teamGroup.set(hId, gid);
-            teamGroup.set(aId, gid);
-            groups.set(gid, new Set([hId, aId]));
-        } else if (gh != null && ga == null) {
-            teamGroup.set(aId, gh);
-            groups.get(gh)!.add(aId);
-        } else if (ga != null && gh == null) {
-            teamGroup.set(hId, ga);
-            groups.get(ga)!.add(hId);
-        } else if (gh != null && ga != null && gh !== ga) {
-            for (const t of Array.from(groups.get(ga)!)) {
-                teamGroup.set(t, gh);
-                groups.get(gh)!.add(t);
-            }
-            groups.delete(ga);
-        }
-    }
-
-    if (groups.size <= 1) return null;
-
-    const result = new Map<string, Set<number>>();
-    const sorted = Array.from(groups.entries()).sort((a, b) => a[0] - b[0]);
-    sorted.forEach(([, teamIds], i) => {
-        result.set(String.fromCharCode(65 + i), teamIds);
-    });
-    return result;
+    const groupEventIds = new Set(groupMatches.map((match) => match.event_id));
+    const groups = detectTournamentGroups(groupMatches, groupEventIds);
+    return groups.length > 1 ? groups : null;
 }
 
 function StandingsTable({ standings, t }: { standings: StandingRow[]; t: (key: string) => string }) {
@@ -155,27 +139,37 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
     }
 
     const allMatches = loadAllSeasons(competition);
+    const {
+        seasons,
+        selectedSeason,
+        matches: seasonMatches,
+    } = resolveSeasonSelection(allMatches, resolvedSearchParams.season);
 
-    const seasonSet = new Set<string>();
-    for (const m of allMatches) {
-        if (m.season) seasonSet.add(m.season);
+    const displayMatches = competition.slug === "fifa-world-cup"
+        ? normalizeWorldCupTournamentMatches(seasonMatches, loadTournamentPredictionMatches(seasonMatches))
+        : seasonMatches;
+    const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(displayMatches) : null;
+    const standingsMatches = leagueTableContext?.standingsMatches ?? displayMatches;
+
+    let groups = detectLegacyGroups(displayMatches);
+    let playoffMatches = displayMatches.filter((m) => m.round != null && m.round > 10);
+
+    if (competition.slug === "fifa-world-cup" && displayMatches.length > 0) {
+        const format = detectWorldCupFormat(displayMatches[displayMatches.length - 1], displayMatches);
+        const partition = partitionTournamentMatches(displayMatches, format);
+        const detectedGroups = detectTournamentGroups(partition.matches, partition.groupStageEventIds);
+        groups = detectedGroups.length > 1 ? detectedGroups : null;
+        playoffMatches = partition.playoffMatches;
     }
-    const seasons = Array.from(seasonSet).sort();
-    const selectedSeason = resolvedSearchParams.season || (seasons.length > 0 ? seasons[seasons.length - 1] : "");
-    const seasonMatches = selectedSeason ? allMatches.filter((m) => m.season === selectedSeason) : allMatches;
-    const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(seasonMatches) : null;
-    const standingsMatches = leagueTableContext?.standingsMatches ?? seasonMatches;
 
-    const groups = detectGroups(seasonMatches);
-    const playoffMatches = seasonMatches.filter((m) => m.round != null && m.round > 10);
-
-    const finished = seasonMatches
+    const finished = displayMatches
         .filter((m) => m.status === "finished")
         .sort((a, b) => b.date.localeCompare(a.date))
         .slice(0, 10);
 
-    const upcoming = seasonMatches
-        .filter((m) => m.status !== "finished" && m.status !== "postponed")
+    const today = todayYmd();
+    const upcoming = displayMatches
+        .filter((m) => isUpcomingTournamentMatch(m, today))
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(0, 10);
 
@@ -215,15 +209,12 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
 
             {groups ? (
                 <div className="space-y-6 mb-6">
-                    {Array.from(groups.entries()).map(([letter, teamIds]) => {
-                        const groupMatches = seasonMatches.filter(
-                            (m) => m.round != null && m.round <= 10 && (teamIds.has(m.home_team_id) || teamIds.has(m.away_team_id))
-                        );
-                        const standings = computeStandings(groupMatches);
+                    {groups.map((group) => {
+                        const standings = computeStandings(group.matches);
                         return (
-                            <div key={letter} className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
+                            <div key={group.letter} className="bg-white dark:bg-gray-900/50 rounded-2xl p-6">
                                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">
-                                    {t("group")} {letter}
+                                    {t("group")} {group.letter}
                                 </h3>
                                 <StandingsTable standings={standings} t={t} />
                             </div>
