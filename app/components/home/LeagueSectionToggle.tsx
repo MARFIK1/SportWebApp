@@ -15,6 +15,7 @@ interface LeagueAccuracy {
 interface LeagueSectionToggleProps {
     leagueName: string;
     slug: string;
+    standingsSeason?: string;
     matchCount: number;
     statusText: string;
     accuracy: LeagueAccuracy | null;
@@ -36,6 +37,7 @@ interface LeagueSectionToggleProps {
 export default function LeagueSectionToggle({
     leagueName,
     slug,
+    standingsSeason,
     matchCount,
     statusText,
     accuracy,
@@ -110,7 +112,7 @@ export default function LeagueSectionToggle({
                         {open ? <ChevronUpIcon className="h-5 w-5" aria-hidden="true" /> : <ChevronDownIcon className="h-5 w-5" aria-hidden="true" />}
                     </button>
                     <Link
-                        href={`/league/${slug}`}
+                        href={`/league/${slug}${standingsSeason ? `?season=${encodeURIComponent(standingsSeason)}` : ""}`}
                         prefetch={false}
                         aria-label={`${labels.viewStandings}: ${leagueName}`}
                         title={labels.viewStandings}

@@ -3,10 +3,13 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { ArrowPathIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import type { SearchTeam, SearchPlayer } from "@/app/util/data/dataService";
 import { playerImageUrl } from "@/app/util/urls";
 import { useLanguage } from "./LanguageProvider";
 import TeamLogo from "./TeamLogo";
+
+type SearchStatus = "idle" | "loading" | "success" | "error";
 
 export default function SearchBarForm() {
     const router = useRouter();
@@ -16,19 +19,38 @@ export default function SearchBarForm() {
     const [showFilteredBox, setShowFilteredBox] = useState(false);
     const [teamsData, setTeamsData] = useState<SearchTeam[]>([]);
     const [playersData, setPlayersData] = useState<SearchPlayer[]>([]);
+    const [status, setStatus] = useState<SearchStatus>("idle");
+    const [retryVersion, setRetryVersion] = useState(0);
     const listRef = useRef<HTMLDivElement>(null);
     const listboxId = useId();
+    const panelId = `${listboxId}-panel`;
 
-    const filteredTeams = searchTerm.trim().length >= 2 ? teamsData : [];
-    const filteredPlayers = searchTerm.trim().length >= 2 ? playersData : [];
-
+    const queryIsReady = searchTerm.trim().length >= 2;
+    const filteredTeams = queryIsReady ? teamsData : [];
+    const filteredPlayers = queryIsReady ? playersData : [];
     const totalResults = filteredTeams.length + filteredPlayers.length;
-    const showResults = searchTerm.length > 0 && totalResults > 0 && showFilteredBox;
+    const showSearchPanel = queryIsReady && showFilteredBox;
+    const showResults = status === "success" && totalResults > 0;
 
     const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        setSearchTerm(event.target.value);
+        const nextTerm = event.target.value;
+        const nextQueryIsReady = nextTerm.trim().length >= 2;
+
+        setSearchTerm(nextTerm);
         setFocusedIndex(-1);
         setShowFilteredBox(true);
+        setStatus(nextQueryIsReady ? "loading" : "idle");
+
+        if (!nextQueryIsReady) {
+            setTeamsData([]);
+            setPlayersData([]);
+        }
+    };
+
+    const retrySearch = () => {
+        setFocusedIndex(-1);
+        setStatus("loading");
+        setRetryVersion((version) => version + 1);
     };
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -74,14 +96,19 @@ export default function SearchBarForm() {
                 const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
                     signal: controller.signal,
                 });
-                if (!res.ok) return;
+                if (!res.ok) {
+                    throw new Error(`Search request failed with status ${res.status}`);
+                }
+
                 const data = await res.json() as { teams?: SearchTeam[]; players?: SearchPlayer[] };
                 setTeamsData(data.teams ?? []);
                 setPlayersData(data.players ?? []);
+                setStatus("success");
             } catch (error) {
                 if ((error as Error).name !== "AbortError") {
                     setTeamsData([]);
                     setPlayersData([]);
+                    setStatus("error");
                 }
             }
         }, 180);
@@ -90,68 +117,112 @@ export default function SearchBarForm() {
             window.clearTimeout(timeout);
             controller.abort();
         };
-    }, [searchTerm]);
+    }, [retryVersion, searchTerm]);
 
     return (
-        <div className="flex justify-center items-center w-full max-w-lg relative" ref={listRef}>
+        <div className="relative flex w-full max-w-lg items-center justify-center" ref={listRef}>
             <input
                 type="text"
                 value={searchTerm}
                 onChange={handleSearchChange}
                 onKeyDown={handleKeyDown}
+                onFocus={() => {
+                    if (queryIsReady) setShowFilteredBox(true);
+                }}
                 placeholder={t("search_placeholder")}
                 role="combobox"
                 aria-autocomplete="list"
-                aria-expanded={showResults}
-                aria-controls={showResults ? listboxId : undefined}
-                aria-activedescendant={focusedIndex >= 0 ? `${listboxId}-option-${focusedIndex}` : undefined}
-                className="w-full bg-gray-200 dark:bg-gray-700 p-2 text-gray-900 dark:text-white rounded-lg outline-none placeholder-gray-400"
+                aria-expanded={showSearchPanel}
+                aria-controls={showSearchPanel ? (showResults ? listboxId : panelId) : undefined}
+                aria-activedescendant={showResults && focusedIndex >= 0 ? `${listboxId}-option-${focusedIndex}` : undefined}
+                aria-busy={status === "loading"}
+                className="w-full rounded-xl border border-gray-200 bg-gray-100 px-3 py-2.5 text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
             />
-            {showResults && (
+            {showSearchPanel && (
                 <div
-                    id={listboxId}
-                    role="listbox"
-                    className="absolute top-full left-0 w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg mt-1 z-[100] overflow-hidden shadow-lg"
+                    id={panelId}
+                    className="absolute left-0 top-full z-[100] mt-1 w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl shadow-slate-900/10 dark:border-gray-700 dark:bg-gray-900 dark:shadow-black/30"
                 >
-                    {filteredTeams.length > 0 && (
-                        <div className="text-xs text-gray-500 uppercase tracking-wider px-3 pt-2 pb-1">{t("teams")}</div>
+                    {status === "loading" && (
+                        <div role="status" className="flex min-h-16 items-center gap-3 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                            <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-gray-300 border-t-emerald-500 dark:border-gray-700 dark:border-t-emerald-400" aria-hidden="true" />
+                            <span>{t("search_loading")}</span>
+                        </div>
                     )}
-                    {filteredTeams.map((team, i) => (
-                        <Link
-                            href={`/team/${team.id}`}
-                            prefetch={false}
-                            key={team.id}
-                            id={`${listboxId}-option-${i}`}
-                            role="option"
-                            aria-selected={i === focusedIndex}
-                            className={`p-2 px-3 flex items-center gap-2 text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800 ${i === focusedIndex ? "bg-gray-100 dark:bg-gray-800" : ""}`}
-                            onClick={() => { setSearchTerm(""); setShowFilteredBox(false); }}
-                        >
-                            <TeamLogo teamId={team.id} alt={team.name} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
-                            <span className="text-sm">{team.name}</span>
-                        </Link>
-                    ))}
-                    {filteredPlayers.length > 0 && (
-                        <div className="text-xs text-gray-500 uppercase tracking-wider px-3 pt-2 pb-1">{t("players")}</div>
+
+                    {status === "error" && (
+                        <div role="alert" className="flex min-h-16 items-center justify-between gap-3 px-4 py-3">
+                            <span className="min-w-0 text-sm text-rose-600 dark:text-rose-300">{t("search_error")}</span>
+                            <button
+                                type="button"
+                                onClick={retrySearch}
+                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition-colors hover:border-emerald-500/50 hover:text-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:text-gray-400"
+                                title={t("retry_search")}
+                                aria-label={t("retry_search")}
+                            >
+                                <ArrowPathIcon className="h-5 w-5" aria-hidden="true" />
+                            </button>
+                        </div>
                     )}
-                    {filteredPlayers.map((player, i) => (
-                        <Link
-                            href={`/player/${player.id}`}
-                            prefetch={false}
-                            key={player.id}
-                            id={`${listboxId}-option-${i + filteredTeams.length}`}
-                            role="option"
-                            aria-selected={i + filteredTeams.length === focusedIndex}
-                            className={`p-2 px-3 flex items-center gap-2 text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800 ${i + filteredTeams.length === focusedIndex ? "bg-gray-100 dark:bg-gray-800" : ""}`}
-                            onClick={() => { setSearchTerm(""); setShowFilteredBox(false); }}
-                        >
-                            <Image src={playerImageUrl(player.id)} alt={player.name} width={24} height={24} className="rounded-full object-contain" style={{ width: "24px", height: "24px" }} />
-                            <div className="flex flex-col">
-                                <span className="text-sm">{player.name}</span>
-                                <span className="text-xs text-gray-500">{player.team}</span>
-                            </div>
-                        </Link>
-                    ))}
+
+                    {status === "success" && totalResults === 0 && (
+                        <div role="status" className="flex min-h-16 items-center gap-3 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                            <MagnifyingGlassIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                            <span>{t("search_empty")}</span>
+                        </div>
+                    )}
+
+                    {showResults && (
+                        <div id={listboxId} role="listbox">
+                            {filteredTeams.length > 0 && (
+                                <div className="px-3 pb-1 pt-2 text-xs uppercase tracking-wider text-gray-500">{t("teams")}</div>
+                            )}
+                            {filteredTeams.map((team, i) => (
+                                <Link
+                                    href={`/team/${team.id}`}
+                                    prefetch={false}
+                                    key={team.id}
+                                    id={`${listboxId}-option-${i}`}
+                                    role="option"
+                                    aria-selected={i === focusedIndex}
+                                    className={`flex items-center gap-2 px-3 py-2 text-gray-900 transition-colors hover:bg-gray-100 dark:text-white dark:hover:bg-gray-800 ${i === focusedIndex ? "bg-gray-100 dark:bg-gray-800" : ""}`}
+                                    onClick={() => {
+                                        setSearchTerm("");
+                                        setShowFilteredBox(false);
+                                        setStatus("idle");
+                                    }}
+                                >
+                                    <TeamLogo teamId={team.id} alt={team.name} size={24} className="object-contain" style={{ width: "24px", height: "24px" }} />
+                                    <span className="min-w-0 truncate text-sm">{team.name}</span>
+                                </Link>
+                            ))}
+                            {filteredPlayers.length > 0 && (
+                                <div className="px-3 pb-1 pt-2 text-xs uppercase tracking-wider text-gray-500">{t("players")}</div>
+                            )}
+                            {filteredPlayers.map((player, i) => (
+                                <Link
+                                    href={`/player/${player.id}`}
+                                    prefetch={false}
+                                    key={player.id}
+                                    id={`${listboxId}-option-${i + filteredTeams.length}`}
+                                    role="option"
+                                    aria-selected={i + filteredTeams.length === focusedIndex}
+                                    className={`flex items-center gap-2 px-3 py-2 text-gray-900 transition-colors hover:bg-gray-100 dark:text-white dark:hover:bg-gray-800 ${i + filteredTeams.length === focusedIndex ? "bg-gray-100 dark:bg-gray-800" : ""}`}
+                                    onClick={() => {
+                                        setSearchTerm("");
+                                        setShowFilteredBox(false);
+                                        setStatus("idle");
+                                    }}
+                                >
+                                    <Image src={playerImageUrl(player.id)} alt={player.name} width={24} height={24} className="rounded-full object-contain" style={{ width: "24px", height: "24px" }} />
+                                    <div className="flex min-w-0 flex-col">
+                                        <span className="truncate text-sm">{player.name}</span>
+                                        <span className="truncate text-xs text-gray-500">{player.team}</span>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

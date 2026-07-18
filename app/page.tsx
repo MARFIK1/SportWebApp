@@ -173,42 +173,42 @@ export default async function Home({ searchParams }: PageProps) {
 
     return (
         <div className="mx-auto flex w-full max-w-[1600px] flex-col px-3 py-5 sm:px-6 lg:px-8">
-            <div className="relative mb-6 overflow-hidden rounded-[2rem] border border-emerald-500/10 bg-white/90 p-5 shadow-xl shadow-slate-900/5 dark:border-emerald-400/10 dark:bg-[#0b1220] dark:shadow-black/20 sm:p-8">
+            <div className="relative mb-4 overflow-hidden rounded-[2rem] border border-emerald-500/10 bg-white/90 p-4 shadow-xl shadow-slate-900/5 dark:border-emerald-400/10 dark:bg-[#0b1220] dark:shadow-black/20 sm:mb-6 sm:p-8">
                 <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-emerald-400/20 blur-3xl" />
                 <div className="pointer-events-none absolute -bottom-28 left-10 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
 
-                <div className="relative grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
+                <div className="relative grid gap-4 sm:gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
                     <div>
                         <p className="text-xs font-bold uppercase tracking-[0.32em] text-emerald-500 dark:text-emerald-400">
                             {selectedDate}
                         </p>
-                        <h1 className="mt-3 max-w-3xl text-3xl font-black tracking-tight text-gray-950 dark:text-white sm:text-5xl">
+                        <h1 className="mt-1 max-w-3xl text-2xl font-black tracking-tight text-gray-950 dark:text-white sm:mt-3 sm:text-5xl">
                             {totalMatches} {t("matches_analyzed")}
                         </h1>
-                        <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-500 dark:text-gray-400 sm:text-base">
+                        <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500 dark:text-gray-400 sm:mt-3 sm:text-base sm:leading-6">
                             {matchSummaryText}
                         </p>
                     </div>
 
-                    <div className="grid gap-3 sm:grid-cols-3">
-                        <div className="rounded-2xl border border-gray-200 bg-white/80 p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400 dark:text-gray-500">
+                    <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                        <div className="min-w-0 rounded-2xl border border-gray-200 bg-white/80 p-2.5 dark:border-white/10 dark:bg-white/[0.04] sm:p-4">
+                            <p className="break-words text-[9px] font-semibold uppercase leading-tight tracking-[0.08em] text-gray-400 dark:text-gray-500 sm:text-[11px] sm:tracking-[0.2em]">
                                 {t("finished")}
                             </p>
-                            <p className="mt-2 text-3xl font-black text-gray-950 dark:text-white">{finishedMatches}</p>
+                            <p className="mt-1 text-xl font-black text-gray-950 dark:text-white sm:mt-2 sm:text-3xl">{finishedMatches}</p>
                         </div>
-                        <div className="rounded-2xl border border-gray-200 bg-white/80 p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400 dark:text-gray-500">
+                        <div className="min-w-0 rounded-2xl border border-gray-200 bg-white/80 p-2.5 dark:border-white/10 dark:bg-white/[0.04] sm:p-4">
+                            <p className="break-words text-[9px] font-semibold uppercase leading-tight tracking-[0.08em] text-gray-400 dark:text-gray-500 sm:text-[11px] sm:tracking-[0.2em]">
                                 {t("pending")}
                             </p>
-                            <p className="mt-2 text-3xl font-black text-gray-950 dark:text-white">{pendingMatches}</p>
+                            <p className="mt-1 text-xl font-black text-gray-950 dark:text-white sm:mt-2 sm:text-3xl">{pendingMatches}</p>
                         </div>
-                        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-300">
+                        <div className="min-w-0 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-2.5 sm:p-4">
+                            <p className="break-words text-[9px] font-semibold uppercase leading-tight tracking-[0.08em] text-emerald-600 dark:text-emerald-300 sm:text-[11px] sm:tracking-[0.2em]">
                                 {t("confidence")}
                             </p>
-                            <p className="mt-2 text-3xl font-black text-emerald-500">{averageConfidence.toFixed(0)}%</p>
-                            <p className="mt-1 text-xs font-medium text-gray-500 dark:text-gray-300">
+                            <p className="mt-1 text-xl font-black text-emerald-500 sm:mt-2 sm:text-3xl">{averageConfidence.toFixed(0)}%</p>
+                            <p className="mt-1 hidden text-xs font-medium text-gray-500 dark:text-gray-300 sm:block">
                                 {highConfidenceCount} {t("high_confidence")}
                             </p>
                         </div>

@@ -68,8 +68,14 @@ export default function LeagueSection({
     const scheduled = sortMatchesByKickoff(matches.filter((m) => m.status !== "finished"));
 
     function renderMatchList(list: PredictionMatch[]) {
+        const layoutClass = list.length === 1
+            ? "mx-auto w-full max-w-[460px] grid-cols-1"
+            : list.length === 2
+                ? "mx-auto w-full max-w-[940px] sm:grid-cols-2"
+                : "sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+
         return (
-            <div className="grid gap-4 pb-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className={`grid gap-4 pb-2 ${layoutClass}`}>
                 {list.map((match) => (
                     (() => {
                         const homeTeamId = teamIds[match.home_team] ?? null;
@@ -101,6 +107,7 @@ export default function LeagueSection({
         <LeagueSectionToggle
             leagueName={leagueName}
             slug={slug}
+            standingsSeason={slug === "fifa-world-cup" ? selectedDate.slice(0, 4) : undefined}
             matchCount={matches.length}
             statusText={finished.length > 0 ? `${finished.length} ${t("finished")}` : `${scheduled.length} ${t("scheduled")}`}
             accuracy={accuracy}

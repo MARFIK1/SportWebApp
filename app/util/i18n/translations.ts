@@ -10,6 +10,10 @@ const translations: Record<Locale, Record<string, string>> = {
         next_dates: "Next dates",
         teams: "Teams",
         players: "Players",
+        search_loading: "Searching...",
+        search_empty: "No matching teams or players",
+        search_error: "Search is temporarily unavailable",
+        retry_search: "Try search again",
 
         // Common
         not_found: "Not found",
@@ -56,9 +60,14 @@ const translations: Record<Locale, Record<string, string>> = {
 
         // Predictions
         total_matches_today: "Total Matches Today",
+        matches_for_date: "Matches for date",
         consensus_accuracy: "Consensus Accuracy",
         best_model_day: "Best Model (Day)",
         model_performance: "Model Performance",
+        model_snapshot: "Model snapshot",
+        model_snapshot_consistent: "Consistent",
+        model_snapshot_mixed: "Mixed artifacts",
+        model_snapshot_legacy: "Legacy report",
         all_time: "all time",
         all_leagues: "All Leagues",
         ml_comparison: "ML model comparison",
@@ -348,6 +357,10 @@ const translations: Record<Locale, Record<string, string>> = {
         next_dates: "Następne daty",
         teams: "Drużyny",
         players: "Gracze",
+        search_loading: "Wyszukiwanie...",
+        search_empty: "Brak pasujących drużyn lub graczy",
+        search_error: "Wyszukiwanie jest chwilowo niedostępne",
+        retry_search: "Spróbuj wyszukać ponownie",
 
         // Common
         not_found: "Nie znaleziono",
@@ -394,9 +407,14 @@ const translations: Record<Locale, Record<string, string>> = {
 
         // Predictions
         total_matches_today: "Mecze dzisiaj",
+        matches_for_date: "Mecze dla daty",
         consensus_accuracy: "Skuteczność konsensusu",
         best_model_day: "Najlepszy model (dzień)",
         model_performance: "Wyniki modeli",
+        model_snapshot: "Migawka modeli",
+        model_snapshot_consistent: "Spójna",
+        model_snapshot_mixed: "Pomieszane artefakty",
+        model_snapshot_legacy: "Raport legacy",
         all_time: "całkowite",
         all_leagues: "Wszystkie ligi",
         ml_comparison: "Porównanie modeli ML",
