@@ -6,7 +6,7 @@ import { buildMatchLookupMaps, findMatchInCompetitions } from "./util/data/dataS
 import DatePicker from "./components/home/DatePicker";
 import HomeLeagueList from "./components/home/HomeLeagueList";
 import { getServerT } from "./util/i18n/getLocale";
-import { normalizeReportDate, todayYmd } from "./util/data/dateUtils";
+import { expandYmdDateRange, normalizeReportDate, todayYmd } from "./util/data/dateUtils";
 import { getMatchConsensusConfidence, isHighConfidenceMatch } from "./util/predictions/confidence";
 import type { PredictionMatch } from "@/types/predictions";
 import { formatScorePair, resolveSofascoreMatchResult } from "./util/predictions/matchResult";
@@ -46,11 +46,6 @@ function isInReportDateWindow(date: string, todayIso: string): boolean {
     return offset !== null && offset >= -REPORT_DAYS_PAST;
 }
 
-function isInDailyDateWindow(date: string, todayIso: string): boolean {
-    const offset = getDayOffset(date, todayIso);
-    return offset !== null && Math.abs(offset) <= DAILY_DATE_WINDOW_DAYS;
-}
-
 function addDailyDateWindow(expandedDates: Set<string>, anchor: string) {
     const baseTime = parseDateUtc(anchor);
     if (!Number.isFinite(baseTime)) return;
@@ -60,14 +55,10 @@ function addDailyDateWindow(expandedDates: Set<string>, anchor: string) {
     }
 }
 
-function selectReportDate(dates: string[], requestedDate: string | null, todayIso: string): string {
-    if (requestedDate && (dates.includes(requestedDate) || isInDailyDateWindow(requestedDate, todayIso))) {
-        return requestedDate;
-    }
+function selectCalendarDate(dates: string[], requestedDate: string | null, todayIso: string): string {
+    if (requestedDate && dates.includes(requestedDate)) return requestedDate;
     if (dates.includes(todayIso)) return todayIso;
-
-    const visibleReportDates = dates.filter((date) => isInReportDateWindow(date, todayIso));
-    return visibleReportDates[visibleReportDates.length - 1] || dates[dates.length - 1] || todayIso || "";
+    return dates[dates.length - 1] || todayIso || "";
 }
 
 function getDatePickerDates(dates: string[], todayIso: string): string[] {
@@ -75,7 +66,7 @@ function getDatePickerDates(dates: string[], todayIso: string): string[] {
     const expandedDates = new Set(reportDates);
     addDailyDateWindow(expandedDates, todayIso);
 
-    return Array.from(expandedDates).sort((a, b) => a.localeCompare(b));
+    return expandYmdDateRange(Array.from(expandedDates));
 }
 
 function hasConfirmedTeams(match: PredictionMatch): boolean {
@@ -102,11 +93,11 @@ export default async function Home({ searchParams }: PageProps) {
     const dates = listReportDates();
     const requestedDate = normalizeReportDate(resolvedSearchParams.date);
     const todayIso = todayYmd();
-    const selectedDate = selectReportDate(dates, requestedDate, todayIso);
+    const datePickerDates = getDatePickerDates(dates, todayIso);
+    const selectedDate = selectCalendarDate(datePickerDates, requestedDate, todayIso);
     if (requestedDate && requestedDate !== selectedDate) redirect(`/?date=${selectedDate}`);
 
     const report = selectedDate && dates.includes(selectedDate) ? loadPredictionReport(selectedDate) : null;
-    const datePickerDates = getDatePickerDates(dates, todayIso);
 
     const t = await getServerT();
 

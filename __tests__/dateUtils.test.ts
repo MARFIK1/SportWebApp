@@ -1,4 +1,4 @@
-import { isValidYmdDate, normalizeReportDate, todayYmd } from "@/app/util/data/dateUtils";
+import { expandYmdDateRange, isValidYmdDate, normalizeReportDate, todayYmd } from "@/app/util/data/dateUtils";
 
 describe("dateUtils", () => {
     it("accepts real YYYY-MM-DD dates", () => {
@@ -15,5 +15,13 @@ describe("dateUtils", () => {
 
     it("formats today in the report timezone instead of UTC", () => {
         expect(todayYmd(new Date("2026-04-30T22:30:00Z"))).toBe("2026-05-01");
+    });
+
+    it("fills calendar days missing between available reports", () => {
+        expect(expandYmdDateRange(["2026-07-17", "2026-07-15", "2026-07-15"])).toEqual([
+            "2026-07-15",
+            "2026-07-16",
+            "2026-07-17",
+        ]);
     });
 });
