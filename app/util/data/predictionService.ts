@@ -130,6 +130,13 @@ export interface ModelDiagnosticStats {
 
 export interface ModelDiagnosticsArtifact {
     generated_at: string;
+    model_release?: {
+        schema_version: number;
+        reports: Record<"consistent" | "mixed" | "legacy", number>;
+        variants: Record<string, { reports: number; artifact_ids: string[] }>;
+        homogeneous: boolean;
+        warning: string | null;
+    };
     date_range: {
         first: string | null;
         last: string | null;
@@ -471,7 +478,12 @@ function predictionReportMtime(dateDir: string): number {
     let latest = 0;
     for (const fileName of ["predictions_finished.json", "predictions_unfinished.json"]) {
         try {
-            const stat = fs.statSync(path.join(dateDir, fileName));
+            const stat = fs.statSync(
+                /* turbopackIgnore: true */ path.join(
+                    /* turbopackIgnore: true */ dateDir,
+                    fileName,
+                ),
+            );
             latest = Math.max(latest, stat.mtimeMs);
         } catch {
             // Missing report files are expected for dates without predictions.

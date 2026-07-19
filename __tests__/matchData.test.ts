@@ -1,4 +1,5 @@
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "@/app/match/[id]/matchData";
+import { normalizePredictionMatchResult, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
 import type { AnalysisMatch, ConsensusPrediction, ModelPrediction, PredictionMatch, PredictionReport } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 
@@ -272,5 +273,25 @@ describe("match page data contracts", () => {
         const repaired = repairMatchAnalysis({} as AnalysisMatch, sofascoreMatch(), [], []);
 
         expect(repaired).toBeNull();
+    });
+});
+describe("penalty shootout prediction contract", () => {
+    it("uses the draw for 1X2 correctness while preserving the shootout winner", () => {
+        const match = predictionMatch({
+            status: "finished",
+            actual_result: "HOME",
+            actual_score: "5-4",
+            actual_penalty_score: "4-3",
+            decided_by_penalties: true,
+        });
+
+        const state = resolvePredictionMatchResult(match);
+        const normalized = normalizePredictionMatchResult(match);
+
+        expect(state.predictionResult).toBe("DRAW");
+        expect(state.actualResult).toBe("HOME");
+        expect(normalized.actual_result).toBe("DRAW");
+        expect(normalized.predictions.LightGBM.correct).toBe(false);
+        expect(normalized.predictions.consensus.correct).toBe(false);
     });
 });

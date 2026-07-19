@@ -447,7 +447,7 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                     </defs>
                     <circle cx={CENTER} cy={CENTER} r={TEAM_RADIUS - 6} fill="url(#wc-core)" />
                     {guideRadii.map((r) => (
-                        <circle key={r} cx={CENTER} cy={CENTER} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={1} />
+                        <circle key={r} cx={CENTER} cy={CENTER} r={r} fill="none" strokeWidth={1} className="stroke-slate-300/70 dark:stroke-white/5" />
                     ))}
                     {segments
                         .filter((seg) => !seg.onPath)
@@ -458,8 +458,8 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                                 y1={seg.y1}
                                 x2={seg.x2}
                                 y2={seg.y2}
-                                stroke="rgba(255,255,255,0.12)"
                                 strokeWidth={2}
+                                className="stroke-slate-400/60 dark:stroke-white/[0.12]"
                             />
                         ))}
                     {segments
@@ -486,9 +486,11 @@ export default function WorldCupBracket({ format, matches, slotByEventId, predic
                                 y1={position.y}
                                 x2={thirdPlacePosition.x}
                                 y2={thirdPlacePosition.y}
-                                stroke={currentNumber === format.thirdPlaceSlot ? "rgba(52,211,153,0.9)" : "rgba(251,191,36,0.4)"}
                                 strokeDasharray="5 6"
                                 strokeWidth={currentNumber === format.thirdPlaceSlot ? 3.5 : 2}
+                                className={currentNumber === format.thirdPlaceSlot
+                                    ? "stroke-emerald-500 dark:stroke-emerald-400"
+                                    : "stroke-amber-500/70 dark:stroke-amber-400/40"}
                             />
                         );
                     })}

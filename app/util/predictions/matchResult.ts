@@ -20,6 +20,7 @@ export interface ResolvedMatchResult {
     penaltyScore: ScorePair | null;
     wentToExtraTime: boolean;
     decidedByPenalties: boolean;
+    predictionResult: MatchResult | null;
     actualResult: MatchResult | null;
     isFinished: boolean;
 }
@@ -101,10 +102,13 @@ export function resolvePredictionMatchResult(match: PredictionMatch): ResolvedMa
         ?? subtractScorePair(regularScore, extraTimeScore);
     const wentToExtraTime = extraTimeScore !== null;
     const decidedByPenalties = Boolean(match.decided_by_penalties || penaltyWinner(penaltyScore));
+    const scoreResult = resultFromScorePair(regularScore);
+    const predictionResult = decidedByPenalties
+        ? scoreResult ?? match.actual_result
+        : match.actual_result ?? scoreResult;
     const actualResult = (decidedByPenalties ? penaltyWinner(penaltyScore) : null)
-        ?? match.actual_result
-        ?? resultFromScorePair(regularScore);
-    const isFinished = match.status === "finished" && actualResult !== null;
+        ?? predictionResult;
+    const isFinished = match.status === "finished" && predictionResult !== null;
 
     return {
         displayStatus: match.status,
@@ -114,6 +118,7 @@ export function resolvePredictionMatchResult(match: PredictionMatch): ResolvedMa
         penaltyScore,
         wentToExtraTime,
         decidedByPenalties,
+        predictionResult,
         actualResult,
         isFinished,
     };
@@ -138,10 +143,14 @@ export function resolveSofascoreMatchResult(
         predictionMatch?.decided_by_penalties ||
         penaltyWinner(penaltyScore),
     );
+    const scoreResult = resultFromScorePair(regularScore);
+    const predictionResult = decidedByPenalties
+        ? scoreResult ?? predictionState?.predictionResult ?? null
+        : predictionState?.predictionResult ?? scoreResult;
     const actualResult = (decidedByPenalties ? penaltyWinner(penaltyScore) : null)
         ?? predictionState?.actualResult
-        ?? resultFromScorePair(regularScore);
-    const isFinished = displayStatus === "finished" && actualResult !== null;
+        ?? predictionResult;
+    const isFinished = displayStatus === "finished" && predictionResult !== null;
 
     return {
         displayStatus,
@@ -151,6 +160,7 @@ export function resolveSofascoreMatchResult(
         penaltyScore,
         wentToExtraTime,
         decidedByPenalties,
+        predictionResult,
         actualResult,
         isFinished,
     };
@@ -180,8 +190,8 @@ function resolvedCorrectness(
     prediction: MatchResult | null | undefined,
     state: ResolvedMatchResult,
 ): boolean | null {
-    if (!state.isFinished || !state.actualResult || !prediction) return null;
-    return prediction === state.actualResult;
+    if (!state.isFinished || !state.predictionResult || !prediction) return null;
+    return prediction === state.predictionResult;
 }
 
 function normalizeModelPrediction(prediction: ModelPrediction, state: ResolvedMatchResult): ModelPrediction {
@@ -237,7 +247,7 @@ export function normalizePredictionMatchResult(match: PredictionMatch): Predicti
 
     return {
         ...match,
-        actual_result: state.actualResult,
+        actual_result: state.predictionResult,
         actual_score: state.regularScore ? formatScorePair(state.regularScore) : match.actual_score,
         actual_penalty_score: state.penaltyScore ? formatScorePair(state.penaltyScore) : match.actual_penalty_score ?? null,
         actual_extra_time_score: state.extraTimeScore ? formatScorePair(state.extraTimeScore) : match.actual_extra_time_score ?? null,

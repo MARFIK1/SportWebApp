@@ -10,6 +10,11 @@ import {
     candidatePairForWinnerPlaceholder,
     type WorldCupSlotCandidatePair,
 } from "@/app/util/predictions/worldCupSlotResolver";
+import {
+    buildGroupStageEventIds,
+    detectTournamentGroups,
+    type TournamentGroup,
+} from "@/app/util/tournament/tournamentGroups";
 import type { SofascoreMatch } from "@/types/sofascore";
 import type { PredictionMatch } from "@/types/predictions";
 import WorldCupBracket from "./WorldCupBracket";
@@ -25,12 +30,6 @@ interface TournamentContextProps {
     t: (key: string) => string;
 }
 
-interface TournamentGroup {
-    letter: string;
-    teamIds: number[];
-    teamNames: Map<number, string>;
-    matches: SofascoreMatch[];
-}
 
 type CandidateOutcome = "winner" | "loser";
 
@@ -106,8 +105,6 @@ interface KnockoutSectionProps {
     rounds: KnockoutRoundWithMatches[];
     t: (key: string) => string;
 }
-const GROUP_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
 const PLACEHOLDER_TEAM_RE = /^(?:[12][A-Z]|[GH][12]|[WL]\d+|3[A-Z](?:\/3[A-Z])+)$/;
 
 function validTeamId(teamId: number): boolean {
@@ -157,80 +154,6 @@ function resolveDisplayMatch(
         home_team_id: replaceHome ? (teamIds.get(homeTeam) ?? match.home_team_id) : match.home_team_id,
         away_team_id: replaceAway ? (teamIds.get(awayTeam) ?? match.away_team_id) : match.away_team_id,
     };
-}
-
-function isGroupStageMatch(match: SofascoreMatch, groupStageEventIds: Set<number>): boolean {
-    return groupStageEventIds.has(match.event_id) && validTeamId(match.home_team_id) && validTeamId(match.away_team_id);
-}
-
-function sortMatches(a: SofascoreMatch, b: SofascoreMatch): number {
-    const dateCompare = String(a.date ?? "").localeCompare(String(b.date ?? ""));
-    if (dateCompare !== 0) return dateCompare;
-    return a.event_id - b.event_id;
-}
-
-function buildGroupStageEventIds(matches: SofascoreMatch[], format: TournamentFormat): Set<number> {
-    return new Set([...matches].sort(sortMatches).slice(0, format.groupStageMatchCount).map((match) => match.event_id));
-}
-
-function detectTournamentGroups(matches: SofascoreMatch[], groupStageEventIds: Set<number>): TournamentGroup[] {
-    const groupMatches = matches.filter((match) => isGroupStageMatch(match, groupStageEventIds));
-    if (groupMatches.length === 0) return [];
-
-    const parent = new Map<number, number>();
-    const teamNames = new Map<number, string>();
-
-    function find(teamId: number): number {
-        const currentParent = parent.get(teamId);
-        if (currentParent == null) {
-            parent.set(teamId, teamId);
-            return teamId;
-        }
-        if (currentParent === teamId) return teamId;
-        const root = find(currentParent);
-        parent.set(teamId, root);
-        return root;
-    }
-
-    function union(a: number, b: number) {
-        const rootA = find(a);
-        const rootB = find(b);
-        if (rootA !== rootB) parent.set(rootB, rootA);
-    }
-
-    for (const match of groupMatches) {
-        parent.set(match.home_team_id, parent.get(match.home_team_id) ?? match.home_team_id);
-        parent.set(match.away_team_id, parent.get(match.away_team_id) ?? match.away_team_id);
-        teamNames.set(match.home_team_id, match.home_team);
-        teamNames.set(match.away_team_id, match.away_team);
-        union(match.home_team_id, match.away_team_id);
-    }
-
-    const teamGroups = new Map<number, Set<number>>();
-    for (const teamId of parent.keys()) {
-        const root = find(teamId);
-        const group = teamGroups.get(root) ?? new Set<number>();
-        group.add(teamId);
-        teamGroups.set(root, group);
-    }
-
-    return Array.from(teamGroups.values())
-        .map((teamSet) => {
-            const ids = Array.from(teamSet);
-            const groupSet = new Set(ids);
-            const groupMatchList = groupMatches
-                .filter((match) => groupSet.has(match.home_team_id) && groupSet.has(match.away_team_id))
-                .sort(sortMatches);
-            return { ids, matches: groupMatchList };
-        })
-        .filter((group) => group.ids.length >= 3 && group.matches.length > 0)
-        .sort((a, b) => sortMatches(a.matches[0], b.matches[0]))
-        .map((group, index) => ({
-            letter: GROUP_LETTERS[index] ?? String(index + 1),
-            teamIds: group.ids.sort((a, b) => (teamNames.get(a) ?? "").localeCompare(teamNames.get(b) ?? "")),
-            teamNames,
-            matches: group.matches,
-        }));
 }
 
 function resolveCurrentGroup(matches: SofascoreMatch[], groupStageEventIds: Set<number>, homeTeamId: number, awayTeamId: number): TournamentGroup | null {
