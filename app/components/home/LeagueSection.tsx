@@ -68,14 +68,8 @@ export default function LeagueSection({
     const scheduled = sortMatchesByKickoff(matches.filter((m) => m.status !== "finished"));
 
     function renderMatchList(list: PredictionMatch[]) {
-        const layoutClass = list.length === 1
-            ? "mx-auto w-full max-w-[460px] grid-cols-1"
-            : list.length === 2
-                ? "mx-auto w-full max-w-[940px] sm:grid-cols-2"
-                : "sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
-
         return (
-            <div className={`grid gap-4 pb-2 ${layoutClass}`}>
+            <div className="grid gap-4 pb-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {list.map((match) => (
                     (() => {
                         const homeTeamId = teamIds[match.home_team] ?? null;
