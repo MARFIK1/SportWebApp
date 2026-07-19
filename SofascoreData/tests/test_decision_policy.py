@@ -142,6 +142,20 @@ class DecisionPolicyTests(unittest.TestCase):
             model_prediction["probabilities"],
         )
 
+    def test_predictor_rejects_artifact_checksum_mismatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact = Path(temporary) / "models.pkl"
+            predictor = UniversalPredictor(temporary)
+            predictor.models = {"result": {}}
+            predictor.trained = True
+            predictor.save_models(str(artifact))
+            with open(artifact, "ab") as target:
+                target.write(b"corrupted")
+
+            loaded = UniversalPredictor(temporary)
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                loaded.load_models(str(artifact))
+
     def test_predictor_persists_consensus_decision_policy(self):
         policy = {
             "class_labels": [0, 1, 2],

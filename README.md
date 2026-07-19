@@ -54,7 +54,7 @@ Current `without_odds` summary from `SofascoreData/data/models/comparison_summar
 | Ensemble | 46.3% | 46.7% | 43.5% | 1726 | 0.634 |
 | LSTM | 47.3% | 45.7% | 42.6% | 1726 | 0.646 |
 
-`npm run diagnostics:models` also produces `SofascoreData/data/models/model_diagnostics.json`, currently based on 61 reports and 1875 finished matches from `2026-03-01` to `2026-05-14`.
+`npm run diagnostics:models` produces the compatibility `without_odds` report. The current local sample contains 63 reports and 1875 finished matches from `2026-03-01` to `2026-05-14`; the `with_odds` variant is available for 788 of them (42% coverage), so variant results must be compared on an explicitly paired sample.
 
 ## Prediction Outputs
 
@@ -70,6 +70,8 @@ The app also predicts secondary markets:
 - over 2.5 goals
 - corners 8.5+
 - cards 3.5+
+
+Every generated report includes a `prediction_quality` summary for each model variant. It records selected-feature coverage, defaulted or invalid inputs, and runtime feature-drift warnings. Feature drift becomes available after training and promoting an artifact that contains Backend v2.1 feature profiles; older artifacts remain compatible and report drift status as unavailable.
 
 ## Data Pipeline
 
@@ -106,7 +108,16 @@ python predict_today.py 2026-05-15 --update
 python predict_today.py 2026-05-15 --scrape
 ```
 
-`train_models.py` writes Backend v2 experiments under `data/models/experiments/` and never overwrites production artifacts. With `--save-models`, candidate model files are saved inside the experiment directory. Run the dataset audit after feature regeneration; training is blocked when cached feature files contain legacy or mixed builder versions. Use `--variant both --targets all --save-models` only for a deliberate full training run. The notebooks remain available for exploratory analysis and charts.
+`train_models.py` writes Backend v2.1 experiments under `data/models/experiments/` and never overwrites production artifacts. By default, every candidate is evaluated against the active production artifact on the same temporal holdout. A missing active artifact is a hard failure; `--skip-production-benchmark` exists only for an initial bootstrap. With `--save-models`, candidate files remain inside the experiment directory. Run the dataset audit after feature regeneration; training is blocked when cached feature files contain legacy or mixed builder versions. Use `--variant both --targets all --save-models` only for a deliberate full training run. The notebooks remain available for exploratory analysis and charts.
+
+Promote each prediction variant separately after reviewing its acceptance report:
+
+```bash
+python promote_models.py --variant without_odds --baseline data/models/universal_predictor.pkl --candidate data/models/experiments/<run>/without_odds/universal_predictor.pkl --output data/models/universal_predictor.pkl
+python promote_models.py --variant with_odds --baseline data/models/universal_predictor_with_odds.pkl --candidate data/models/experiments/<run>/with_odds/universal_predictor_with_odds.pkl --output data/models/universal_predictor_with_odds.pkl
+```
+
+Promotion stores an immutable artifact under `data/models/releases/`, atomically switches `active_<variant>.json`, and refreshes the legacy fixed filename for compatibility. Inference resolves the active pointer first. Prediction reports carry the artifact contract used for each variant; prebuild rejects mixed reports and unfinished reports produced by an older active model. Run `npm run quality` before publishing code changes.
 
 ## Model Diagnostics
 
@@ -114,12 +125,18 @@ Run:
 
 ```bash
 npm run diagnostics:models
+npm run diagnostics:models:with-odds
+npm run diagnostics:models:all
 ```
 
 This generates:
 
-- `SofascoreData/data/models/model_diagnostics.json`
+- `SofascoreData/data/models/model_diagnostics.json` for `without_odds`
+- `SofascoreData/data/models/model_diagnostics_with_odds.json` for `with_odds`
 - CSV files under `SofascoreData/data/models/diagnostics/`
+- `with_odds` CSV files under `SofascoreData/data/models/diagnostics/with_odds/`
+
+Each report records eligible matches, included matches, missing-variant matches, and variant coverage. Compare variants only on a paired common sample when drawing model-quality conclusions.
 
 Diagnostics include:
 

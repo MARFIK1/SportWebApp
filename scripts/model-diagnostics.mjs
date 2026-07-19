@@ -1,5 +1,5 @@
 // Builds live model diagnostics from prediction reports without retraining.
-// Run: npm run diagnostics:models
+// Run both variants: npm run diagnostics:models:all
 
 import fs from "fs";
 import path from "path";
@@ -7,15 +7,42 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
+const SUPPORTED_VARIANTS = new Set(["without_odds", "with_odds"]);
+
+function argumentValue(name) {
+    const inlinePrefix = `${name}=`;
+    const inline = process.argv.find((argument) => argument.startsWith(inlinePrefix));
+    if (inline) return inline.slice(inlinePrefix.length);
+
+    const index = process.argv.indexOf(name);
+    return index >= 0 ? process.argv[index + 1] : null;
+}
+
+const PREDICTION_VARIANT = (
+    process.env.MODEL_DIAGNOSTICS_VARIANT
+    || argumentValue("--variant")
+    || "without_odds"
+);
+if (!SUPPORTED_VARIANTS.has(PREDICTION_VARIANT)) {
+    throw new Error(
+        `unsupported prediction variant "${PREDICTION_VARIANT}"; expected without_odds or with_odds`,
+    );
+}
+
 const REPORTS_DIR = process.env.REPORTS_DIR
     ? path.resolve(ROOT, process.env.REPORTS_DIR)
     : path.join(ROOT, "SofascoreData", "reports");
+const DEFAULT_OUTPUT_NAME = PREDICTION_VARIANT === "with_odds"
+    ? "model_diagnostics_with_odds.json"
+    : "model_diagnostics.json";
 const OUTPUT_PATH = process.env.MODEL_DIAGNOSTICS_OUT
     ? path.resolve(ROOT, process.env.MODEL_DIAGNOSTICS_OUT)
-    : path.join(ROOT, "SofascoreData", "data", "models", "model_diagnostics.json");
+    : path.join(ROOT, "SofascoreData", "data", "models", DEFAULT_OUTPUT_NAME);
 const OUTPUT_DIR = process.env.MODEL_DIAGNOSTICS_DIR
     ? path.resolve(ROOT, process.env.MODEL_DIAGNOSTICS_DIR)
-    : path.join(path.dirname(OUTPUT_PATH), "diagnostics");
+    : PREDICTION_VARIANT === "with_odds"
+        ? path.join(path.dirname(OUTPUT_PATH), "diagnostics", "with_odds")
+        : path.join(path.dirname(OUTPUT_PATH), "diagnostics");
 
 const RESULTS = ["HOME", "DRAW", "AWAY"];
 const BUCKETS = [
@@ -147,11 +174,6 @@ function hasPenaltyShootoutScore(score) {
     return Boolean(score && (score.home !== 0 || score.away !== 0));
 }
 
-function penaltyWinner(score) {
-    if (!hasPenaltyShootoutScore(score)) return null;
-    const result = resultFromScorePair(score);
-    return result === "DRAW" ? null : result;
-}
 
 function deriveRegularScore(score, penaltyScore) {
     if (!score) return null;
@@ -176,11 +198,8 @@ function regularScoreForMatch(match) {
 }
 
 function actualResultForMatch(match) {
-    const penaltyScore = parseScorePair(match.actual_penalty_score);
-    const decidedByPenalties = Boolean(match.decided_by_penalties || penaltyWinner(penaltyScore));
-    return (decidedByPenalties ? penaltyWinner(penaltyScore) : null)
-        ?? match.actual_result
-        ?? resultFromScorePair(regularScoreForMatch(match));
+    return resultFromScorePair(regularScoreForMatch(match))
+        ?? match.actual_result;
 }
 
 function predictWithDrawThreshold(probabilities, threshold, maxGapToBest) {
@@ -502,27 +521,72 @@ function finalizeDrawWatchMatches(records) {
         );
 }
 
-function collectDiagnostics() {
+function predictionBundleForMatch(match, predictionVariant) {
+    const explicit = match.prediction_variants?.[predictionVariant];
+    if (explicit?.predictions || explicit?.consensus) return explicit;
+
+    const topLevel = {
+        predictions: match.predictions,
+        consensus: match.consensus,
+    };
+    if (!topLevel.predictions && !topLevel.consensus) return null;
+
+    if (match.default_prediction_variant === predictionVariant) return topLevel;
+    if (
+        predictionVariant === "without_odds"
+        && !match.default_prediction_variant
+        && !match.prediction_variants
+    ) {
+        return topLevel;
+    }
+    return null;
+}
+
+function collectDiagnostics(predictionVariant = PREDICTION_VARIANT) {
     const reports = listReports();
     const models = {};
+    let eligibleFinishedMatches = 0;
     let finishedMatches = 0;
     let firstDate = null;
     let lastDate = null;
+    const releaseReports = { consistent: 0, mixed: 0, legacy: 0 };
+    const releaseVariants = {};
 
     for (const { date, filePath } of reports) {
         const report = readJson(filePath);
         if (!report?.matches?.length) continue;
 
+        const release = report.model_release;
+        const releaseStatus = ["consistent", "mixed", "legacy"].includes(release?.status)
+            ? release.status
+            : "legacy";
+        releaseReports[releaseStatus]++;
+        for (const [variantName, state] of Object.entries(release?.variants || {})) {
+            const variant = releaseVariants[variantName] ||= {
+                reports: 0,
+                artifactIds: new Set(),
+            };
+            variant.reports++;
+            for (const artifactId of state?.artifact_ids || []) {
+                if (artifactId) variant.artifactIds.add(artifactId);
+            }
+        }
+
         for (const match of report.matches) {
             if (match.status !== "finished" || !RESULTS.includes(actualResultForMatch(match))) continue;
+            eligibleFinishedMatches++;
+
+            const bundle = predictionBundleForMatch(match, predictionVariant);
+            if (!bundle) continue;
+            const predictions = {
+                ...(bundle.predictions ?? {}),
+                ...(bundle.consensus ? { consensus: bundle.consensus } : {}),
+            };
+            if (Object.keys(predictions).length === 0) continue;
+
             finishedMatches++;
             firstDate ??= date;
             lastDate = date;
-
-            const predictions = {
-                ...(match.predictions ?? {}),
-                ...(match.consensus ? { consensus: match.consensus } : {}),
-            };
 
             for (const [model, prediction] of Object.entries(predictions)) {
                 if (!prediction || model === "undefined") continue;
@@ -538,15 +602,46 @@ function collectDiagnostics() {
             .sort((a, b) => b[1].accuracy_pct - a[1].accuracy_pct || a[0].localeCompare(b[0]))
     );
 
+    const modelRelease = {
+        schema_version: 1,
+        reports: releaseReports,
+        variants: Object.fromEntries(
+            Object.entries(releaseVariants).map(([variantName, state]) => [
+                variantName,
+                {
+                    reports: state.reports,
+                    artifact_ids: Array.from(state.artifactIds).sort(),
+                },
+            ]),
+        ),
+    };
+    modelRelease.homogeneous = (
+        releaseReports.legacy === 0 &&
+        releaseReports.mixed === 0 &&
+        Object.values(modelRelease.variants).every((state) => state.artifact_ids.length <= 1)
+    );
+    modelRelease.warning = modelRelease.homogeneous
+        ? null
+        : releaseReports.legacy > 0
+            ? "Diagnostics include legacy reports without a verifiable model artifact ID."
+            : "Diagnostics combine reports generated by multiple model artifacts.";
+
     return {
         generated_at: new Date().toISOString(),
         source_reports: REPORTS_DIR,
+        prediction_variant: predictionVariant,
+        model_release: modelRelease,
         date_range: {
             first: firstDate,
             last: lastDate,
         },
         reports_read: reports.length,
+        eligible_finished_matches: eligibleFinishedMatches,
         finished_matches: finishedMatches,
+        missing_variant_matches: eligibleFinishedMatches - finishedMatches,
+        variant_coverage_pct: eligibleFinishedMatches > 0
+            ? round1((finishedMatches / eligibleFinishedMatches) * 100)
+            : null,
         models: finalizedModels,
     };
 }
@@ -934,8 +1029,12 @@ function printSummary(diagnostics, tables, csvDir) {
         accuracy: row.accuracy_pct,
     }));
 
+    console.log(`prediction variant: ${diagnostics.prediction_variant}`);
     console.log(`reports: ${diagnostics.reports_read}`);
-    console.log(`finished matches: ${diagnostics.finished_matches}`);
+    console.log(
+        `finished matches with variant: ${diagnostics.finished_matches}/${diagnostics.eligible_finished_matches} `
+        + `(${diagnostics.variant_coverage_pct ?? "-"}%)`,
+    );
     console.log(`date range: ${diagnostics.date_range.first ?? "-"} .. ${diagnostics.date_range.last ?? "-"}`);
     console.log("");
     console.log("1) overall live diagnostics:");

@@ -5,9 +5,12 @@ Universal Match Predictor.
 import json
 import os
 import hashlib
+import platform
+import subprocess
+import sys
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 
@@ -46,6 +49,13 @@ from sofascore.decision_policy import (
     weighted_average_probabilities,
 )
 from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
+from sofascore.model_release import (
+    MODEL_ARTIFACT_SCHEMA_VERSION,
+    artifact_contract_from_manifest,
+    atomic_write_json,
+    file_sha256,
+    finalize_artifact_manifest,
+)
 from sofascore.temporal_validation import build_temporal_holdout
 from sofascore.training_report import METRIC_CONTRACT
 import optuna
@@ -139,6 +149,150 @@ def _sort_training_rows_by_date(X, y, dates=None, sample_weights=None):
         sorted_weights = pd.Series(sample_weights, index=X.index).loc[sort_idx].values
 
     return X_sorted, y_sorted, sorted_weights, sorted_dates
+
+
+def _build_calibration_partition(y_train, dates=None, num_classes=2, random_state=42):
+    all_index = list(y_train.index)
+    min_model_rows = max(200, num_classes * 50)
+    min_calibration_rows = max(50, num_classes * 10)
+    desired_cal_size = max(200, int(len(y_train) * 0.15))
+    max_cal_size = max(0, len(y_train) - min_model_rows)
+    cal_size = min(desired_cal_size, max_cal_size)
+
+    if cal_size < min_calibration_rows:
+        return all_index, [], None, "not enough rows"
+
+    calibration_cutoff = None
+    if dates is not None:
+        try:
+            calibration_split = build_temporal_holdout(
+                dates.loc[y_train.index],
+                holdout_fraction=cal_size / len(y_train),
+                min_train_rows=min_model_rows,
+                min_holdout_rows=min_calibration_rows,
+            )
+        except ValueError as exc:
+            return all_index, [], None, str(exc)
+        fit_index = calibration_split.train_index
+        calibration_index = calibration_split.holdout_index
+        calibration_cutoff = calibration_split.cutoff
+    else:
+        rng = np.random.RandomState(random_state)
+        calibration_positions = rng.permutation(len(y_train))[:cal_size]
+        calibration_index = list(y_train.iloc[calibration_positions].index)
+        calibration_index_set = set(calibration_index)
+        fit_index = [index for index in all_index if index not in calibration_index_set]
+
+    expected_classes = y_train.nunique()
+    if (
+        y_train.loc[fit_index].nunique() != expected_classes
+        or y_train.loc[calibration_index].nunique() != expected_classes
+    ):
+        return all_index, [], None, "not all classes exist on both sides"
+
+    return fit_index, calibration_index, calibration_cutoff, None
+
+
+def _fit_preprocessing_scaler(X_train, fit_index):
+    scaler = StandardScaler()
+    scaler.fit(X_train.loc[fit_index])
+    return scaler
+
+
+def _build_feature_profile(X_train: pd.DataFrame) -> Dict[str, Dict]:
+    profile = {}
+    for column in X_train.columns:
+        values = pd.to_numeric(X_train[column], errors='coerce')
+        values = values.replace([np.inf, -np.inf], np.nan).dropna()
+        if values.empty:
+            continue
+        profile[column] = {
+            'count': int(len(values)),
+            'mean': round(float(values.mean()), 8),
+            'std': round(float(values.std(ddof=0)), 8),
+            'p01': round(float(values.quantile(0.01)), 8),
+            'p99': round(float(values.quantile(0.99)), 8),
+        }
+    return profile
+
+
+def _prepare_prediction_frame(
+    features: Dict,
+    feature_columns: List[str],
+    feature_profile: Optional[Dict[str, Dict]] = None,
+    drift_z_threshold: float = 6.0,
+):
+    values = {}
+    missing_features = []
+    invalid_features = []
+    drifted_features = []
+    profile = feature_profile or {}
+
+    for column in feature_columns:
+        if column not in features or features[column] is None:
+            missing_features.append(column)
+            values[column] = 0.0
+            continue
+
+        try:
+            value = float(features[column])
+        except (TypeError, ValueError, OverflowError):
+            invalid_features.append(column)
+            values[column] = 0.0
+            continue
+
+        if not np.isfinite(value):
+            invalid_features.append(column)
+            values[column] = 0.0
+            continue
+        values[column] = value
+
+        stats = profile.get(column)
+        if not isinstance(stats, dict):
+            continue
+        try:
+            mean = float(stats['mean'])
+            std = float(stats['std'])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if not np.isfinite(mean) or not np.isfinite(std):
+            continue
+        if std > 1e-12:
+            z_score = abs(value - mean) / std
+            if z_score > drift_z_threshold:
+                drifted_features.append({
+                    'feature': column,
+                    'value': round(value, 6),
+                    'z_score': round(float(z_score), 2),
+                })
+        elif abs(value - mean) > 1e-12:
+            drifted_features.append({
+                'feature': column,
+                'value': round(value, 6),
+                'z_score': None,
+            })
+
+    feature_count = len(feature_columns)
+    defaulted_count = len(missing_features) + len(invalid_features)
+    usable_count = feature_count - defaulted_count
+    coverage_pct = round(usable_count / feature_count * 100, 1) if feature_count else 100.0
+    quality = {
+        'status': 'complete' if defaulted_count == 0 else 'degraded',
+        'feature_count': feature_count,
+        'usable_feature_count': usable_count,
+        'defaulted_feature_count': defaulted_count,
+        'coverage_pct': coverage_pct,
+        'missing_features': missing_features,
+        'invalid_features': invalid_features,
+        'drift_status': (
+            'unavailable' if not profile
+            else 'warning' if drifted_features
+            else 'stable'
+        ),
+        'drifted_feature_count': len(drifted_features),
+        'drifted_features': drifted_features,
+    }
+    return pd.DataFrame([values], columns=feature_columns), quality
 
 
 def _date_range_summary(dates) -> Dict:
@@ -398,6 +552,27 @@ def _json_safe(value):
     if isinstance(value, np.ndarray):
         return _json_safe(value.tolist())
     return value
+
+
+def _holdout_fingerprint(df: pd.DataFrame, holdout_index, y, target: str) -> str:
+    identity_columns = [
+        column
+        for column in (
+            'event_id', 'match_id', 'date', 'home_team', 'away_team',
+            'comp_type', 'country', 'competition',
+        )
+        if column in df.columns
+    ]
+    records = []
+    for index in holdout_index:
+        row = df.loc[index]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        record = {column: _json_safe(row.get(column)) for column in identity_columns}
+        record['label'] = _json_safe(y.loc[index])
+        records.append(record)
+    serialized = json.dumps(records, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(f"{target}\0{serialized}".encode('utf-8')).hexdigest()
 
 
 class TemporalStackingClassifier(BaseEstimator, ClassifierMixin):
@@ -745,6 +920,7 @@ class UniversalPredictor:
         self.models = {}
         self.scalers = {}
         self.feature_columns_by_target = {}
+        self.feature_profiles_by_target = {}
         self.scaler = StandardScaler()
         self.trained = False
         self.feature_columns = []   # Backward compat (result target)
@@ -752,6 +928,8 @@ class UniversalPredictor:
         self.feature_sets_by_target = {}
         self.decision_policies = {}
         self.artifact_metadata = {}
+        self.artifact_manifest = {}
+        self.artifact_path = None
 
     def _get_consensus_weights(self, target: str) -> Dict[str, float]:
         target_weights = CONSENSUS_WEIGHTS_BY_TARGET.get(target, {})
@@ -823,6 +1001,114 @@ class UniversalPredictor:
                 'total_bytes': None,
             }
         return self._compute_dataset_hash(self.data_dir)
+
+    def get_artifact_contract(self) -> Dict:
+        return artifact_contract_from_manifest(
+            self.artifact_manifest,
+            Path(self.artifact_path) if self.artifact_path else None,
+        )
+
+    def _attach_reference_benchmark(
+        self,
+        reference_predictor,
+        target: str,
+        source_df: pd.DataFrame,
+        holdout_index,
+        y_test: pd.Series,
+    ) -> None:
+        fingerprint = _holdout_fingerprint(source_df, holdout_index, y_test, target)
+        stats = self.training_stats.setdefault(target, {})
+        stats['validation_fingerprint'] = fingerprint
+        if reference_predictor is None:
+            return
+
+        reference_contract = reference_predictor.get_artifact_contract()
+        benchmark = {
+            'schema_version': 1,
+            'reference_artifact': reference_contract,
+            'holdout_fingerprint': fingerprint,
+            'rows_expected': len(holdout_index),
+            'rows_evaluated': 0,
+            'coverage': 0.0,
+            'comparable': False,
+            'metrics': {},
+            'errors': [],
+        }
+        if target not in reference_predictor.models:
+            benchmark['errors'].append(f"reference artifact has no target '{target}'")
+            stats['production_benchmark'] = benchmark
+            return
+
+        config = TARGET_CONFIGS[target]
+        is_regression = config.get('task') == 'regression'
+        actual_values = []
+        predicted_values = []
+        probability_rows = []
+        class_labels = list(config.get('class_names', {}))
+        label_by_name = {
+            name: label for label, name in config.get('class_names', {}).items()
+        }
+
+        for index in holdout_index:
+            try:
+                row = source_df.loc[index]
+                if isinstance(row, pd.DataFrame):
+                    row = row.iloc[0]
+                features = {}
+                for key, value in row.to_dict().items():
+                    try:
+                        missing = bool(pd.isna(value))
+                    except (TypeError, ValueError):
+                        missing = False
+                    features[key] = 0 if missing else value
+                predictions = reference_predictor.predict_match_all_models(features, target)
+                consensus = predictions.get('consensus', {})
+                prediction = consensus.get('prediction')
+                if is_regression:
+                    predicted_values.append(float(prediction))
+                else:
+                    predicted_label = label_by_name.get(prediction)
+                    if predicted_label is None:
+                        raise ValueError(f"unknown prediction label: {prediction}")
+                    probabilities = consensus.get('avg_probabilities', {}) or {}
+                    probability_rows.append([
+                        float(probabilities.get(config['class_names'][label], 0.0)) / 100.0
+                        for label in class_labels
+                    ])
+                    predicted_values.append(predicted_label)
+                actual_values.append(y_test.loc[index])
+            except Exception as exc:
+                if len(benchmark['errors']) < 5:
+                    benchmark['errors'].append(f"row {index}: {exc}")
+
+        benchmark['rows_evaluated'] = len(actual_values)
+        benchmark['coverage'] = round(
+            len(actual_values) / len(holdout_index), 4,
+        ) if len(holdout_index) else 0.0
+        benchmark['comparable'] = (
+            bool(reference_contract.get('artifact_id'))
+            and len(actual_values) == len(holdout_index)
+            and len(actual_values) > 0
+        )
+        if actual_values:
+            if is_regression:
+                benchmark['metrics'] = _regression_eval_metrics(
+                    actual_values,
+                    predicted_values,
+                )
+            else:
+                metrics = _classification_eval_metrics(
+                    actual_values,
+                    predicted_values,
+                    np.asarray(probability_rows),
+                    class_labels,
+                )
+                metrics['accuracy'] = round(float(accuracy_score(
+                    actual_values,
+                    predicted_values,
+                )), 4)
+                benchmark['metrics'] = metrics
+        stats['production_benchmark'] = benchmark
 
     @staticmethod
     def _filter_positive_odds(
@@ -1064,7 +1350,8 @@ class UniversalPredictor:
     def train_all_models(self, df: pd.DataFrame, test_size: float = 0.2,
                          targets: Optional[List[str]] = None,
                          odds_requirements: Optional[Dict[str, List[str]]] = None,
-                         optuna_trials: int = 50) -> Dict:
+                         optuna_trials: int = 50,
+                         reference_predictor=None) -> Dict:
         if targets is None:
             targets = ['result', 'btts', 'over_2_5', 'over_1_5']
 
@@ -1095,6 +1382,7 @@ class UniversalPredictor:
                 test_size,
                 odds_requirements,
                 optuna_trials,
+                reference_predictor,
             )
             all_results[target] = results
 
@@ -1279,6 +1567,7 @@ class UniversalPredictor:
         test_size: float,
         odds_requirements: Optional[Dict[str, List[str]]] = None,
         optuna_trials: int = 50,
+        reference_predictor=None,
     ) -> Dict:
         config = TARGET_CONFIGS[target]
         is_regression = config.get('task') == 'regression'
@@ -1323,7 +1612,25 @@ class UniversalPredictor:
             )
             print(f"\n  Random split: Train: {len(X_train)}, Test: {len(X_test)}")
 
-        corr_matrix = X_train.corr().abs()
+        calibration_fit_idx = list(X_train.index)
+        calibration_idx = []
+        calibration_cutoff = None
+        calibration_skip_reason = None
+        if not is_regression:
+            (
+                calibration_fit_idx,
+                calibration_idx,
+                calibration_cutoff,
+                calibration_skip_reason,
+            ) = _build_calibration_partition(
+                y_train,
+                dates=dates,
+                num_classes=config.get('num_classes', 2),
+            )
+
+        preprocessing_train = X_train.loc[calibration_fit_idx]
+        preprocessing_labels = y_train.loc[calibration_fit_idx]
+        corr_matrix = preprocessing_train.corr().abs()
         upper_tri = corr_matrix.where(
             np.triu(np.ones(corr_matrix.shape, dtype=bool), k=1)
         )
@@ -1334,13 +1641,28 @@ class UniversalPredictor:
             X_test = X_test.drop(columns=corr_drop)
             feature_cols = [c for c in feature_cols if c not in set(corr_drop)]
 
+        preprocessing_train = X_train.loc[calibration_fit_idx]
+        preprocessing_labels = y_train.loc[calibration_fit_idx]
         if is_regression:
             from sklearn.feature_selection import mutual_info_regression
-            mi_scores = mutual_info_regression(X_train, y_train, random_state=42, n_neighbors=5)
+            mi_scores = mutual_info_regression(
+                preprocessing_train,
+                preprocessing_labels,
+                random_state=42,
+                n_neighbors=5,
+            )
         else:
             from sklearn.feature_selection import mutual_info_classif
-            mi_scores = mutual_info_classif(X_train, y_train, random_state=42, n_neighbors=5)
-        mi_series = pd.Series(mi_scores, index=X_train.columns).sort_values(ascending=False)
+            mi_scores = mutual_info_classif(
+                preprocessing_train,
+                preprocessing_labels,
+                random_state=42,
+                n_neighbors=5,
+            )
+        mi_series = pd.Series(
+            mi_scores,
+            index=preprocessing_train.columns,
+        ).sort_values(ascending=False)
 
         task = config.get('task', 'multiclass')
         if task in ('binary', 'regression'):
@@ -1371,18 +1693,29 @@ class UniversalPredictor:
 
         self.feature_columns_by_target[target] = feature_cols
         self.feature_sets_by_target[target] = feature_set_name
+        self.feature_profiles_by_target[target] = _build_feature_profile(
+            X_train.loc[calibration_fit_idx]
+        )
 
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
+        scaler = _fit_preprocessing_scaler(X_train, calibration_fit_idx)
+        X_train_scaled = scaler.transform(X_train)
         X_test_scaled = scaler.transform(X_test)
         self.scalers[target] = scaler
 
         if is_regression:
-            return self._train_regression_models(
+            results = self._train_regression_models(
                 target, config, X_train, X_test, X_train_scaled, X_test_scaled,
                 y_train, y_test, feature_cols, scaler, X, meta, df,
                 validation_strategy, test_cutoff,
             )
+            self._attach_reference_benchmark(
+                reference_predictor,
+                target,
+                df,
+                X_test.index,
+                y_test,
+            )
+            return results
 
         from sklearn.utils.class_weight import compute_sample_weight
         sample_weights = compute_sample_weight('balanced', y_train)
@@ -1403,7 +1736,6 @@ class UniversalPredictor:
         X_cal_raw = None
         X_cal_scaled = None
         y_cal = None
-        calibration_cutoff = None
         X_probability_cal_raw = None
         X_probability_cal_scaled = None
         y_probability_cal = None
@@ -1412,56 +1744,25 @@ class UniversalPredictor:
         y_policy = None
         policy_cutoff = None
 
-        min_model_rows = max(200, config.get('num_classes', 2) * 50)
-        min_calibration_rows = max(50, config.get('num_classes', 2) * 10)
-        desired_cal_size = max(200, int(len(X_train) * 0.15))
-        max_cal_size = max(0, len(X_train) - min_model_rows)
-        cal_size = min(desired_cal_size, max_cal_size)
-
-        if cal_size >= min_calibration_rows:
-            cal_idx = []
-            if train_dates is not None:
-                try:
-                    calibration_split = build_temporal_holdout(
-                        train_dates.loc[X_train.index],
-                        holdout_fraction=cal_size / len(X_train),
-                        min_train_rows=min_model_rows,
-                        min_holdout_rows=min_calibration_rows,
-                    )
-                    cal_idx = calibration_split.holdout_index
-                    calibration_cutoff = calibration_split.cutoff
-                except ValueError as exc:
-                    print(f"Calibration holdout skipped: {exc}")
-            else:
-                rng = np.random.RandomState(42)
-                cal_pos = rng.permutation(len(X_train))[:cal_size]
-                cal_idx = list(X_train.iloc[cal_pos].index)
-
-            if cal_idx:
-                cal_idx_set = set(cal_idx)
-                fit_idx = [idx for idx in X_train.index if idx not in cal_idx_set]
-                candidate_y = y_train.loc[fit_idx]
-
-                if candidate_y.nunique() == y_train.nunique():
-                    weights_by_index = pd.Series(sample_weights, index=X_train.index)
-                    X_model_train = X_train.loc[fit_idx]
-                    y_model_train = candidate_y
-                    sample_weights_model = weights_by_index.loc[fit_idx].values
-                    X_cal_raw = X_train.loc[cal_idx]
-                    X_cal_scaled = scaler.transform(X_cal_raw)
-                    y_cal = y_train.loc[cal_idx]
-                    cutoff_text = (
-                        f", cutoff={calibration_cutoff.date()}"
-                        if calibration_cutoff is not None
-                        else ""
-                    )
-                    print(
-                        f"Calibration holdout: train={len(X_model_train)}, "
-                        f"cal={len(X_cal_raw)}{cutoff_text}"
-                    )
-                else:
-                    calibration_cutoff = None
-                    print("Calibration holdout skipped: not all classes remain in training split")
+        if calibration_idx:
+            weights_by_index = pd.Series(sample_weights, index=X_train.index)
+            X_model_train = X_train.loc[calibration_fit_idx]
+            y_model_train = y_train.loc[calibration_fit_idx]
+            sample_weights_model = weights_by_index.loc[calibration_fit_idx].values
+            X_cal_raw = X_train.loc[calibration_idx]
+            X_cal_scaled = scaler.transform(X_cal_raw)
+            y_cal = y_train.loc[calibration_idx]
+            cutoff_text = (
+                f", cutoff={calibration_cutoff.date()}"
+                if calibration_cutoff is not None
+                else ""
+            )
+            print(
+                f"Calibration holdout: train={len(X_model_train)}, "
+                f"cal={len(X_cal_raw)}{cutoff_text}"
+            )
+        elif calibration_skip_reason:
+            print(f"Calibration holdout skipped: {calibration_skip_reason}")
 
         X_probability_cal_raw = X_cal_raw
         X_probability_cal_scaled = X_cal_scaled
@@ -2194,6 +2495,13 @@ class UniversalPredictor:
             f"baseline_delta={best_score - baseline_score:+.1%})"
         )
 
+        self._attach_reference_benchmark(
+            reference_predictor,
+            target,
+            df,
+            X_test.index,
+            y_test,
+        )
         return results
 
     def _build_regression_configs(self) -> Dict:
@@ -2294,6 +2602,7 @@ class UniversalPredictor:
                 'memory_mb': round(mem_delta, 1),
                 'model_size_kb': round(model_size_kb, 1),
                 'task': 'regression',
+                'input_quality': input_quality,
             }
             results[name] = mae  # MAE as primary metric
             detailed_metrics[name] = {
@@ -2428,10 +2737,13 @@ class UniversalPredictor:
 
         feat_cols = self.feature_columns_by_target.get(target, self.feature_columns)
         scaler = self.scalers.get(target, self.scaler)
+        X, input_quality = _prepare_prediction_frame(
+            features,
+            feat_cols,
+            self.feature_profiles_by_target.get(target),
+        )
 
         if config.get('task') == 'regression' or model_data.get('task') == 'regression':
-            feature_values = [[features.get(col, 0) for col in feat_cols]]
-            X = pd.DataFrame(feature_values, columns=feat_cols)
             X_pred = scaler.transform(X) if model_data.get('scaled') else X
             y_pred = _nonnegative_count_predictions(model.predict(X_pred))[0]
             return {
@@ -2459,11 +2771,9 @@ class UniversalPredictor:
                     for i, p in enumerate(proba)
                 },
                 'confidence': round(float(max(proba)) * 100, 1),
+                'input_quality': input_quality,
             }
             return result
-
-        feature_values = [[features.get(col, 0) for col in feat_cols]]
-        X = pd.DataFrame(feature_values, columns=feat_cols)
 
         if model_data['scaled']:
             X_pred = scaler.transform(X)
@@ -2492,6 +2802,7 @@ class UniversalPredictor:
             'model': model_name,
             'calibrated': cal_model is not None,
             'decision_policy_applied': decision_policy is not None,
+            'input_quality': input_quality,
         }
 
         if proba is not None:
@@ -2518,6 +2829,14 @@ class UniversalPredictor:
         predictions = {}
         for name in target_models.keys():
             predictions[name] = self.predict_match(features, name, target)
+        input_quality = next(
+            (
+                prediction.get('input_quality')
+                for prediction in predictions.values()
+                if prediction.get('input_quality')
+            ),
+            None,
+        )
 
         if config.get('task') == 'regression':
             values = [p['prediction'] for p in predictions.values() if 'prediction' in p]
@@ -2535,6 +2854,7 @@ class UniversalPredictor:
                 'task': 'regression',
                 'strategy': 'best_temporal_mae' if selected_model else 'mean_fallback',
                 'model': selected_model,
+                'input_quality': input_quality,
             }
             return predictions
 
@@ -2603,6 +2923,7 @@ class UniversalPredictor:
             'votes': votes_breakdown,
             'avg_probabilities': avg_probabilities,
             'decision_policy_applied': bool(self.decision_policies.get(target)),
+            'input_quality': input_quality,
         }
 
         return predictions
@@ -2798,27 +3119,73 @@ class UniversalPredictor:
         return confident, stats
 
     def _build_artifact_manifest(self, path: str) -> Dict:
-        try:
-            code_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-        except OSError:
-            code_hash = None
+        code_files = [
+            Path(__file__),
+            Path(__file__).with_name('features.py'),
+            Path(__file__).with_name('dataset_builder.py'),
+            Path(__file__).with_name('decision_policy.py'),
+            Path(__file__).with_name('temporal_validation.py'),
+            Path(__file__).with_name('model_acceptance.py'),
+            Path(__file__).with_name('model_promotion.py'),
+            Path(__file__).with_name('model_release.py'),
+        ]
+        code_hashes = {}
+        aggregate_code = hashlib.sha256()
+        for code_path in code_files:
+            try:
+                digest = hashlib.sha256(code_path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            code_hashes[code_path.name] = digest
+            aggregate_code.update(code_path.name.encode('utf-8'))
+            aggregate_code.update(digest.encode('ascii'))
+        code_hash = aggregate_code.hexdigest() if code_hashes else None
         dataset_hash_info = self._get_dataset_hash_info()
+        repo_root = Path(__file__).resolve().parents[2]
+        git_commit = None
+        git_dirty = None
+        try:
+            git_commit = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+            git_dirty = bool(subprocess.run(
+                ['git', 'status', '--porcelain', '--untracked-files=no'],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip())
+        except (OSError, subprocess.SubprocessError):
+            pass
 
-        return {
-            'version': 2,
+        manifest = {
+            'version': MODEL_ARTIFACT_SCHEMA_VERSION,
             'artifact': str(path),
-            'created_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+            'created_at': datetime.now(timezone.utc).isoformat(),
             'dataset_hash': dataset_hash_info.get('hash'),
             'dataset_hash_source': dataset_hash_info.get('source'),
             'dataset_hash_file_count': dataset_hash_info.get('file_count'),
             'dataset_hash_total_bytes': dataset_hash_info.get('total_bytes'),
             'code_hash': code_hash,
+            'code_hashes': code_hashes,
             'feature_sets_by_target': self.feature_sets_by_target,
             'decision_policies': self.decision_policies,
             'feature_columns_by_target': self.feature_columns_by_target,
+            'feature_profile_schema_version': 1,
+            'feature_profile_targets': sorted(self.feature_profiles_by_target),
             'targets': sorted(self.models.keys()),
             'date_ranges_by_target': {
                 target: stats.get('date_ranges', {})
+                for target, stats in self.training_stats.items()
+            },
+            'validation_fingerprints_by_target': {
+                target: stats.get('validation_fingerprint')
                 for target, stats in self.training_stats.items()
             },
             'metrics_by_target': {
@@ -2826,9 +3193,17 @@ class UniversalPredictor:
                 for target, stats in self.training_stats.items()
             },
             'metric_contract': METRIC_CONTRACT,
+            'reproducibility': {
+                'git_commit': git_commit,
+                'git_dirty': git_dirty,
+                'python_version': platform.python_version(),
+                'platform': platform.platform(),
+                'command': [sys.executable, *sys.argv],
+            },
             'metadata': self.artifact_metadata,
         }
-    
+        return finalize_artifact_manifest(_json_safe(manifest))
+
     def save_models(self, path: str):
         """Save trained models to disk (multi-target format v2)."""
         if not self.trained:
@@ -2855,10 +3230,11 @@ class UniversalPredictor:
         manifest = _json_safe(self._build_artifact_manifest(path))
 
         save_data = {
-            'version': 2,
+            'version': MODEL_ARTIFACT_SCHEMA_VERSION,
             'models': models_for_joblib,
             'scalers': self.scalers,
             'feature_columns_by_target': self.feature_columns_by_target,
+            'feature_profiles_by_target': self.feature_profiles_by_target,
             'feature_sets_by_target': self.feature_sets_by_target,
             'decision_policies': self.decision_policies,
             'training_stats': self.training_stats,
@@ -2867,24 +3243,50 @@ class UniversalPredictor:
             'artifact_metadata': self.artifact_metadata,
         }
 
-        joblib.dump(save_data, path, compress=3)
+        artifact_path = Path(path)
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = artifact_path.with_name(f".{artifact_path.name}.{os.getpid()}.tmp")
+        try:
+            joblib.dump(save_data, temporary_path, compress=3)
+            os.replace(temporary_path, artifact_path)
+        except Exception:
+            temporary_path.unlink(missing_ok=True)
+            raise
+
+        manifest['artifact_sha256'] = file_sha256(artifact_path)
         manifest_path = f"{path}.manifest.json"
-        with open(manifest_path, 'w', encoding='utf-8') as f:
-            json.dump(manifest, f, ensure_ascii=False, indent=2)
-            f.write('\n')
+        atomic_write_json(Path(manifest_path), manifest)
+        self.artifact_manifest = manifest
+        self.artifact_path = str(artifact_path)
         print(f"Models saved to: {path}")
         print(f"Model manifest saved to: {manifest_path}")
+        return manifest
 
     def load_models(self, path: str):
         """Load trained models from disk (handles v1 and v2 format)."""
-        save_data = joblib.load(path)
+        artifact_path = Path(path)
+        sidecar_manifest = {}
+        manifest_path = Path(f"{artifact_path}.manifest.json")
+        if manifest_path.exists():
+            try:
+                sidecar_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+            except (OSError, ValueError, TypeError):
+                sidecar_manifest = {}
+        expected_sha256 = sidecar_manifest.get('artifact_sha256')
+        if expected_sha256 and file_sha256(artifact_path) != expected_sha256:
+            raise ValueError(f"Model artifact checksum does not match its manifest: {artifact_path}")
 
+        save_data = joblib.load(artifact_path)
         version = save_data.get('version', 1)
+        embedded_manifest = save_data.get('manifest', {}) or {}
+        self.artifact_manifest = sidecar_manifest or embedded_manifest
+        self.artifact_path = str(artifact_path)
 
         if version >= 2:
             self.models = save_data['models']
             self.scalers = save_data.get('scalers', {})
             self.feature_columns_by_target = save_data.get('feature_columns_by_target', {})
+            self.feature_profiles_by_target = save_data.get('feature_profiles_by_target', {})
             self.feature_sets_by_target = save_data.get('feature_sets_by_target', {})
             self.decision_policies = save_data.get('decision_policies', {})
             self.training_stats = save_data.get('training_stats', {})
@@ -2906,6 +3308,7 @@ class UniversalPredictor:
                 'result': save_data.get('feature_columns', [])
             }
             self.feature_sets_by_target = {'result': 'legacy'}
+            self.feature_profiles_by_target = {}
             self.decision_policies = {}
             self.training_stats = save_data.get('training_stats', {})
             self.artifact_metadata = save_data.get('artifact_metadata', {})

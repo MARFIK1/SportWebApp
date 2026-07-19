@@ -907,6 +907,7 @@ class MLFeatureGenerator:
             'event_id': match.get('event_id'),
             'date': match_date,
             'round': match.get('round'),
+            'season': match_season,
             'home_team': home_team,
             'away_team': away_team,
         }

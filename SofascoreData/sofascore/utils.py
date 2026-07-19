@@ -27,6 +27,9 @@ def _first_score_value(score_obj, keys):
 
 def extract_match_data(match):
     status_type = match.get('status', {}).get('type', '')
+    season = match.get('season')
+    if isinstance(season, dict):
+        season = season.get('name')
     home_score_obj = match.get('homeScore', {})
     away_score_obj = match.get('awayScore', {})
 
@@ -40,6 +43,7 @@ def extract_match_data(match):
         'date': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%Y-%m-%d'),
         'time': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%H:%M'),
         'round': match.get('roundInfo', {}).get('round'),
+        'season': season,
         'home_team_id': match.get('homeTeam', {}).get('id'),
         'home_team': match.get('homeTeam', {}).get('name'),
         'away_team_id': match.get('awayTeam', {}).get('id'),

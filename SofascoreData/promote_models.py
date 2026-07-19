@@ -1,6 +1,6 @@
 import argparse
-import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -8,12 +8,19 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from sofascore.model_promotion import merge_accepted_candidates
+from sofascore.model_release import (
+    active_pointer_name,
+    atomic_copy_file,
+    atomic_write_json,
+    build_active_pointer,
+    create_release_id,
+)
 from sofascore.predictor import TARGET_CONFIGS, UniversalPredictor
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Build a Backend v2 production candidate from accepted target artifacts.",
+        description="Build and activate a versioned Backend v2.1 model release.",
     )
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, action="append", required=True)
@@ -25,6 +32,11 @@ def parse_args():
         required=True,
     )
     parser.add_argument("--require-target", action="append", default=[])
+    parser.add_argument(
+        "--allow-unpaired",
+        action="store_true",
+        help="Allow bootstrap promotion without a same-holdout production benchmark.",
+    )
     return parser.parse_args()
 
 
@@ -68,6 +80,7 @@ def main():
         candidates,
         target_tasks,
         args.variant,
+        require_production_benchmark=not args.allow_unpaired,
     )
     promotion["baseline"] = str(baseline_path)
     promotion["candidates"] = [str(path) for path in candidate_paths]
@@ -78,16 +91,53 @@ def main():
         print(f"Required targets were not accepted: {', '.join(missing_required)}")
         return 4
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    promoted.save_models(str(output_path))
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(report_path, "w", encoding="utf-8") as target:
-        json.dump(promotion, target, ensure_ascii=False, indent=2)
-        target.write("\n")
+    release_id = create_release_id(args.variant, promotion)
+    release_dir = output_path.parent / "releases" / release_id
+    release_path = release_dir / output_path.name
+    released_at = datetime.now(timezone.utc).isoformat()
+    promotion.update({
+        "release_id": release_id,
+        "released_at": released_at,
+        "release_artifact": str(release_path),
+    })
+    metadata = dict(promoted.artifact_metadata or {})
+    metadata["promotion"] = promotion
+    metadata["release"] = {
+        "schema_version": 1,
+        "release_id": release_id,
+        "variant": args.variant,
+        "released_at": released_at,
+    }
+    promoted.artifact_metadata = metadata
+
+    manifest = promoted.save_models(str(release_path))
+    release_manifest_path = Path(f"{release_path}.manifest.json")
+    atomic_copy_file(release_manifest_path, Path(f"{output_path}.manifest.json"))
+    atomic_copy_file(release_path, output_path)
+
+    pointer = build_active_pointer(
+        args.variant,
+        release_id,
+        release_path,
+        manifest,
+        output_path.parent,
+    )
+    pointer_path = output_path.parent / active_pointer_name(args.variant)
+    atomic_write_json(pointer_path, pointer)
+
+    promotion["artifact"] = pointer
+    promotion["artifact_manifest"] = {
+        "artifact_id": manifest.get("artifact_id"),
+        "artifact_sha256": manifest.get("artifact_sha256"),
+        "version": manifest.get("version"),
+    }
+    atomic_write_json(report_path, promotion)
 
     print(f"Accepted targets: {', '.join(promotion['accepted_targets']) or 'none'}")
     print(f"Rejected targets: {', '.join(promotion['rejected_targets']) or 'none'}")
     print(f"Fallback targets: {', '.join(promotion['fallback_targets']) or 'none'}")
+    print(f"Release artifact: {release_path}")
+    print(f"Active pointer: {pointer_path}")
     print(f"Promotion report: {report_path}")
     return 0
 

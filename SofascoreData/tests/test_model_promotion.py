@@ -6,7 +6,8 @@ from sofascore.model_promotion import merge_accepted_candidates
 
 def accepted_classification_stats():
     return {
-        "baseline": {"metrics": {"macro_f1": 0.30, "brier_score": 0.60}},
+        "feature_set": "pre_match_safe",
+        "baseline": {"metrics": {"macro_f1": 0.30, "brier_score": 0.60, "ece": 0.10}},
         "selection": {"best_model": "Model"},
         "detailed_metrics": {"Model": {"macro_f1": 0.50}},
         "decision_policy_test_evaluation": {
@@ -15,9 +16,22 @@ def accepted_classification_stats():
                 "balanced_accuracy": 0.52,
                 "per_class_recall": {"0": 0.60, "1": 0.40, "2": 0.55},
                 "brier_score": 0.58,
+                "ece": 0.08,
             }
         },
     }
+
+
+def with_production_benchmark(stats, artifact_id="active-model"):
+    stats["validation_fingerprint"] = "holdout-1"
+    stats["production_benchmark"] = {
+        "reference_artifact": {"artifact_id": artifact_id},
+        "holdout_fingerprint": "holdout-1",
+        "coverage": 1.0,
+        "comparable": True,
+        "metrics": {"macro_f1": 0.47, "brier_score": 0.58, "ece": 0.085},
+    }
+    return stats
 
 
 def rejected_regression_stats():
@@ -81,6 +95,7 @@ class ModelPromotionTests(unittest.TestCase):
             [("result.pkl", result_candidate), ("goals.pkl", goals_candidate)],
             {"result": "multiclass", "total_goals": "regression"},
             "without_odds",
+            require_production_benchmark=False,
         )
 
         self.assertEqual(promoted.models["result"], result_candidate.models["result"])
@@ -89,6 +104,51 @@ class ModelPromotionTests(unittest.TestCase):
         self.assertEqual(report["rejected_targets"], ["total_goals"])
         self.assertIn("total_goals", report["fallback_targets"])
         self.assertIs(promoted.artifact_metadata["promotion"], report)
+
+    def test_strict_promotion_requires_same_production_artifact(self):
+        baseline = predictor("result", {}, "legacy")
+        baseline.artifact_manifest = {"artifact_id": "active-model"}
+        baseline.artifact_path = None
+        candidate = predictor(
+            "result",
+            with_production_benchmark(accepted_classification_stats()),
+            "candidate",
+        )
+
+        promoted, report = merge_accepted_candidates(
+            baseline,
+            [("candidate.pkl", candidate)],
+            {"result": "multiclass"},
+            "without_odds",
+        )
+
+        self.assertEqual(report["accepted_targets"], ["result"])
+        self.assertEqual(report["baseline_artifact"]["artifact_id"], "active-model")
+        self.assertEqual(promoted.models["result"], candidate.models["result"])
+
+    def test_strict_promotion_rejects_benchmark_from_another_baseline(self):
+        baseline = predictor("result", {}, "legacy")
+        baseline.artifact_manifest = {"artifact_id": "active-model"}
+        baseline.artifact_path = None
+        candidate = predictor(
+            "result",
+            with_production_benchmark(
+                accepted_classification_stats(),
+                artifact_id="older-model",
+            ),
+            "candidate",
+        )
+
+        promoted, report = merge_accepted_candidates(
+            baseline,
+            [("candidate.pkl", candidate)],
+            {"result": "multiclass"},
+            "without_odds",
+        )
+
+        self.assertEqual(report["accepted_targets"], [])
+        self.assertEqual(report["rejected_targets"], ["result"])
+        self.assertEqual(promoted.models["result"], {"Model": "legacy"})
 
     def test_rejects_duplicate_candidate_target(self):
         baseline = predictor("result", {}, "legacy")
@@ -101,6 +161,7 @@ class ModelPromotionTests(unittest.TestCase):
                 [("first.pkl", first), ("second.pkl", second)],
                 {"result": "multiclass"},
                 "without_odds",
+                require_production_benchmark=False,
             )
 
     def test_rejects_candidate_from_another_variant(self):
@@ -118,6 +179,7 @@ class ModelPromotionTests(unittest.TestCase):
                 [("candidate.pkl", candidate)],
                 {"result": "multiclass"},
                 "without_odds",
+                require_production_benchmark=False,
             )
 
     def test_rejects_baseline_from_another_variant(self):
@@ -130,6 +192,7 @@ class ModelPromotionTests(unittest.TestCase):
                 [],
                 {"result": "multiclass"},
                 "without_odds",
+                require_production_benchmark=False,
             )
 
 

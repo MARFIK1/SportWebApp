@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Dict, Iterable, Mapping, Tuple
 
 from sofascore.model_acceptance import build_acceptance_report
+from sofascore.model_release import predictor_artifact_contract
 
 
 def _declared_variant(candidate) -> str | None:
@@ -31,12 +32,18 @@ def merge_accepted_candidates(
     candidates: Iterable[Tuple[str, object]],
     target_tasks: Mapping[str, str],
     variant: str,
+    require_production_benchmark: bool = True,
 ) -> tuple[object, Dict]:
     baseline_variant = _declared_variant(baseline)
     if baseline_variant and baseline_variant != variant:
         raise ValueError(
             f"baseline variant mismatch: expected {variant}, got {baseline_variant}"
         )
+
+    baseline_contract = predictor_artifact_contract(baseline)
+    baseline_artifact_id = baseline_contract.get("artifact_id")
+    if require_production_benchmark and not baseline_artifact_id:
+        raise ValueError("promotion baseline has no stable artifact ID")
 
     baseline_targets = set(baseline.models)
     source_by_target = {target: "baseline" for target in baseline_targets}
@@ -52,6 +59,8 @@ def merge_accepted_candidates(
             candidate.training_stats,
             target_tasks,
             variant,
+            require_production_benchmark=require_production_benchmark,
+            expected_production_artifact_id=baseline_artifact_id,
         )
         for target, decision in acceptance["targets"].items():
             if target in decisions:
@@ -81,9 +90,11 @@ def merge_accepted_candidates(
         target for target, source in source_by_target.items() if source == "baseline"
     )
     promotion = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "variant": variant,
+        "baseline_artifact": baseline_contract,
+        "production_benchmark_required": require_production_benchmark,
         "accepted_targets": accepted_targets,
         "rejected_targets": rejected_targets,
         "fallback_targets": fallback_targets,

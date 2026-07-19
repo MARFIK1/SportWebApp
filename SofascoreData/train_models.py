@@ -13,6 +13,7 @@ from sofascore.config import COMPETITIONS
 from sofascore.dataset_audit import audit_feature_datasets
 from sofascore.dataset_builder import DATASET_BUILDER_VERSION
 from sofascore.model_acceptance import build_acceptance_report, write_acceptance_report
+from sofascore.model_release import resolve_active_artifact
 from sofascore.predictor import (
     COMPETITION_TYPES,
     FEATURE_SETS,
@@ -77,6 +78,11 @@ def parse_args():
         action="store_true",
         help="Train both variants on identical rows with complete positive 1X2 odds.",
     )
+    parser.add_argument(
+        "--skip-production-benchmark",
+        action="store_true",
+        help="Allow bootstrap training without comparing candidates to active production.",
+    )
     return parser.parse_args()
 
 
@@ -89,6 +95,26 @@ def _load_manifest(path: Path):
 
 def _variant_names(value: str):
     return ["without_odds", "with_odds"] if value == "both" else [value]
+
+
+def _model_filename(variant: str) -> str:
+    if variant == "with_odds":
+        return "universal_predictor_with_odds.pkl"
+    return "universal_predictor.pkl"
+
+
+def _load_production_reference(data_dir: Path, variant: str):
+    models_dir = data_dir / "models"
+    artifact_path = resolve_active_artifact(
+        models_dir,
+        variant,
+        _model_filename(variant),
+    )
+    if not artifact_path.exists():
+        return None, artifact_path
+    predictor = UniversalPredictor(str(data_dir))
+    predictor.load_models(str(artifact_path))
+    return predictor, artifact_path
 
 
 def _dataset_summary(df, audit: dict, sample_metadata: dict):
@@ -180,7 +206,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_summary = _dataset_summary(dataframe, audit, sample_metadata)
     run_summary = {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "data_dir": str(data_dir),
         "output_dir": str(output_dir),
@@ -190,6 +216,7 @@ def main():
         "optuna_trials": args.optuna_trials,
         "feature_set": args.feature_set,
         "paired_common_sample": args.paired_common_sample,
+        "production_benchmark_required": not args.skip_production_benchmark,
         "dataset": dataset_summary,
         "outputs": {},
     }
@@ -203,11 +230,28 @@ def main():
         if variant == "without_odds":
             training_frame = dataframe.drop(columns=odds_columns, errors="ignore")
             odds_requirements = None
-            baseline_name = "universal_predictor.pkl.manifest.json"
         else:
             training_frame = dataframe
             odds_requirements = {"__all__": list(BASE_ODDS_REQUIREMENTS)}
-            baseline_name = "universal_predictor_with_odds.pkl.manifest.json"
+
+        reference_predictor = None
+        reference_path = data_dir / "models" / _model_filename(variant)
+        if not args.skip_production_benchmark:
+            reference_predictor, reference_path = _load_production_reference(
+                data_dir,
+                variant,
+            )
+            if reference_predictor is None:
+                print(
+                    f"Active production artifact not found for {variant}: {reference_path}. "
+                    "Use --skip-production-benchmark only for an initial bootstrap."
+                )
+                return 5
+            reference_contract = reference_predictor.get_artifact_contract()
+            print(
+                f"Production reference ({variant}): "
+                f"{reference_contract.get('artifact_id')} at {reference_path}"
+            )
 
         results = predictor.train_all_models(
             training_frame,
@@ -215,6 +259,7 @@ def main():
             targets=args.targets,
             odds_requirements=odds_requirements,
             optuna_trials=args.optuna_trials,
+            reference_predictor=reference_predictor,
         )
         if not results:
             print(f"No targets trained for {variant}.")
@@ -222,10 +267,10 @@ def main():
 
         metrics_path = variant_dir / "training_metrics.json"
         predictor.export_metrics_json(str(metrics_path))
-        baseline_path = data_dir / "models" / baseline_name
+        reference_manifest_path = Path(f"{reference_path}.manifest.json")
         comparison = build_training_comparison(
             predictor.training_stats,
-            _load_manifest(baseline_path),
+            _load_manifest(reference_manifest_path),
             variant,
             dataset_summary,
         )
@@ -237,6 +282,12 @@ def main():
                 for target in predictor.training_stats
             },
             variant,
+            require_production_benchmark=not args.skip_production_benchmark,
+            expected_production_artifact_id=(
+                reference_predictor.get_artifact_contract().get("artifact_id")
+                if reference_predictor is not None
+                else None
+            ),
         )
         acceptance_path = write_acceptance_report(
             acceptance,
@@ -250,17 +301,23 @@ def main():
                 "feature_set": args.feature_set,
                 "accepted_targets": acceptance["accepted_targets"],
                 "rejected_targets": acceptance["rejected_targets"],
+                "production_reference": (
+                    reference_predictor.get_artifact_contract()
+                    if reference_predictor is not None
+                    else None
+                ),
             },
         }
         variant_output = {
             "training_metrics": str(metrics_path),
             "comparison": comparison_paths,
             "acceptance": acceptance_path,
-            "baseline_manifest": str(baseline_path),
+            "production_artifact": str(reference_path),
+            "production_manifest": str(reference_manifest_path),
         }
 
         if args.save_models:
-            model_path = variant_dir / baseline_name.removesuffix(".manifest.json")
+            model_path = variant_dir / _model_filename(variant)
             predictor.save_models(str(model_path))
             variant_output["model"] = str(model_path)
 

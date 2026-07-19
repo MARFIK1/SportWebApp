@@ -12,6 +12,7 @@ Requires Chrome/Brave browser for scraping.
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -37,6 +38,12 @@ MODELS_DIR = Path(os.environ.get('SOFASCORE_MODELS_DIR', DATA_DIR / 'models')).r
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from sofascore.features import MLFeatureGenerator
+from sofascore.model_release import (
+    PREDICTION_CONTRACT_SCHEMA_VERSION,
+    predictor_artifact_contract,
+    resolve_active_artifact,
+    stable_hash,
+)
 
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MODEL_VARIANT_CONFIG = {
@@ -56,8 +63,20 @@ OPTIONAL_ODDS_KEYS = [
     'odds_btts_yes', 'odds_btts_no',
 ]
 ODDS_KEYS = BASE_ODDS_KEYS + OPTIONAL_ODDS_KEYS
-ODDS_REQUIREMENTS_BY_TARGET = {
-    '__all__': BASE_ODDS_KEYS,
+ODDS_FEATURE_SOURCE_REQUIREMENTS = {
+    'odds_home_win': BASE_ODDS_KEYS,
+    'odds_draw': BASE_ODDS_KEYS,
+    'odds_away_win': BASE_ODDS_KEYS,
+    'odds_home_prob': BASE_ODDS_KEYS,
+    'odds_draw_prob': BASE_ODDS_KEYS,
+    'odds_away_prob': BASE_ODDS_KEYS,
+    'odds_overround': BASE_ODDS_KEYS,
+    'odds_over_2_5': ['odds_over_2_5', 'odds_under_2_5'],
+    'odds_under_2_5': ['odds_over_2_5', 'odds_under_2_5'],
+    'odds_over_2_5_prob': ['odds_over_2_5', 'odds_under_2_5'],
+    'odds_btts_yes': ['odds_btts_yes', 'odds_btts_no'],
+    'odds_btts_no': ['odds_btts_yes', 'odds_btts_no'],
+    'odds_btts_prob': ['odds_btts_yes', 'odds_btts_no'],
 }
 TEAM_HISTORY_DIR = DATA_DIR / 'team_history'
 TEAM_HISTORY_FORCE_REFRESH = (
@@ -168,7 +187,11 @@ def load_models(variant_names: Optional[List[str]] = None):
         if selected_variants is not None and variant_name not in selected_variants:
             continue
 
-        models_path = MODELS_DIR / variant_config['filename']
+        models_path = resolve_active_artifact(
+            MODELS_DIR,
+            variant_name,
+            variant_config['filename'],
+        )
 
         if models_path.exists():
             print(f"Loading {variant_name} models from {models_path}...")
@@ -372,10 +395,6 @@ def _match_decided_by_penalties(match: Dict) -> bool:
 
 
 def _result_from_match_scores(match: Dict) -> Optional[str]:
-    home_pen, away_pen = _penalty_score_pair(match)
-    if home_pen is not None and away_pen is not None and home_pen != away_pen:
-        return _result_from_scores(home_pen, away_pen)
-
     home_score, away_score = _base_score_pair(match)
     return _result_from_scores(home_score, away_score)
 
@@ -559,6 +578,63 @@ def _source_status_rank(match: Dict) -> int:
     return 10
 
 
+def _usable_source_season(value) -> Optional[str]:
+    if isinstance(value, dict):
+        value = value.get('name')
+    if value in (None, ''):
+        return None
+
+    season = str(value).strip()
+    if not season or season.lower().startswith('scheduled '):
+        return None
+    return season
+
+
+def _source_season(match: Dict, metadata: Optional[Dict] = None) -> Optional[str]:
+    return (
+        _usable_source_season(match.get('season')) or
+        _usable_source_season((metadata or {}).get('season'))
+    )
+
+
+def _matches_with_source_season(data: Dict) -> List[Dict]:
+    metadata = data.get('metadata') if isinstance(data, dict) else {}
+    matches = data.get('matches', []) if isinstance(data, dict) else []
+    result = []
+    for match in matches:
+        if not isinstance(match, dict):
+            continue
+        enriched = dict(match)
+        season = _source_season(enriched, metadata)
+        if season:
+            enriched['season'] = season
+        result.append(enriched)
+    return result
+
+
+def _dedupe_source_matches(matches: List[Dict]) -> List[Dict]:
+    by_key = {}
+    for match in matches:
+        event_id = match.get('event_id')
+        if event_id not in (None, ''):
+            key = f"event:{event_id}"
+        else:
+            key = "|".join(str(match.get(field) or '') for field in (
+                'date', 'home_team_id', 'away_team_id', 'home_team', 'away_team'
+            ))
+
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = dict(match)
+            continue
+
+        for field, value in match.items():
+            if existing.get(field) in (None, '') and value not in (None, ''):
+                existing[field] = value
+
+    return list(by_key.values())
+
+
 def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
     if existing is None:
         return candidate
@@ -572,7 +648,7 @@ def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
 
     if winner.get('features') is None and loser.get('features') is not None:
         winner['features'] = loser['features']
-    for key in ('total_cards', 'total_corners', 'referee_name', 'start_time', 'date'):
+    for key in ('total_cards', 'total_corners', 'referee_name', 'start_time', 'date', 'season'):
         if winner.get(key) in (None, '') and loser.get(key) not in (None, ''):
             winner[key] = loser[key]
     _copy_positive_odds(winner, loser, overwrite=False)
@@ -580,7 +656,8 @@ def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
 
 
 def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_name: str,
-                             source_rank: int = 0, source_path: Optional[Path] = None) -> Dict:
+                             source_rank: int = 0, source_path: Optional[Path] = None,
+                             source_season: Optional[str] = None) -> Dict:
     result = _result_from_match_scores(match)
     score = _score_text_from_match(match)
     raw_status = match.get('status', '')
@@ -621,6 +698,7 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
         'status': status,
         'date': match.get('date', ''),
         'start_time': match.get('time', ''),
+        'season': _usable_source_season(match.get('season')) or _usable_source_season(source_season),
         'features': None,
         'total_cards': total_cards,
         'total_corners': total_corners,
@@ -658,7 +736,7 @@ def _build_canonical_raw_event_index(base_dir: Path) -> Dict[str, Dict]:
             except Exception:
                 continue
 
-            for match in data.get('matches', []):
+            for match in _matches_with_source_season(data):
                 key = _source_event_key(match.get('event_id'))
                 if not key:
                     continue
@@ -707,7 +785,7 @@ def find_matches_for_date(target_date: str) -> list:
                 try:
                     with open(raw_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                    for match in data.get('matches', []):
+                    for match in _matches_with_source_season(data):
                         match_date = match.get('date', '')
                         if not match_date.startswith(target_date):
                             continue
@@ -756,6 +834,8 @@ def find_matches_for_date(target_date: str) -> list:
                         if match_key in seen_matches:
                             if event_id and not seen_matches[match_key].get('event_id'):
                                 seen_matches[match_key]['event_id'] = event_id
+                            if not seen_matches[match_key].get('season') and match.get('season'):
+                                seen_matches[match_key]['season'] = match['season']
                             seen_matches[match_key]['features'] = match
                         else:
                             home_goals = match.get('label_home_goals')
@@ -778,6 +858,7 @@ def find_matches_for_date(target_date: str) -> list:
                                 'status': status,
                                 'date': match.get('date', ''),
                                 'start_time': match.get('time', ''),
+                                'season': _usable_source_season(match.get('season')),
                                 'features': match,
                                 '_source_rank': 0,
                             }
@@ -799,7 +880,7 @@ def find_matches_for_date(target_date: str) -> list:
                     if file_season and not _validate_season_name(comp_name, file_season):
                         continue
 
-                    for match in data.get('matches', []):
+                    for match in _matches_with_source_season(data):
                         if match.get('date', '').startswith(target_date):
                             if _is_stale_rescheduled_entry(match, canonical_events):
                                 continue
@@ -1046,14 +1127,15 @@ def _fetch_tournament_scheduled_events_by_comp(
     return events_by_comp, total_events
 
 def _load_finished_matches_for_features(raw_dir: Path) -> list:
-    all_seasons_path = raw_dir / 'all_seasons.json'
-    if all_seasons_path.exists():
+    matches = []
+    for raw_file in sorted(raw_dir.glob('*.json')):
         try:
-            with open(all_seasons_path, 'r', encoding='utf-8') as f:
-                return json.load(f).get('matches', [])
+            with open(raw_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            matches.extend(_matches_with_source_season(data))
         except Exception:
-            return []
-    return []
+            continue
+    return _dedupe_source_matches(matches)
 
 
 def _print_sofascore_api_blocked(scraper) -> bool:
@@ -1789,52 +1871,40 @@ def update_match_results(target_date: str):
 
 def load_historical_matches(comp_type: str, country: str, league: str) -> list:
     base_dir = DATA_DIR
-    
+
     if comp_type in ('european', 'international'):
         league_dir = base_dir / comp_type / league
     else:
         league_dir = base_dir / comp_type / country / league
-    
+
     if not league_dir.exists():
         return []
-    
+
     all_matches = []
-    
+
     processed_dir = league_dir / 'processed'
     if processed_dir.exists():
-        for pf in processed_dir.glob('*.json'):
-            if 'h2h' in pf.name:
+        for processed_file in processed_dir.glob('*.json'):
+            if 'h2h' in processed_file.name:
                 continue
             try:
-                with open(pf, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                matches = data.get('matches', [])
-                all_matches.extend(matches)
-            except:
-                pass
-    
+                with open(processed_file, 'r', encoding='utf-8') as f:
+                    all_matches.extend(_matches_with_source_season(json.load(f)))
+            except Exception:
+                continue
+
     raw_dir = league_dir / 'raw'
     if raw_dir.exists():
-        for rf in raw_dir.glob('*.json'):
-            if 'upcoming' in rf.name:
+        for raw_file in raw_dir.glob('*.json'):
+            if 'upcoming' in raw_file.name:
                 continue
             try:
-                with open(rf, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                matches = data.get('matches', [])
-                all_matches.extend(matches)
-            except:
-                pass
-    
-    seen_ids = set()
-    unique_matches = []
-    for m in all_matches:
-        eid = m.get('event_id')
-        if eid and eid not in seen_ids:
-            seen_ids.add(eid)
-            unique_matches.append(m)
-    
-    return unique_matches
+                with open(raw_file, 'r', encoding='utf-8') as f:
+                    all_matches.extend(_matches_with_source_season(json.load(f)))
+            except Exception:
+                continue
+
+    return _dedupe_source_matches(all_matches)
 
 
 def _historical_match_key(match: Dict) -> str:
@@ -2227,6 +2297,7 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
         'away_team': match['away'],
         'home_team_id': match.get('home_team_id'),
         'away_team_id': match.get('away_team_id'),
+        'season': _usable_source_season(match.get('season')),
     }
     for odds_key in ['odds_home_win', 'odds_draw', 'odds_away_win',
                      'odds_over_2_5', 'odds_under_2_5',
@@ -2515,11 +2586,76 @@ def compute_match_analysis(match: dict, historical: list) -> dict:
     return analysis
 
 
+def _required_source_odds_for_target(predictor, target_name: str) -> List[str]:
+    feature_columns = getattr(predictor, 'feature_columns_by_target', {}).get(
+        target_name,
+        getattr(predictor, 'feature_columns', []),
+    )
+    requirements = set()
+    for column in feature_columns or []:
+        if not str(column).startswith('odds_'):
+            continue
+        requirements.update(ODDS_FEATURE_SOURCE_REQUIREMENTS.get(column, [column]))
+    return sorted(requirements)
+
+
 def _get_missing_odds_features(features: Dict, predictor, target_name: str) -> List[str]:
-    odds_cols = set()
-    odds_cols.update(ODDS_REQUIREMENTS_BY_TARGET.get('__all__', []))
-    odds_cols.update(ODDS_REQUIREMENTS_BY_TARGET.get(target_name, []))
-    return sorted(col for col in odds_cols if not _is_positive_odds(features.get(col)))
+    required_odds = _required_source_odds_for_target(predictor, target_name)
+    return sorted(col for col in required_odds if not _is_positive_odds(features.get(col)))
+
+
+LINEUP_DEPENDENT_FEATURE_SETS = {'lineup_available', 'all_reference', 'auto'}
+
+
+def _has_confirmed_lineup_features(
+    match: Dict,
+    lineups: Optional[Dict],
+    club_stats_index: Optional[Dict],
+) -> bool:
+    if not lineups or not club_stats_index:
+        return False
+    event_id = match.get('event_id')
+    lineup = lineups.get(str(event_id)) or lineups.get(event_id)
+    if not isinstance(lineup, dict):
+        return False
+    for side in ('home', 'away'):
+        starters = (lineup.get(side) or {}).get('starters')
+        if not isinstance(starters, list) or not starters:
+            return False
+    return True
+
+
+def _get_missing_runtime_inputs(
+    predictor,
+    target_name: str,
+    confirmed_lineup_features: bool,
+) -> List[str]:
+    feature_set = getattr(predictor, 'feature_sets_by_target', {}).get(target_name)
+    if feature_set in LINEUP_DEPENDENT_FEATURE_SETS and not confirmed_lineup_features:
+        return ['confirmed_lineups']
+    return []
+
+
+def _agreement_strength(consensus: Dict) -> float:
+    try:
+        strength = float(consensus.get('agreement_pct'))
+        if math.isfinite(strength):
+            return strength
+    except (TypeError, ValueError):
+        pass
+
+    agreement = str(consensus.get('agreement') or '')
+    if '/' not in agreement:
+        return 0.0
+    numerator, denominator = agreement.split('/', 1)
+    try:
+        numerator_value = float(numerator)
+        denominator_value = float(denominator)
+    except ValueError:
+        return 0.0
+    if denominator_value <= 0:
+        return 0.0
+    return numerator_value / denominator_value * 100.0
 
 
 def _split_target_predictions(all_target_preds: Dict) -> Dict:
@@ -2545,15 +2681,18 @@ def _split_target_predictions(all_target_preds: Dict) -> Dict:
         high_pred = high_cons.get('prediction', '')
 
         if low_pred == 'UNDER' and high_pred == 'OVER':
-            low_agree = low_cons.get('agreement', 0)
-            high_agree = high_cons.get('agreement', 0)
+            low_agree = _agreement_strength(low_cons)
+            high_agree = _agreement_strength(high_cons)
             if low_agree >= high_agree:
                 high_cons['prediction'] = 'UNDER'
+                high_cons['consistency_adjusted'] = True
             else:
                 low_cons['prediction'] = 'OVER'
+                low_cons['consistency_adjusted'] = True
 
         if high_cons.get('prediction') == 'OVER' and low_cons.get('prediction') == 'UNDER':
             low_cons['prediction'] = 'OVER'
+            low_cons['consistency_adjusted'] = True
 
         low_avg = low_cons.get('avg_probabilities', {})
         high_avg = high_cons.get('avg_probabilities', {})
@@ -2566,11 +2705,222 @@ def _split_target_predictions(all_target_preds: Dict) -> Dict:
                 low_avg['UNDER'] = round(100 - low_avg['OVER'], 1)
                 high_avg['OVER'] = round(min(corrected - 2, high_over), 1)
                 high_avg['UNDER'] = round(100 - high_avg['OVER'], 1)
+                low_cons['consistency_adjusted'] = True
+                high_cons['consistency_adjusted'] = True
 
     return {
         'predictions': preds,
         'market_predictions': market_predictions,
     }
+
+
+_ARTIFACT_CONTRACT_KEYS = (
+    'schema_version',
+    'artifact_id',
+    'release_id',
+    'variant',
+    'created_at',
+    'manifest_version',
+    'dataset_hash',
+    'code_hash',
+    'source_commit',
+)
+
+
+def _compact_artifact_contract(value: Dict) -> Dict:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: value.get(key)
+        for key in _ARTIFACT_CONTRACT_KEYS
+        if value.get(key) is not None
+    }
+
+
+def _model_release_summary(matches: List[Dict]) -> Dict:
+    observed = {}
+    for match in matches:
+        for variant_name, variant_data in (match.get('prediction_variants') or {}).items():
+            variant_state = observed.setdefault(
+                variant_name,
+                {'count': 0, 'missing': 0, 'invalid': 0, 'contracts': {}},
+            )
+            variant_state['count'] += 1
+            contract = _compact_artifact_contract(variant_data.get('artifact') or {})
+            artifact_id = contract.get('artifact_id')
+            if not artifact_id:
+                variant_state['missing'] += 1
+                continue
+            contract_variant = contract.get('variant')
+            if contract_variant and contract_variant != variant_name:
+                variant_state['invalid'] += 1
+                continue
+            variant_state['contracts'][artifact_id] = contract
+
+    variants = {}
+    for variant_name, state in sorted(observed.items()):
+        artifact_ids = sorted(state['contracts'])
+        if state['invalid'] > 0:
+            status = 'mixed'
+        elif not artifact_ids:
+            status = 'legacy'
+        elif len(artifact_ids) == 1 and state['missing'] == 0:
+            status = 'consistent'
+        else:
+            status = 'mixed'
+        variants[variant_name] = {
+            'status': status,
+            'artifact': state['contracts'].get(artifact_ids[0]) if len(artifact_ids) == 1 else None,
+            'artifact_ids': artifact_ids,
+            'matches': state['count'],
+            'missing_contracts': state['missing'],
+            'invalid_contracts': state['invalid'],
+        }
+
+    statuses = {state['status'] for state in variants.values()}
+    if not statuses or statuses == {'legacy'}:
+        status = 'legacy'
+    elif statuses == {'consistent'}:
+        status = 'consistent'
+    else:
+        status = 'mixed'
+    identity = {
+        variant_name: {
+            'status': state['status'],
+            'artifact_ids': state['artifact_ids'],
+            'missing_contracts': state['missing_contracts'],
+            'invalid_contracts': state['invalid_contracts'],
+        }
+        for variant_name, state in variants.items()
+    }
+    return {
+        'schema_version': PREDICTION_CONTRACT_SCHEMA_VERSION,
+        'status': status,
+        'snapshot_id': f"snapshot-{stable_hash(identity)[:20]}" if variants else None,
+        'variants': variants,
+    }
+
+
+def _prediction_quality_summary(matches: List[Dict]) -> Dict:
+    states = {}
+
+    def visit(variant_name: str, target_name: str, bundle: Dict, match_id: str) -> None:
+        state = states.setdefault(variant_name, {
+            'match_ids': set(),
+            'target_counts': {},
+            'targets_evaluated': 0,
+            'complete_targets': 0,
+            'degraded_targets': 0,
+            'drift_warning_targets': 0,
+            'missing_quality_targets': 0,
+            'feature_count': 0,
+            'usable_feature_count': 0,
+            'defaulted_feature_count': 0,
+            'missing_feature_counts': {},
+            'invalid_feature_counts': {},
+            'drifted_feature_counts': {},
+        })
+        state['match_ids'].add(match_id)
+        state['targets_evaluated'] += 1
+        state['target_counts'][target_name] = state['target_counts'].get(target_name, 0) + 1
+
+        quality = (bundle.get('consensus') or {}).get('input_quality')
+        if not isinstance(quality, dict):
+            state['missing_quality_targets'] += 1
+            return
+
+        if quality.get('status') == 'complete':
+            state['complete_targets'] += 1
+        else:
+            state['degraded_targets'] += 1
+        state['feature_count'] += int(quality.get('feature_count') or 0)
+        state['usable_feature_count'] += int(quality.get('usable_feature_count') or 0)
+        state['defaulted_feature_count'] += int(quality.get('defaulted_feature_count') or 0)
+        for feature_name in quality.get('missing_features') or []:
+            counts = state['missing_feature_counts']
+            counts[feature_name] = counts.get(feature_name, 0) + 1
+        for feature_name in quality.get('invalid_features') or []:
+            counts = state['invalid_feature_counts']
+            counts[feature_name] = counts.get(feature_name, 0) + 1
+        if quality.get('drift_status') == 'warning':
+            state['drift_warning_targets'] += 1
+        for drift in quality.get('drifted_features') or []:
+            feature_name = drift.get('feature') if isinstance(drift, dict) else None
+            if feature_name:
+                counts = state['drifted_feature_counts']
+                counts[feature_name] = counts.get(feature_name, 0) + 1
+
+    for match_index, match in enumerate(matches):
+        match_id = str(match.get('id') or match.get('event_id') or match_index)
+        variants = match.get('prediction_variants') or {}
+        if variants:
+            variant_items = variants.items()
+        else:
+            variant_name = match.get('default_prediction_variant', DEFAULT_PREDICTION_VARIANT)
+            variant_items = [(variant_name, match)]
+
+        for variant_name, variant in variant_items:
+            visit(variant_name, 'result', variant, match_id)
+            for target_name, market in (variant.get('market_predictions') or {}).items():
+                visit(variant_name, target_name, market, match_id)
+
+    variants = {}
+    for variant_name, state in states.items():
+        if state['degraded_targets'] or state['drift_warning_targets']:
+            status = 'degraded'
+        elif state['missing_quality_targets']:
+            status = 'legacy'
+        else:
+            status = 'complete'
+        feature_count = state['feature_count']
+        variants[variant_name] = {
+            'status': status,
+            'matches_evaluated': len(state['match_ids']),
+            'targets_evaluated': state['targets_evaluated'],
+            'complete_targets': state['complete_targets'],
+            'degraded_targets': state['degraded_targets'],
+            'drift_warning_targets': state['drift_warning_targets'],
+            'missing_quality_targets': state['missing_quality_targets'],
+            'feature_count': feature_count,
+            'usable_feature_count': state['usable_feature_count'],
+            'defaulted_feature_count': state['defaulted_feature_count'],
+            'coverage_pct': (
+                round(state['usable_feature_count'] / feature_count * 100, 1)
+                if feature_count else None
+            ),
+            'target_counts': dict(sorted(state['target_counts'].items())),
+            'missing_feature_counts': dict(sorted(
+                state['missing_feature_counts'].items(),
+                key=lambda item: (-item[1], item[0]),
+            )),
+            'invalid_feature_counts': dict(sorted(
+                state['invalid_feature_counts'].items(),
+                key=lambda item: (-item[1], item[0]),
+            )),
+            'drifted_feature_counts': dict(sorted(
+                state['drifted_feature_counts'].items(),
+                key=lambda item: (-item[1], item[0]),
+            )),
+        }
+
+    statuses = {variant['status'] for variant in variants.values()}
+    if 'degraded' in statuses:
+        status = 'degraded'
+    elif 'legacy' in statuses or not statuses:
+        status = 'legacy'
+    else:
+        status = 'complete'
+    return {
+        'schema_version': 1,
+        'status': status,
+        'variants': variants,
+    }
+
+
+def _refresh_report_model_release(report: Dict) -> None:
+    report['schema_version'] = 2
+    report['model_release'] = _model_release_summary(report.get('matches', []))
+    report['prediction_quality'] = _prediction_quality_summary(report.get('matches', []))
 
 
 def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_result: Optional[str]) -> Dict:
@@ -2606,6 +2956,7 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
         'avg_probabilities': cons.get('avg_probabilities', {}),
         'correct': cons_correct,
         'decision_policy_applied': cons.get('decision_policy_applied', False),
+        'input_quality': cons.get('input_quality'),
     }
 
     market_data = {}
@@ -2627,6 +2978,8 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
                 'agreement': target_cons.get('agreement'),
                 'agreement_pct': target_cons.get('agreement_pct'),
                 'avg_probabilities': target_cons.get('avg_probabilities', {}),
+                'consistency_adjusted': target_cons.get('consistency_adjusted', False),
+                'input_quality': target_cons.get('input_quality'),
             },
         }
 
@@ -2656,12 +3009,20 @@ def _serialize_result_prediction_data(result: Dict, actual_result: Optional[str]
             actual_result,
         )
         serialized_variant['odds_used'] = bool(variant_data.get('odds_used'))
+        artifact = _compact_artifact_contract(variant_data.get('artifact') or {})
+        if artifact:
+            serialized_variant['artifact'] = artifact
         if variant_data.get('source_odds'):
             serialized_variant['source_odds'] = dict(variant_data['source_odds'])
         if variant_data.get('missing_odds_by_target'):
             serialized_variant['missing_odds_by_target'] = {
                 target_name: list(missing_cols)
                 for target_name, missing_cols in variant_data['missing_odds_by_target'].items()
+            }
+        if variant_data.get('missing_runtime_inputs_by_target'):
+            serialized_variant['missing_runtime_inputs_by_target'] = {
+                target_name: list(missing_inputs)
+                for target_name, missing_inputs in variant_data['missing_runtime_inputs_by_target'].items()
             }
         if variant_data.get('skipped_targets'):
             serialized_variant['skipped_targets'] = list(variant_data['skipped_targets'])
@@ -2720,6 +3081,7 @@ def _source_match_odds_availability(match: Dict) -> Dict:
 
 def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predictor) -> Dict[str, Dict]:
     variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
+    artifact_contract = _compact_artifact_contract(predictor_artifact_contract(predictor))
     historical_cache = {}
     lineups_cache = {}
     team_history_cache = {}
@@ -2777,11 +3139,27 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
             print("[SKIP] No features")
             continue
 
+        confirmed_lineup_features = _has_confirmed_lineup_features(
+            match,
+            match_lineups,
+            club_stats_index,
+        )
         all_target_preds = {}
         missing_odds_by_target = {}
+        missing_runtime_inputs_by_target = {}
         skipped_targets = []
 
         for target_name in predictor.models.keys():
+            missing_runtime_inputs = _get_missing_runtime_inputs(
+                predictor,
+                target_name,
+                confirmed_lineup_features,
+            )
+            if missing_runtime_inputs:
+                missing_runtime_inputs_by_target[target_name] = missing_runtime_inputs
+                skipped_targets.append(target_name)
+                continue
+
             if variant_uses_odds:
                 missing_odds = _get_missing_odds_features(features, predictor, target_name)
                 if missing_odds:
@@ -2789,8 +3167,7 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
                     skipped_targets.append(target_name)
                     continue
 
-            feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
-            target_features = {col: features.get(col, 0) for col in feat_cols}
+            target_features = dict(features)
             target_features['home_team'] = features.get('home_team', match.get('home', ''))
             target_features['away_team'] = features.get('away_team', match.get('away', ''))
             target_features['date'] = features.get('date', match.get('date', ''))
@@ -2807,8 +3184,12 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
 
         variant_payload = _split_target_predictions(all_target_preds)
         variant_payload['odds_used'] = variant_uses_odds
+        if artifact_contract:
+            variant_payload['artifact'] = artifact_contract
         if missing_odds_by_target:
             variant_payload['missing_odds_by_target'] = missing_odds_by_target
+        if missing_runtime_inputs_by_target:
+            variant_payload['missing_runtime_inputs_by_target'] = missing_runtime_inputs_by_target
         if skipped_targets:
             variant_payload['skipped_targets'] = skipped_targets
 
@@ -2870,11 +3251,19 @@ def refresh_report_odds_variants(
             match_entry.get('actual_result'),
         )
         serialized_variant['odds_used'] = bool(variant_payload.get('odds_used'))
+        artifact = _compact_artifact_contract(variant_payload.get('artifact') or {})
+        if artifact:
+            serialized_variant['artifact'] = artifact
         serialized_variant['source_odds'] = _source_match_odds_snapshot(source_match)
         if variant_payload.get('missing_odds_by_target'):
             serialized_variant['missing_odds_by_target'] = {
                 target_name: list(missing_cols)
                 for target_name, missing_cols in variant_payload['missing_odds_by_target'].items()
+            }
+        if variant_payload.get('missing_runtime_inputs_by_target'):
+            serialized_variant['missing_runtime_inputs_by_target'] = {
+                target_name: list(missing_inputs)
+                for target_name, missing_inputs in variant_payload['missing_runtime_inputs_by_target'].items()
             }
         if variant_payload.get('skipped_targets'):
             serialized_variant['skipped_targets'] = list(variant_payload['skipped_targets'])
@@ -2884,6 +3273,7 @@ def refresh_report_odds_variants(
 
     if updated:
         report['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        _refresh_report_model_release(report)
 
     print(f"Refreshed with-odds variants: {updated}/{len(pending)}")
     return updated
@@ -3023,14 +3413,30 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
             print(f"    [SKIP] No features")
             continue
         
+        confirmed_lineup_features = _has_confirmed_lineup_features(
+            match,
+            match_lineups,
+            club_stats_index,
+        )
         prediction_variants = {}
         for variant_name, predictor in predictors.items():
             variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
             all_target_preds = {}
             missing_odds_by_target = {}
+            missing_runtime_inputs_by_target = {}
             skipped_targets = []
 
             for target_name in predictor.models.keys():
+                missing_runtime_inputs = _get_missing_runtime_inputs(
+                    predictor,
+                    target_name,
+                    confirmed_lineup_features,
+                )
+                if missing_runtime_inputs:
+                    missing_runtime_inputs_by_target[target_name] = missing_runtime_inputs
+                    skipped_targets.append(target_name)
+                    continue
+
                 if variant_uses_odds:
                     missing_odds = _get_missing_odds_features(features, predictor, target_name)
                     if missing_odds:
@@ -3038,8 +3444,7 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
                         skipped_targets.append(target_name)
                         continue
 
-                feat_cols = predictor.feature_columns_by_target.get(target_name, predictor.feature_columns)
-                target_features = {col: features.get(col, 0) for col in feat_cols}
+                target_features = dict(features)
                 target_features['home_team'] = features.get('home_team', match.get('home', ''))
                 target_features['away_team'] = features.get('away_team', match.get('away', ''))
                 target_features['date'] = features.get('date', match.get('date', ''))
@@ -3054,10 +3459,15 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
 
             variant_payload = _split_target_predictions(all_target_preds)
             variant_payload['odds_used'] = variant_uses_odds
+            artifact = _compact_artifact_contract(predictor_artifact_contract(predictor))
+            if artifact:
+                variant_payload['artifact'] = artifact
             if variant_uses_odds:
                 variant_payload['source_odds'] = _source_match_odds_snapshot(match)
             if missing_odds_by_target:
                 variant_payload['missing_odds_by_target'] = missing_odds_by_target
+            if missing_runtime_inputs_by_target:
+                variant_payload['missing_runtime_inputs_by_target'] = missing_runtime_inputs_by_target
             if skipped_targets:
                 variant_payload['skipped_targets'] = skipped_targets
             prediction_variants[variant_name] = variant_payload
@@ -3619,6 +4029,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         },
         'matches': matches
     }
+    _refresh_report_model_release(report)
 
     return report
 
@@ -3739,6 +4150,7 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
     report['summary']['unknown_matches'] = unknown
     report['summary']['pending_matches'] = pending
     report['summary']['model_accuracy'] = calculate_model_accuracy(report['matches'])
+    _refresh_report_model_release(report)
     
     return report
 
