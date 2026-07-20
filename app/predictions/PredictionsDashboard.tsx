@@ -18,6 +18,7 @@ import PredictionsClient from "./PredictionsClient";
 import ModelComparisonCharts from "./ModelComparisonCharts";
 import ModelDiagnosticsPanel from "./ModelDiagnosticsPanel";
 import PublicModelInsights from "./PublicModelInsights";
+import PredictionQualityPanel from "./PredictionQualityPanel";
 import DailyHighlights from "./DailyHighlights";
 import ConsensusReliabilityPanel from "./ConsensusReliabilityPanel";
 import { getServerT } from "../util/i18n/getLocale";
@@ -109,8 +110,9 @@ export default async function PredictionsDashboard({
             <div className="mb-5 grid grid-cols-1 gap-3 sm:mb-6 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
                 <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10 sm:p-5">
                     <div className="absolute inset-y-0 left-0 w-1 bg-emerald-400" />
-                    <div className="mb-2 text-xs uppercase tracking-[0.22em] text-gray-500 dark:text-gray-400">{t("total_matches_today")}</div>
+                    <div className="mb-1 text-xs uppercase tracking-[0.22em] text-gray-500 dark:text-gray-400">{t("matches_for_date")}</div>
                     <div className="text-4xl font-bold text-gray-900 dark:text-white">{report.summary.total_matches}</div>
+                    <div className="mt-1 text-xs font-semibold text-gray-500 dark:text-gray-400">{selectedDate}</div>
                 </div>
                 <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm shadow-slate-900/5 dark:border-gray-800 dark:bg-gray-900/50 dark:shadow-black/10 sm:p-5">
                     <div className="absolute inset-y-0 left-0 w-1 bg-cyan-400" />
@@ -126,34 +128,6 @@ export default async function PredictionsDashboard({
             </div>
 
             <DatePicker dates={dates} selectedDate={selectedDate} todayIso={todayIso} basePath={basePath} />
-
-            <DailyHighlights
-                matches={report.matches}
-                selectedDate={selectedDate}
-                teamIds={teamIds}
-                t={t}
-            />
-
-            <ConsensusReliabilityPanel
-                competitionRows={competitionReliability}
-                confidenceBuckets={consensusConfidenceBuckets}
-                t={t}
-            />
-
-            <ModelComparisonCharts
-                comparison={comparisonSummary}
-                accuracyOverTime={accuracyOverTime}
-                resultTypeBreakdown={resultTypeBreakdown}
-            />
-
-            <PublicModelInsights
-                comparison={comparisonSummary}
-                diagnostics={modelDiagnostics}
-                accuracyOverTime={accuracyOverTime}
-                t={t}
-            />
-
-            {showDiagnostics && <ModelDiagnosticsPanel diagnostics={modelDiagnostics} t={t} />}
 
             <div className="mt-6 grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="min-w-0">
@@ -216,6 +190,77 @@ export default async function PredictionsDashboard({
                     </div>
                 </div>
             </div>
+
+            <DailyHighlights
+                matches={report.matches}
+                selectedDate={selectedDate}
+                teamIds={teamIds}
+                t={t}
+            />
+
+            <ConsensusReliabilityPanel
+                competitionRows={competitionReliability}
+                confidenceBuckets={consensusConfidenceBuckets}
+                t={t}
+            />
+
+            <ModelComparisonCharts
+                comparison={comparisonSummary}
+                accuracyOverTime={accuracyOverTime}
+                resultTypeBreakdown={resultTypeBreakdown}
+            />
+
+            <PublicModelInsights
+                comparison={comparisonSummary}
+                diagnostics={modelDiagnostics}
+                accuracyOverTime={accuracyOverTime}
+                t={t}
+            />
+
+            {showDiagnostics && report.prediction_quality && (
+                <PredictionQualityPanel quality={report.prediction_quality} />
+            )}
+
+            {showDiagnostics && report.model_release && (
+                <section className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900/50 sm:p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                            {t("model_snapshot")}
+                        </h2>
+                        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${
+                            report.model_release.status === "consistent"
+                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                                : report.model_release.status === "mixed"
+                                    ? "border-rose-500/40 bg-rose-500/10 text-rose-400"
+                                    : "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                        }`}>
+                            {report.model_release.status === "consistent"
+                                ? t("model_snapshot_consistent")
+                                : report.model_release.status === "mixed"
+                                    ? t("model_snapshot_mixed")
+                                    : t("model_snapshot_legacy")}
+                        </span>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        {Object.entries(report.model_release.variants).map(([variant, state]) => state ? (
+                            <div key={variant} className="min-w-0 border-t border-gray-200 pt-3 dark:border-gray-800">
+                                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300">{variant}</div>
+                                <div className="mt-1 truncate font-mono text-[11px] text-gray-500 dark:text-gray-400" title={state.artifact?.artifact_id ?? state.artifact_ids.join(", ")}>
+                                    {state.artifact?.artifact_id ?? (state.artifact_ids.join(", ") || t("empty_placeholder"))}
+                                </div>
+                            </div>
+                        ) : null)}
+                    </div>
+                    {report.model_release.snapshot_id && (
+                        <div className="mt-3 truncate font-mono text-[10px] text-gray-400 dark:text-gray-600" title={report.model_release.snapshot_id}>
+                            {report.model_release.snapshot_id}
+                        </div>
+                    )}
+                </section>
+            )}
+
+            {showDiagnostics && <ModelDiagnosticsPanel diagnostics={modelDiagnostics} t={t} />}
+
         </div>
     );
 }

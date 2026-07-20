@@ -1,5 +1,24 @@
 export type MatchResult = "HOME" | "DRAW" | "AWAY";
 
+export interface PredictionFeatureDrift {
+    feature: string;
+    value: number;
+    z_score: number | null;
+}
+
+export interface PredictionInputQuality {
+    status: "complete" | "degraded";
+    feature_count: number;
+    usable_feature_count: number;
+    defaulted_feature_count: number;
+    coverage_pct: number;
+    missing_features: string[];
+    invalid_features: string[];
+    drift_status: "unavailable" | "stable" | "warning";
+    drifted_feature_count: number;
+    drifted_features: PredictionFeatureDrift[];
+}
+
 export interface ModelPrediction {
     prediction: MatchResult | null;
     prediction_int?: number;
@@ -17,6 +36,7 @@ export interface ConsensusPrediction {
     votes: Record<MatchResult, number>;
     avg_probabilities: Record<MatchResult, number>;
     correct: boolean | null;
+    input_quality?: PredictionInputQuality | null;
 }
 
 export interface MarketModelPrediction {
@@ -30,11 +50,43 @@ export interface MarketConsensus {
     agreement: string | null;
     agreement_pct: number | null;
     avg_probabilities: Record<string, number>;
+    consistency_adjusted?: boolean;
+    input_quality?: PredictionInputQuality | null;
 }
 
 export interface MarketPrediction {
     models: Record<string, MarketModelPrediction>;
     consensus: MarketConsensus;
+}
+
+export interface ModelArtifactContract {
+    schema_version: number;
+    artifact_id: string;
+    release_id?: string;
+    variant?: PredictionVariantKey;
+    created_at?: string;
+    manifest_version?: number;
+    dataset_hash?: string;
+    code_hash?: string;
+    source_commit?: string;
+}
+
+export type ModelReleaseStatus = "consistent" | "mixed" | "legacy";
+
+export interface ModelReleaseVariantState {
+    status: ModelReleaseStatus;
+    artifact: ModelArtifactContract | null;
+    artifact_ids: string[];
+    matches: number;
+    missing_contracts: number;
+    invalid_contracts: number;
+}
+
+export interface ModelReleaseSnapshot {
+    schema_version: number;
+    status: ModelReleaseStatus;
+    snapshot_id: string | null;
+    variants: Partial<Record<PredictionVariantKey, ModelReleaseVariantState>>;
 }
 
 export type PredictionVariantKey = "without_odds" | "with_odds";
@@ -55,9 +107,11 @@ export interface PredictionVariant {
         total_cards?: MarketPrediction;
         [key: string]: MarketPrediction | undefined;
     };
+    artifact?: ModelArtifactContract;
     odds_used: boolean;
     source_odds?: Record<string, number>;
     missing_odds_by_target?: Record<string, string[]>;
+    missing_runtime_inputs_by_target?: Record<string, string[]>;
     skipped_targets?: string[];
 }
 
@@ -113,7 +167,34 @@ export interface ModelAccuracy {
     accuracy_pct: number;
 }
 
+export interface PredictionQualityVariantSummary {
+    status: "complete" | "degraded" | "legacy";
+    matches_evaluated: number;
+    targets_evaluated: number;
+    complete_targets: number;
+    degraded_targets: number;
+    drift_warning_targets: number;
+    missing_quality_targets: number;
+    feature_count: number;
+    usable_feature_count: number;
+    defaulted_feature_count: number;
+    coverage_pct: number | null;
+    target_counts: Record<string, number>;
+    missing_feature_counts: Record<string, number>;
+    invalid_feature_counts: Record<string, number>;
+    drifted_feature_counts: Record<string, number>;
+}
+
+export interface PredictionQualitySummary {
+    schema_version: number;
+    status: "complete" | "degraded" | "legacy";
+    variants: Partial<Record<PredictionVariantKey, PredictionQualityVariantSummary>>;
+}
+
 export interface PredictionReport {
+    schema_version?: number;
+    model_release?: ModelReleaseSnapshot;
+    prediction_quality?: PredictionQualitySummary;
     date: string;
     status: string;
     generated_at: string;
