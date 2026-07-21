@@ -6,8 +6,13 @@ import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult"
 import type { PredictionMatch } from "@/types/predictions";
 import type { SofascoreMatch, SofascoreUpcomingMatch } from "@/types/sofascore";
 
-interface SlotWinner {
+interface SlotTeam {
     teamName: string;
+}
+
+interface SlotOutcome {
+    winner: SlotTeam;
+    loser: SlotTeam;
 }
 
 export interface WorldCupSlotCandidate {
@@ -98,7 +103,7 @@ function predictionMatchMap(predictionMatches?: PredictionMatch[] | Map<number, 
     return predictionMatches instanceof Map ? predictionMatches : predictionMatchesByEventId(predictionMatches);
 }
 
-function teamNameForWinnerSide(sourceMatch: SofascoreMatch, reportMatch: PredictionMatch | undefined, side: "HOME" | "AWAY"): string | null {
+function teamNameForSide(sourceMatch: SofascoreMatch, reportMatch: PredictionMatch | undefined, side: "HOME" | "AWAY"): string | null {
     const reportName = side === "HOME" ? reportMatch?.home_team : reportMatch?.away_team;
     if (reportName && !isWorldCupPlaceholderTeamName(reportName)) return reportName;
 
@@ -106,17 +111,22 @@ function teamNameForWinnerSide(sourceMatch: SofascoreMatch, reportMatch: Predict
     return sourceName && !isWorldCupPlaceholderTeamName(sourceName) ? sourceName : null;
 }
 
-function slotWinnerFromMatch(sourceMatch: SofascoreMatch, reportMatch: PredictionMatch | undefined): SlotWinner | null {
+function slotOutcomeFromMatch(sourceMatch: SofascoreMatch, reportMatch: PredictionMatch | undefined): SlotOutcome | null {
     const state = resolveSofascoreMatchResult(sourceMatch, reportMatch);
     if (!state.isFinished || state.actualResult === null || state.actualResult === "DRAW") return null;
 
-    const teamName = teamNameForWinnerSide(sourceMatch, reportMatch, state.actualResult);
-    return teamName ? { teamName } : null;
+    const winnerSide = state.actualResult;
+    const loserSide = winnerSide === "HOME" ? "AWAY" : "HOME";
+    const winnerName = teamNameForSide(sourceMatch, reportMatch, winnerSide);
+    const loserName = teamNameForSide(sourceMatch, reportMatch, loserSide);
+    return winnerName && loserName
+        ? { winner: { teamName: winnerName }, loser: { teamName: loserName } }
+        : null;
 }
 
-function buildSlotWinnersFromMatches(sourceMatches: SofascoreMatch[], predictionMatches: PredictionMatch[]): Map<number, SlotWinner> {
-    const winners = new Map<number, SlotWinner>();
-    if (sourceMatches.length === 0) return winners;
+function buildSlotOutcomesFromMatches(sourceMatches: SofascoreMatch[], predictionMatches: PredictionMatch[]): Map<number, SlotOutcome> {
+    const outcomes = new Map<number, SlotOutcome>();
+    if (sourceMatches.length === 0) return outcomes;
 
     const historicalMatches = predictionMatchesByEventId(predictionMatches);
     const format = detectWorldCupFormat(sourceMatches[0], sourceMatches);
@@ -126,33 +136,37 @@ function buildSlotWinnersFromMatches(sourceMatches: SofascoreMatch[], prediction
         const slot = slotByEventId.get(sourceMatch.event_id);
         if (slot == null) continue;
 
-        const winner = slotWinnerFromMatch(sourceMatch, historicalMatches.get(sourceMatch.event_id));
-        if (winner) winners.set(slot, winner);
+        const outcome = slotOutcomeFromMatch(sourceMatch, historicalMatches.get(sourceMatch.event_id));
+        if (outcome) outcomes.set(slot, outcome);
     }
 
-    return winners;
+    return outcomes;
 }
 
-function buildWorldCupSlotWinners(competitions: Competition[], dates: string[], selectedDate: string): Map<number, SlotWinner> {
+function buildWorldCupSlotOutcomes(competitions: Competition[], dates: string[], selectedDate: string): Map<number, SlotOutcome> {
     const historicalMatches = finishedReportMatchesByEventId(dates, selectedDate);
     const predictionMatches = Array.from(historicalMatches.values());
-    const winners = new Map<number, SlotWinner>();
+    const outcomes = new Map<number, SlotOutcome>();
 
     for (const competition of competitions) {
         if (competition.slug !== "fifa-world-cup") continue;
         const sourceMatches = loadCompetitionMatches(competition, selectedDate);
-        for (const [slot, winner] of buildSlotWinnersFromMatches(sourceMatches, predictionMatches)) {
-            winners.set(slot, winner);
+        for (const [slot, outcome] of buildSlotOutcomesFromMatches(sourceMatches, predictionMatches)) {
+            outcomes.set(slot, outcome);
         }
     }
 
-    return winners;
+    return outcomes;
 }
 
-function resolveWinnerPlaceholder(name: string, slotWinners: Map<number, SlotWinner>): string {
-    const slot = winnerSlotFromTeamName(name);
-    if (slot == null) return name;
-    return slotWinners.get(slot)?.teamName ?? name;
+function resolveOutcomePlaceholder(name: string, slotOutcomes: Map<number, SlotOutcome>): string {
+    const winnerSlot = winnerSlotFromTeamName(name);
+    if (winnerSlot != null) return slotOutcomes.get(winnerSlot)?.winner.teamName ?? name;
+
+    const loserSlot = loserSlotFromTeamName(name);
+    if (loserSlot != null) return slotOutcomes.get(loserSlot)?.loser.teamName ?? name;
+
+    return name;
 }
 
 function candidateForSide(match: SofascoreMatch, side: "HOME" | "AWAY"): WorldCupSlotCandidate | null {
@@ -197,13 +211,17 @@ export function candidatePairForLoserPlaceholder(name: string, candidatePairs: M
 }
 
 export function resolveWorldCupCandidatePlaceholderName(name: string, candidatePairs: Map<number, WorldCupSlotCandidatePair>): string {
-    const pair = candidatePairForWinnerPlaceholder(name, candidatePairs);
-    return pair ? formatWorldCupSlotCandidatePair(pair) : name;
+    const winnerPair = candidatePairForWinnerPlaceholder(name, candidatePairs);
+    if (winnerPair) return formatWorldCupSlotCandidatePair(winnerPair);
+
+    const loserPair = candidatePairForLoserPlaceholder(name, candidatePairs);
+    if (loserPair?.loser) return loserPair.loser.teamName;
+    return loserPair ? [loserPair.home.teamName, loserPair.away.teamName].join("/") : name;
 }
 
-function resolvePredictionTeamPlaceholders(match: PredictionMatch, slotWinners: Map<number, SlotWinner>): PredictionMatch {
-    const homeTeam = resolveWinnerPlaceholder(match.home_team, slotWinners);
-    const awayTeam = resolveWinnerPlaceholder(match.away_team, slotWinners);
+function resolvePredictionTeamPlaceholders(match: PredictionMatch, slotOutcomes: Map<number, SlotOutcome>): PredictionMatch {
+    const homeTeam = resolveOutcomePlaceholder(match.home_team, slotOutcomes);
+    const awayTeam = resolveOutcomePlaceholder(match.away_team, slotOutcomes);
     if (homeTeam === match.home_team && awayTeam === match.away_team) return match;
 
     return {
@@ -214,11 +232,11 @@ function resolvePredictionTeamPlaceholders(match: PredictionMatch, slotWinners: 
 }
 
 export function resolveWorldCupReportMatches(matches: PredictionMatch[], competitions: Competition[], dates: string[], selectedDate: string): PredictionMatch[] {
-    const slotWinners = buildWorldCupSlotWinners(competitions, dates, selectedDate);
-    return matches.map((match) => resolvePredictionTeamPlaceholders(match, slotWinners));
+    const slotOutcomes = buildWorldCupSlotOutcomes(competitions, dates, selectedDate);
+    return matches.map((match) => resolvePredictionTeamPlaceholders(match, slotOutcomes));
 }
 
 export function resolveWorldCupPredictionMatches(matches: PredictionMatch[], sourceMatches: SofascoreMatch[]): PredictionMatch[] {
-    const slotWinners = buildSlotWinnersFromMatches(sourceMatches, matches);
-    return matches.map((match) => resolvePredictionTeamPlaceholders(match, slotWinners));
+    const slotOutcomes = buildSlotOutcomesFromMatches(sourceMatches, matches);
+    return matches.map((match) => resolvePredictionTeamPlaceholders(match, slotOutcomes));
 }

@@ -11,6 +11,7 @@ import {
     candidatePairForLoserPlaceholder,
     candidatePairForWinnerPlaceholder,
     formatWorldCupSlotCandidatePair,
+    resolveWorldCupPredictionMatches,
 } from "@/app/util/predictions/worldCupSlotResolver";
 import type { PredictionMatch } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
@@ -189,6 +190,85 @@ describe("World Cup bracket contracts", () => {
         expect(pair?.winner?.teamName).toBe("Spain");
         expect(pair?.loser?.teamName).toBe("France");
     });
+
+    it("resolves semifinal loser slots in the third-place prediction report", () => {
+        const sourceMatches = [
+            match({
+                event_id: 12813008,
+                date: "2026-07-14",
+                round: 28,
+                season: "2026",
+                home_team_id: 901,
+                home_team: "W97",
+                away_team_id: 902,
+                away_team: "W98",
+                home_score: 0,
+                away_score: 2,
+                status: "finished",
+            }),
+            match({
+                event_id: 12812996,
+                date: "2026-07-15",
+                round: 28,
+                season: "2026",
+                home_team_id: 903,
+                home_team: "W99",
+                away_team_id: 904,
+                away_team: "W100",
+                home_score: 1,
+                away_score: 2,
+                status: "finished",
+            }),
+            match({
+                event_id: 12813003,
+                date: "2026-07-18",
+                round: 50,
+                season: "2026",
+                home_team_id: 905,
+                home_team: "L101",
+                away_team_id: 906,
+                away_team: "L102",
+                home_score: 4,
+                away_score: 6,
+                status: "finished",
+            }),
+        ];
+        const reports = [
+            {
+                event_id: 12813008,
+                home_team: "France",
+                away_team: "Spain",
+                status: "finished",
+                actual_result: "AWAY",
+                actual_score: "0-2",
+            },
+            {
+                event_id: 12812996,
+                home_team: "England",
+                away_team: "Argentina",
+                status: "finished",
+                actual_result: "AWAY",
+                actual_score: "1-2",
+            },
+            {
+                event_id: 12813003,
+                home_team: "L101",
+                away_team: "L102",
+                status: "finished",
+                actual_result: "AWAY",
+                actual_score: "4-6",
+            },
+        ] as PredictionMatch[];
+
+        const resolved = resolveWorldCupPredictionMatches(reports, sourceMatches);
+        const thirdPlace = resolved.find((item) => item.event_id === 12813003);
+
+        expect(thirdPlace).toMatchObject({
+            home_team: "France",
+            away_team: "England",
+        });
+    });
+
     it("keeps unresolved winner placeholders as candidate pairs", () => {
         const sourceMatch = match({
             event_id: 9002,
