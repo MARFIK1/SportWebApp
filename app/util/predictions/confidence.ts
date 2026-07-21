@@ -95,9 +95,9 @@ function pushSignal(signals: PredictionSignal[], signal: PredictionSignal): void
 
 export function getPredictionSignals(
     match: PredictionMatch,
-    options: { isInternationalMatch?: boolean } = {},
+    options: { isInternationalMatch?: boolean; consensus?: ConsensusPrediction | null } = {},
 ): PredictionSignal[] {
-    const consensus = getMatchConsensus(match);
+    const consensus = options.consensus === undefined ? getMatchConsensus(match) : options.consensus;
     if (!consensus?.prediction) return [];
 
     const strength = getPredictionStrength(consensus);

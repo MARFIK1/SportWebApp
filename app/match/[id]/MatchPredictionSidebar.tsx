@@ -2,7 +2,7 @@
 
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { PredictionVariantKey } from "@/types/predictions";
-import { getPredictionSignals, getPredictionStrength, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
+import { getConsensusConfidence, getPredictionSignals, getPredictionStrength, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import { useMatchPredictionVariant } from "./MatchPredictionVariantProvider";
 
@@ -84,7 +84,8 @@ export default function MatchPredictionSidebar() {
     const showMarketPanel = Boolean(bundle.marketPredictions) || bundle.skippedTargets.length > 0;
     const drawWatch = getDrawWatchSignalFromModels(bundle.models);
     const strength = getPredictionStrength(bundle.consensus);
-    const predictionSignals = getPredictionSignals(match);
+    const confidence = getConsensusConfidence(bundle.consensus);
+    const predictionSignals = getPredictionSignals(match, { consensus: bundle.consensus });
     const missingBaseOdds = oddsAvailability?.has_base_odds === false
         ? oddsAvailability.missing_base_odds
         : [];
@@ -198,7 +199,7 @@ export default function MatchPredictionSidebar() {
                         <div className="flex justify-between">
                             <span className="text-gray-500 dark:text-gray-400">{t("model_confidence")}</span>
                             <span className="text-gray-900 dark:text-white font-semibold">
-                                {maxProbability(bundle.consensus.avg_probabilities).toFixed(0)}%
+                                {confidence.toFixed(0)}%
                             </span>
                         </div>
                         <div className="flex justify-between">

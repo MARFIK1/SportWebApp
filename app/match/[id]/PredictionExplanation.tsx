@@ -1,6 +1,6 @@
 "use client";
 
-import { getPredictionSignals, getPredictionStrength, type PredictionSignal } from "@/app/util/predictions/confidence";
+import { getConsensusConfidence, getPredictionSignals, getPredictionStrength, type PredictionSignal } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import type { AnalysisMatch, MatchResult } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
@@ -10,11 +10,6 @@ interface PredictionExplanationProps {
     homeTeam: string;
     awayTeam: string;
     analysis: AnalysisMatch | null;
-}
-
-function maxProbability(probs: Record<MatchResult, number> | undefined): number {
-    if (!probs) return 0;
-    return Math.max(...Object.values(probs));
 }
 
 function pickLabel(outcome: MatchResult | null | undefined, homeTeam: string, awayTeam: string, drawLabel: string): string {
@@ -56,9 +51,9 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
 
     if (!consensus) return null;
 
-    const confidence = maxProbability(consensus.avg_probabilities);
+    const confidence = getConsensusConfidence(consensus);
     const strength = getPredictionStrength(consensus);
-    const predictionSignals = getPredictionSignals(match);
+    const predictionSignals = getPredictionSignals(match, { consensus });
     const predictionLabel = pickLabel(consensus.prediction, homeTeam, awayTeam, t("draw"));
     const homeXg = analysis?.goals?.expected_goals_home;
     const awayXg = analysis?.goals?.expected_goals_away;
