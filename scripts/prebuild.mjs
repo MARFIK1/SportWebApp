@@ -512,6 +512,8 @@ function auditPredictionModelReleases(reportsDir, activeModels) {
         reports: 0,
         consistent: 0,
         mixed: [],
+        mixed_finished: [],
+        mixed_unfinished: [],
         legacy: 0,
         stale_unfinished: [],
         quality_complete: 0,
@@ -552,6 +554,11 @@ function auditPredictionModelReleases(reportsDir, activeModels) {
         }
         if (release.status === "mixed") {
             audit.mixed.push(entry.name);
+            if (report.status === "finished") {
+                audit.mixed_finished.push(entry.name);
+            } else {
+                audit.mixed_unfinished.push(entry.name);
+            }
             continue;
         }
         audit.consistent++;
@@ -727,13 +734,20 @@ console.log(
     modelReleaseAudit.quality_degraded + " degraded, " +
     modelReleaseAudit.quality_legacy + " legacy"
 );
+if (modelReleaseAudit.mixed_finished.length > 0) {
+    console.warn(
+        "warning: preserving finished reports with mixed historical model contracts: " +
+        modelReleaseAudit.mixed_finished.join(", ")
+    );
+}
 if (
-    modelReleaseAudit.mixed.length > 0 ||
+    modelReleaseAudit.mixed_unfinished.length > 0 ||
     modelReleaseAudit.stale_unfinished.length > 0 ||
     modelReleaseAudit.degraded_unfinished.length > 0
 ) {
     throw new Error(
-        "prediction model contract gate failed: mixed=" + modelReleaseAudit.mixed.length +
+        "prediction model contract gate failed: mixed unfinished=" +
+        modelReleaseAudit.mixed_unfinished.length +
         ", stale unfinished=" + modelReleaseAudit.stale_unfinished.length +
         ", degraded unfinished=" + modelReleaseAudit.degraded_unfinished.length
     );
