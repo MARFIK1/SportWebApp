@@ -446,6 +446,132 @@ function readPredictionReportForHistory(dateDir) {
     );
 }
 
+function pathInside(parent, candidate) {
+    const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function copyActiveModelMetadata(sourceModels, outModels) {
+    const variants = [
+        {
+            name: "without_odds",
+            pointer: "active_without_odds.json",
+            fallbackManifest: "universal_predictor.pkl.manifest.json",
+        },
+        {
+            name: "with_odds",
+            pointer: "active_with_odds.json",
+            fallbackManifest: "universal_predictor_with_odds.pkl.manifest.json",
+        },
+    ];
+    const active = {};
+    ensureDir(outModels);
+
+    for (const variant of variants) {
+        const sourcePointer = path.join(sourceModels, variant.pointer);
+        const pointer = readJsonIfExists(sourcePointer);
+        let manifestRelative = pointer?.manifest || variant.fallbackManifest;
+        const sourceManifest = path.resolve(sourceModels, manifestRelative);
+        if (!pathInside(sourceModels, sourceManifest)) {
+            throw new Error("model manifest escapes source models directory: " + manifestRelative);
+        }
+        const manifest = readJsonIfExists(sourceManifest);
+        if (!manifest) continue;
+
+        if (pointer) {
+            if (pointer.variant !== variant.name) {
+                throw new Error("active model pointer variant mismatch: " + variant.name);
+            }
+            if (!pointer.artifact_id || pointer.artifact_id !== manifest.artifact_id) {
+                throw new Error("active model pointer artifact ID does not match its manifest: " + variant.name);
+            }
+            const artifactRelative = pointer.artifact;
+            const sourceArtifact = path.resolve(sourceModels, artifactRelative || "");
+            if (!artifactRelative || !pathInside(sourceModels, sourceArtifact) || !fs.existsSync(sourceArtifact)) {
+                throw new Error("active model pointer references a missing or unsafe artifact: " + variant.name);
+            }
+            fs.copyFileSync(sourcePointer, path.join(outModels, variant.pointer));
+        }
+        const destinationManifest = path.join(outModels, manifestRelative);
+        ensureDir(path.dirname(destinationManifest));
+        fs.copyFileSync(sourceManifest, destinationManifest);
+        active[variant.name] = {
+            pointer: pointer || null,
+            artifact_id: pointer?.artifact_id || manifest.artifact_id || null,
+            release_id: pointer?.release_id || manifest?.metadata?.release?.release_id || null,
+            manifest: manifestRelative.replace(/\\/g, "/"),
+            manifest_version: manifest.version || null,
+        };
+    }
+    return { schema_version: 1, variants: active };
+}
+
+function auditPredictionModelReleases(reportsDir, activeModels) {
+    const audit = {
+        schema_version: 1,
+        reports: 0,
+        consistent: 0,
+        mixed: [],
+        legacy: 0,
+        stale_unfinished: [],
+        quality_complete: 0,
+        quality_degraded: 0,
+        quality_legacy: 0,
+        degraded_unfinished: [],
+    };
+    if (!fs.existsSync(reportsDir)) return audit;
+
+    const entries = fs.readdirSync(reportsDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name));
+    for (const entry of entries) {
+        const report = readPredictionReportForHistory(path.join(reportsDir, entry.name));
+        if (!report) continue;
+        audit.reports++;
+        const quality = report.prediction_quality;
+        if (!quality || quality.status === "legacy") {
+            audit.quality_legacy++;
+        } else if (quality.status === "degraded") {
+            audit.quality_degraded++;
+            if (report.status !== "finished") {
+                const degradedVariants = Object.entries(quality.variants || {})
+                    .filter(([, state]) => state?.status === "degraded")
+                    .map(([variantName]) => variantName);
+                audit.degraded_unfinished.push({
+                    date: entry.name,
+                    variants: degradedVariants,
+                });
+            }
+        } else {
+            audit.quality_complete++;
+        }
+
+        const release = report.model_release;
+        if (!release || release.status === "legacy") {
+            audit.legacy++;
+            continue;
+        }
+        if (release.status === "mixed") {
+            audit.mixed.push(entry.name);
+            continue;
+        }
+        audit.consistent++;
+        if (report.status === "finished") continue;
+
+        const staleVariants = [];
+        for (const [variantName, state] of Object.entries(release.variants || {})) {
+            const reportArtifactId = state?.artifact?.artifact_id;
+            const activeArtifactId = activeModels?.variants?.[variantName]?.artifact_id;
+            if (reportArtifactId && activeArtifactId && reportArtifactId !== activeArtifactId) {
+                staleVariants.push(variantName);
+            }
+        }
+        if (staleVariants.length > 0) {
+            audit.stale_unfinished.push({ date: entry.name, variants: staleVariants });
+        }
+    }
+    return audit;
+}
+
 function buildAccuracyHistory(srcReports) {
     const rows = [];
     if (!fs.existsSync(srcReports)) {
@@ -585,8 +711,36 @@ if (fs.existsSync(SOURCE_REPORTS)) {
     console.log("no SofascoreData/reports");
 }
 
+console.log("\nmodel release metadata:");
+const outModelsDir = path.join(OUT_DIR, "models");
+const activeModelReleases = copyActiveModelMetadata(SOURCE_MODELS, outModelsDir);
+const modelReleaseAudit = auditPredictionModelReleases(
+    path.join(OUT_DIR, "reports"),
+    activeModelReleases,
+);
+console.log(
+    "model contracts: " + modelReleaseAudit.consistent + " consistent, " +
+    modelReleaseAudit.legacy + " legacy, " + modelReleaseAudit.mixed.length + " mixed"
+);
+console.log(
+    "prediction inputs: " + modelReleaseAudit.quality_complete + " complete, " +
+    modelReleaseAudit.quality_degraded + " degraded, " +
+    modelReleaseAudit.quality_legacy + " legacy"
+);
+if (
+    modelReleaseAudit.mixed.length > 0 ||
+    modelReleaseAudit.stale_unfinished.length > 0 ||
+    modelReleaseAudit.degraded_unfinished.length > 0
+) {
+    throw new Error(
+        "prediction model contract gate failed: mixed=" + modelReleaseAudit.mixed.length +
+        ", stale unfinished=" + modelReleaseAudit.stale_unfinished.length +
+        ", degraded unfinished=" + modelReleaseAudit.degraded_unfinished.length
+    );
+}
+
 console.log("\naccuracy history:");
-writeAccuracyHistory(SOURCE_REPORTS, path.join(OUT_DIR, "models"));
+writeAccuracyHistory(SOURCE_REPORTS, outModelsDir);
 
 console.log("\nmodel comparison csv:");
 const summaryCsv = path.join(SOURCE_MODELS, "comparison_summary.csv");
@@ -623,6 +777,8 @@ writeJsonFile(MANIFEST_PATH, {
     source_data: SOURCE_DATA,
     source_reports: SOURCE_REPORTS,
     clean_output: cleanOutput,
+    active_model_releases: activeModelReleases,
+    prediction_model_contracts: modelReleaseAudit,
     competitions: COMPETITIONS.length,
     matches: totalMatches,
     player_rows: totalPlayers,

@@ -15,4 +15,17 @@ describe("prebuild data contract", () => {
 
         expect(prebuildPaths).toEqual(registryPaths);
     });
+
+    it("publishes active model metadata and rejects inconsistent report contracts", () => {
+        const prebuild = readRepoFile("scripts/prebuild.mjs");
+
+        expect(prebuild).toContain("active_without_odds.json");
+        expect(prebuild).toContain("active_with_odds.json");
+        expect(prebuild).toContain("prediction model contract gate failed");
+        expect(prebuild).toContain("stale_unfinished");
+        expect(prebuild).toContain("degraded_unfinished");
+        expect(prebuild).toContain("prediction inputs:");
+        expect(prebuild).toContain("active_model_releases");
+        expect(prebuild).toContain("prediction_model_contracts");
+    });
 });
