@@ -50,7 +50,11 @@ const nextConfig = {
             {
                 protocol: "https",
                 hostname: "api.sofascore.app",
-            }
+            },
+            {
+                protocol: "https",
+                hostname: "img.sofascore.com",
+            },
         ],
     },
 }

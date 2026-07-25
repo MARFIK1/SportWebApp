@@ -2,7 +2,7 @@ import fs from "fs";
 
 export function readJson<T>(filePath: string): T | null {
     try {
-        const raw = fs.readFileSync(filePath, "utf-8");
+        const raw = fs.readFileSync(/* turbopackIgnore: true */ filePath, "utf-8");
         return JSON.parse(raw) as T;
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
