@@ -1039,6 +1039,34 @@ def _daily_fallback_comp_keys_from_env(competitions: dict) -> set:
     return selected
 
 
+def _daily_discovery_comp_types_from_env() -> set:
+    raw = os.environ.get("SOFASCORE_DAILY_DISCOVERY_TYPES", "league").strip()
+    if raw.lower() in {"", "0", "none", "off", "false"}:
+        return set()
+    return {
+        entry.strip()
+        for entry in re.split(r"[,;]+", raw)
+        if entry.strip()
+    }
+
+
+def _configured_daily_discovery_comp_keys(competitions: dict) -> set:
+    selected_types = _daily_discovery_comp_types_from_env()
+    if not selected_types:
+        return set()
+
+    known_types = set(competitions)
+    for unknown_type in sorted(selected_types - known_types):
+        print(f"[WARN] SOFASCORE_DAILY_DISCOVERY_TYPES entry not found: {unknown_type}")
+
+    return {
+        (comp_type, country, comp_name)
+        for comp_type, country, comp_name, _comp_data, _tournament_id
+        in _iter_competition_configs(competitions)
+        if comp_type in selected_types
+    }
+
+
 def _truthy_env(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -1219,6 +1247,14 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
             fallback_comp_keys = _local_scheduled_comp_keys_for_date(base_dir, target_date, competitions)
             if fallback_comp_keys:
                 print("Using local upcoming data to scope tournament scheduled-events fallback.")
+            discovery_comp_keys = _configured_daily_discovery_comp_keys(competitions)
+            if discovery_comp_keys:
+                fallback_comp_keys.update(discovery_comp_keys)
+                discovery_types = ", ".join(sorted(_daily_discovery_comp_types_from_env()))
+                print(
+                    "Adding configured competition types to tournament "
+                    f"scheduled-events discovery: {discovery_types}"
+                )
 
         allow_broad_scan = _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN")
         events_by_comp, total_events = _fetch_tournament_scheduled_events_by_comp(
