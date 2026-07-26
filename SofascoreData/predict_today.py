@@ -1040,7 +1040,7 @@ def _daily_fallback_comp_keys_from_env(competitions: dict) -> set:
 
 
 def _daily_discovery_comp_types_from_env() -> set:
-    raw = os.environ.get("SOFASCORE_DAILY_DISCOVERY_TYPES", "league").strip()
+    raw = os.environ.get("SOFASCORE_DAILY_DISCOVERY_TYPES", "league,european").strip()
     if raw.lower() in {"", "0", "none", "off", "false"}:
         return set()
     return {
@@ -3344,6 +3344,19 @@ def refresh_existing_report_odds(target_date: str, refresh_existing: bool = Fals
     return updated
 
 
+def _unreported_source_matches(report: Dict, source_matches: List[Dict]) -> List[Dict]:
+    report_by_key = {}
+    for match_entry in report.get('matches', []):
+        for key in _report_match_keys(match_entry):
+            report_by_key.setdefault(key, match_entry)
+
+    return [
+        source_match
+        for source_match in source_matches
+        if not _find_by_keys(report_by_key, _source_match_keys(source_match))
+    ]
+
+
 def _report_has_refreshable_odds_variants(
     report: Dict,
     source_matches: List[Dict],
@@ -4566,9 +4579,17 @@ def main():
 
         existing_report = load_existing_report(target_date)
         if existing_report:
-            refreshed = refresh_existing_report_odds(target_date, refresh_existing=True)
-            if refreshed:
-                return
+            source_matches = find_matches_for_date(target_date)
+            missing_matches = _unreported_source_matches(existing_report, source_matches)
+            if missing_matches:
+                print(
+                    f"Found {len(missing_matches)} newly discovered matches; "
+                    "rebuilding the existing report."
+                )
+            else:
+                refreshed = refresh_existing_report_odds(target_date, refresh_existing=True)
+                if refreshed:
+                    return
 
     if args.refresh_odds:
         refresh_existing_report_odds(target_date, refresh_existing=args.force)
