@@ -6,6 +6,7 @@ import {
     computeConsensusAccuracy,
     computeResultTypeAccuracy,
     getMatchPrediction,
+    loadMatchEventSnapshot,
     loadPredictionReport,
     loadComparisonSummary,
 } from "@/app/util/data/predictionService";
@@ -332,6 +333,55 @@ describe("prediction report normalization", () => {
 
         expect(byEventId?.event_id).toBe(12345);
         expect(byLegacyId?.id).toBe("legacy-id");
+    });
+});
+
+describe("match event snapshots", () => {
+    it("rejects invalid dates before reading the sidecar", () => {
+        const loaded = loadMatchEventSnapshot("../2026-07-25", 16316943);
+
+        expect(loaded).toBeNull();
+        expect(mockedFs.readFileSync).not.toHaveBeenCalled();
+    });
+
+    it("loads the selected match and removes malformed events", () => {
+        mockedFs.readFileSync.mockReturnValue(JSON.stringify({
+            schema_version: 1,
+            date: "2026-07-25",
+            updated_at: "2026-07-26 00:10:00",
+            matches: {
+                "16316943": {
+                    event_id: 16316943,
+                    status: "finished",
+                    home_team: "Jagiellonia Bialystok",
+                    away_team: "MKS Korona Kielce",
+                    updated_at: "2026-07-26 00:10:00",
+                    events: [
+                        {
+                            id: "goal-1",
+                            type: "goal",
+                            source_type: "goal",
+                            minute: 89,
+                            is_home: true,
+                        },
+                        {
+                            id: "broken",
+                            type: "advertisement",
+                        },
+                    ],
+                },
+            },
+        }));
+
+        const loaded = loadMatchEventSnapshot("2026-07-25", 16316943);
+
+        expect(loaded).toMatchObject({
+            event_id: 16316943,
+            status: "finished",
+        });
+        expect(loaded?.events).toEqual([
+            expect.objectContaining({ id: "goal-1", type: "goal", minute: 89 }),
+        ]);
     });
 });
 

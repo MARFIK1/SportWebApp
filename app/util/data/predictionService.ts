@@ -5,6 +5,7 @@ import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
 import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
+import type { MatchEventSnapshot, MatchEventsArtifact, MatchTimelineEvent } from "@/types/matchEvents";
 import { getConsensusConfidence } from "@/app/util/predictions/confidence";
 import { normalizePredictionMatchResult, predictionCorrectness } from "@/app/util/predictions/matchResult";
 
@@ -498,6 +499,63 @@ function newestExistingReportDir(dateDirs: string[]): string | null {
         .filter(({ mtime }) => mtime > 0)
         .sort((a, b) => b.mtime - a.mtime)[0]?.dir ?? null;
 }
+
+const MATCH_EVENT_TYPES = new Set([
+    "card",
+    "goal",
+    "injury_time",
+    "period",
+    "shootout",
+    "substitution",
+    "unknown",
+    "var",
+]);
+
+function isTimelineEvent(value: unknown): value is MatchTimelineEvent {
+    if (!value || typeof value !== "object") return false;
+    const event = value as Partial<MatchTimelineEvent>;
+    return (
+        typeof event.id === "string" &&
+        typeof event.source_type === "string" &&
+        typeof event.type === "string" &&
+        MATCH_EVENT_TYPES.has(event.type)
+    );
+}
+
+function matchEventsFileMtime(filePath: string): number {
+    try {
+        return fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0;
+    } catch {
+        return 0;
+    }
+}
+
+function newestMatchEventsFile(paths: string[]): string | null {
+    return paths
+        .map((filePath) => ({ filePath, mtime: matchEventsFileMtime(filePath) }))
+        .filter(({ mtime }) => mtime > 0)
+        .sort((left, right) => right.mtime - left.mtime)[0]?.filePath ?? null;
+}
+
+export const loadMatchEventSnapshot = cache((
+    date: string,
+    eventId: number | string,
+): MatchEventSnapshot | null => {
+    const safeDate = safeReportDate(date);
+    if (!safeDate || String(eventId).trim() === "") return null;
+
+    const artifactPath = newestMatchEventsFile(
+        reportDirs().map((dir) => path.join(dir, safeDate, "match_events.json")),
+    );
+    if (!artifactPath) return null;
+
+    const artifact = readJson<MatchEventsArtifact>(artifactPath);
+    if (artifact?.schema_version !== 1 || !artifact.matches || typeof artifact.matches !== "object") return null;
+    const snapshot = artifact.matches[String(eventId)];
+    if (!snapshot || !Array.isArray(snapshot.events)) return null;
+
+    return { ...snapshot, events: snapshot.events.filter(isTimelineEvent) };
+});
 
 export const loadPredictionReport = cache((date: string): PredictionReport | null => {
     const safeDate = safeReportDate(date);

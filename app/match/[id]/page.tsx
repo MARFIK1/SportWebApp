@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions, resolveCompetitionByDataPath, type Competition } from "@/app/util/league/leagueRegistry";
 import { buildMatchLookupMaps, computeStandings, findMatchInCompetitions, findMatchInTeamHistory, listSeasonFiles, loadAllSeasons, loadSeasonMatches, loadTeamHistory, loadUpcomingMatches, resolveLeagueTableContext } from "@/app/util/data/dataService";
-import { getMatchPrediction, loadPredictionReport, loadAnalysisReport } from "@/app/util/data/predictionService";
+import { getMatchPrediction, loadPredictionReport, loadAnalysisReport, loadMatchEventSnapshot } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import type { PredictionMatch, PredictionReport } from "@/types/predictions";
 import CompactLeagueTable from "./CompactLeagueTable";
@@ -18,6 +18,7 @@ import PostMatchInsights from "./PostMatchInsights";
 import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
+import MatchTimeline from "./MatchTimeline";
 import TournamentContext from "./TournamentContext";
 import { computeWorldCupBracketSlots, detectWorldCupFormat } from "./bracketConfig";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
@@ -514,6 +515,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     const { match: sourceMatch, competition } = result;
     const date = initialDate || sourceMatch.date.slice(0, 10);
     const worldCupCompetition = resolveWorldCupCompetition(competition, competitions);
+    const matchEventSnapshot = loadMatchEventSnapshot(date, eventId);
     const contextCompetition = worldCupCompetition ?? competition;
     const competitionMatches = loadContextMatches(contextCompetition, date.slice(0, 4));
     const selectedPredictionMatches = predReport?.matches ?? [];
@@ -568,11 +570,12 @@ export default async function Match({ params, searchParams }: PageProps) {
     const analysisKey = `${match.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${match.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const sourceAnalysisKey = `${sourceMatch.home_team.toLowerCase().replace(/\s+/g, "_")}_vs_${sourceMatch.away_team.toLowerCase().replace(/\s+/g, "_")}`;
     const rawAnalysis = analysisReport?.matches?.[analysisKey] ?? analysisReport?.matches?.[sourceAnalysisKey] ?? null;
-    const { displayHomeScore, displayAwayScore, normalTimeScore, extraTimeScore, penaltyScore, wentToExtraTime, decidedByPenalties, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
+    const { displayStatus, displayHomeScore, displayAwayScore, normalTimeScore, extraTimeScore, penaltyScore, wentToExtraTime, decidedByPenalties, actualResult, isFinished } = resolveMatchDisplayState(match, predMatch);
     const finishedStatusLabel = penaltyScore ? t("penalties") : wentToExtraTime ? "AET" : t("full_time");
     const penaltyWinnerName = decidedByPenalties && actualResult
         ? (actualResult === "HOME" ? match.home_team : actualResult === "AWAY" ? match.away_team : null)
         : null;
+    const isInProgress = displayStatus === "inprogress";
     const matchStats = isFinished ? buildMatchStats(match) : [];
     const rawMatch = match as unknown as Record<string, unknown>;
     const actualXgHome = readStatValue(rawMatch, ["home_expectedgoals", "home_xg"]);
@@ -699,11 +702,22 @@ export default async function Match({ params, searchParams }: PageProps) {
                                             </span>
                                         )}
                                     </>
+                                ) : isInProgress ? (
+                                    <>
+                                        <span className="text-3xl font-bold tabular-nums sm:text-5xl">
+                                            {displayHomeScore != null && displayAwayScore != null
+                                                ? `${displayHomeScore} - ${displayAwayScore}`
+                                                : "vs"}
+                                        </span>
+                                        <span className="rounded-full border border-rose-400/40 bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold uppercase text-rose-500 dark:text-rose-300 sm:px-3 sm:text-xs">
+                                            {t("live")}
+                                        </span>
+                                    </>
                                 ) : (
                                     <>
                                         <span className="text-2xl font-semibold text-emerald-400 sm:text-3xl">vs</span>
                                         <span className="text-center text-xs text-gray-500 dark:text-gray-400 sm:text-sm">
-                                            {match.status === "postponed" ? t("postponed") : t("not_started")}
+                                            {displayStatus === "postponed" ? t("postponed") : displayStatus === "canceled" ? t("canceled") : t("not_started")}
                                         </span>
                                     </>
                                 )}
@@ -712,6 +726,14 @@ export default async function Match({ params, searchParams }: PageProps) {
                             <MatchHeaderTeam teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} />
                         </div>
                     </div>
+
+                    {matchEventSnapshot && (
+                        <MatchTimeline
+                            snapshot={matchEventSnapshot}
+                            homeTeam={displayHomeTeam}
+                            awayTeam={displayAwayTeam}
+                        />
+                    )}
 
                     {displayXgHome != null && displayXgAway != null && (() => {
                         const xgHome = displayXgHome;
