@@ -11,11 +11,13 @@ Requires Chrome/Brave browser for scraping.
 """
 
 import argparse
+import copy
 import json
 import math
 import os
 import re
 import sys
+import time
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +40,7 @@ MODELS_DIR = Path(os.environ.get('SOFASCORE_MODELS_DIR', DATA_DIR / 'models')).r
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from sofascore.features import MLFeatureGenerator
+from sofascore.incidents import normalize_match_incidents
 from sofascore.model_release import (
     PREDICTION_CONTRACT_SCHEMA_VERSION,
     predictor_artifact_contract,
@@ -57,6 +60,8 @@ MODEL_VARIANT_CONFIG = {
     },
 }
 DEFAULT_PREDICTION_VARIANT = 'without_odds'
+MATCH_EVENTS_FILENAME = 'match_events.json'
+MATCH_EVENTS_SCHEMA_VERSION = 1
 BASE_ODDS_KEYS = ['odds_home_win', 'odds_draw', 'odds_away_win']
 OPTIONAL_ODDS_KEYS = [
     'odds_over_2_5', 'odds_under_2_5',
@@ -529,6 +534,73 @@ def _apply_penalty_score_from_incidents(match: Dict, incidents) -> bool:
     return True
 
 
+def _incident_class_key(incident: Dict) -> str:
+    value = incident.get('incidentClass') or incident.get('class') or ''
+    return ''.join(character for character in str(value).lower() if character.isalnum())
+
+
+def _apply_match_incidents(match: Dict, incidents) -> bool:
+    if incidents is None:
+        return False
+
+    before = tuple(match.get(key) for key in (
+        'match_events', 'home_yellow_cards_calc', 'away_yellow_cards_calc',
+        'home_red_cards_calc', 'away_red_cards_calc', 'home_score_pen',
+        'away_score_pen', 'match_events_collected',
+    ))
+    cards = [
+        incident for incident in incidents
+        if isinstance(incident, dict) and str(incident.get('incidentType') or '').lower() == 'card'
+    ]
+    yellow_classes = {'yellow', 'yellowred'}
+    red_classes = {'red', 'yellowred'}
+    match['home_yellow_cards_calc'] = sum(
+        1 for incident in cards if incident.get('isHome') is True and _incident_class_key(incident) in yellow_classes
+    )
+    match['away_yellow_cards_calc'] = sum(
+        1 for incident in cards if incident.get('isHome') is False and _incident_class_key(incident) in yellow_classes
+    )
+    match['home_red_cards_calc'] = sum(
+        1 for incident in cards if incident.get('isHome') is True and _incident_class_key(incident) in red_classes
+    )
+    match['away_red_cards_calc'] = sum(
+        1 for incident in cards if incident.get('isHome') is False and _incident_class_key(incident) in red_classes
+    )
+    match['match_events'] = normalize_match_incidents(incidents)
+    match['match_events_collected'] = True
+    _apply_penalty_score_from_incidents(match, incidents)
+    after = tuple(match.get(key) for key in (
+        'match_events', 'home_yellow_cards_calc', 'away_yellow_cards_calc',
+        'home_red_cards_calc', 'away_red_cards_calc', 'home_score_pen',
+        'away_score_pen', 'match_events_collected',
+    ))
+    return before != after
+
+
+def _refresh_match_details(scraper, match: Dict, event_id, cache: Optional[Dict] = None) -> bool:
+    cache_key = str(event_id)
+    if cache is not None and cache_key in cache:
+        stats, incidents = cache[cache_key]
+    else:
+        stats = scraper.get_match_statistics(event_id)
+        time.sleep(0.3)
+        incidents = scraper.get_match_incidents(event_id)
+        time.sleep(0.3)
+        if cache is not None:
+            cache[cache_key] = (stats, incidents)
+
+    changed = False
+    if stats:
+        from sofascore.utils import extract_statistics
+        stat_data = extract_statistics(stats, period='ALL')
+        before_stats = {key: match.get(key) for key in stat_data}
+        match.update(stat_data)
+        changed = changed or any(before_stats.get(key) != value for key, value in stat_data.items())
+
+    if incidents is not None:
+        changed = _apply_match_incidents(match, incidents) or changed
+    return changed
+
 def _refresh_score_details_if_needed(scraper, match: Dict, api_match: Dict, api_status: str) -> bool:
     if not _looks_like_unverified_shootout_score(match, api_status):
         return False
@@ -652,6 +724,10 @@ def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
         if winner.get(key) in (None, '') and loser.get(key) not in (None, ''):
             winner[key] = loser[key]
     _copy_positive_odds(winner, loser, overwrite=False)
+    if not winner.get('match_events') and loser.get('match_events'):
+        winner['match_events'] = loser['match_events']
+    if not winner.get('match_events_collected') and loser.get('match_events_collected'):
+        winner['match_events_collected'] = True
     return winner
 
 
@@ -662,12 +738,14 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
     score = _score_text_from_match(match)
     raw_status = match.get('status', '')
 
-    if result is not None:
-        status = 'finished'
-    elif raw_status in ('postponed', 'canceled'):
+    if raw_status in ('postponed', 'canceled'):
+        result = None
         status = raw_status
     elif raw_status == 'inprogress':
+        result = None
         status = 'inprogress'
+    elif result is not None:
+        status = 'finished'
     else:
         status = 'upcoming'
 
@@ -703,6 +781,8 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
         'total_cards': total_cards,
         'total_corners': total_corners,
         'referee_name': match.get('referee_name'),
+        'match_events': match.get('match_events') if isinstance(match.get('match_events'), list) else [],
+        'match_events_collected': bool(match.get('match_events_collected')),
         '_source_rank': source_rank,
     }
     if source_path is not None:
@@ -1444,6 +1524,7 @@ def _update_results_from_scheduled_events(
     updated_count = 0
     matched_count = 0
     team_history_updates = []
+    match_details_cache = {}
     for _comp_type, _country, _comp_name, comp_dir in iter_competition_dirs(base_dir):
         raw_dir = comp_dir / 'raw'
         if not raw_dir.exists():
@@ -1474,6 +1555,22 @@ def _update_results_from_scheduled_events(
 
                 matched_count += 1
                 api_status = api_match.get('status', {}).get('type', '')
+                previous_status = match.get('status')
+                event_id = api_match.get('id') or match.get('event_id')
+                if event_id and not match.get('event_id'):
+                    match['event_id'] = event_id
+                should_refresh_details = (
+                    api_status == 'inprogress' or
+                    (
+                        api_status == 'finished' and
+                        (previous_status != 'finished' or not match.get('match_events_collected'))
+                    )
+                )
+                if event_id and should_refresh_details:
+                    try:
+                        modified = _refresh_match_details(scraper, match, event_id, match_details_cache) or modified
+                    except Exception as exc:
+                        print(f"    [WARN] Failed to fetch match details: {exc}")
                 has_score = _apply_api_score_fields(match, api_match)
                 _refresh_score_details_if_needed(scraper, match, api_match, api_status)
 
@@ -1702,7 +1799,8 @@ def update_match_results(target_date: str):
     
     updated_count = 0
     matched_count = 0
-    
+    match_details_cache = {}
+
     try:
         scheduled_update = _update_results_from_scheduled_events(scraper, target_date, base_dir, COMPETITIONS)
         if scheduled_update is None and _print_sofascore_api_blocked(scraper):
@@ -1827,32 +1925,27 @@ def update_match_results(target_date: str):
                             if first_report_for_match:
                                 matched_count += 1
                             api_status = api_m.get('status', {}).get('type', '')
+                            previous_status = match.get('status')
+                            event_id = api_m.get('id') or match.get('event_id')
+                            if event_id and not match.get('event_id'):
+                                match['event_id'] = event_id
+                            should_refresh_details = (
+                                api_status == 'inprogress' or
+                                (
+                                    api_status == 'finished' and
+                                    (previous_status != 'finished' or not match.get('match_events_collected'))
+                                )
+                            )
+                            if event_id and should_refresh_details:
+                                try:
+                                    modified = _refresh_match_details(scraper, match, event_id, match_details_cache) or modified
+                                except Exception as exc:
+                                    print(f"    [WARN] Failed to fetch match details: {exc}")
                             has_score = _apply_api_score_fields(match, api_m)
                             _refresh_score_details_if_needed(scraper, match, api_m, api_status)
 
                             if api_status == 'finished' and has_score:
                                 match['status'] = 'finished'
-
-                                event_id = api_m.get('id') or match.get('event_id')
-                                if event_id and match.get('home_yellow_cards_calc') is None:
-                                    try:
-                                        stats = scraper.get_match_statistics(event_id)
-                                        if stats:
-                                            from sofascore.utils import extract_statistics
-                                            stat_data = extract_statistics(stats, period='ALL')
-                                            match.update(stat_data)
-                                        time.sleep(0.3)
-
-                                        incidents = scraper.get_match_incidents(event_id)
-                                        if incidents:
-                                            _apply_penalty_score_from_incidents(match, incidents)
-                                            match['home_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and i.get('isHome'))
-                                            match['away_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and not i.get('isHome'))
-                                            match['home_red_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'red' and i.get('isHome'))
-                                            match['away_red_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'red' and not i.get('isHome'))
-                                        time.sleep(0.3)
-                                    except Exception as e:
-                                        print(f"    [WARN] Failed to fetch statistics: {e}")
 
                                 matches[idx] = match
                                 modified = True
@@ -1873,6 +1966,10 @@ def update_match_results(target_date: str):
                                     print(f"    PP {match.get('home_team')} vs {match.get('away_team')} - POSTPONED")
                                 reported_matches.add(match_key)
                             elif api_status == 'inprogress':
+                                match['status'] = 'inprogress'
+                                matches[idx] = match
+                                modified = True
+                                updated_matches.add(match_key)
                                 if first_report_for_match:
                                     print(f"    .. {match.get('home_team')} vs {match.get('away_team')} - IN PROGRESS")
                                 reported_matches.add(match_key)
@@ -3766,6 +3863,94 @@ def _date_dir(target_date: str) -> Path:
     return d
 
 
+def _match_events_path(target_date: str) -> Path:
+    target_date = validate_target_date(target_date)
+    return REPORTS_DIR / target_date / MATCH_EVENTS_FILENAME
+
+
+def _load_match_events_artifact(target_date: str) -> Optional[Dict]:
+    path = _match_events_path(target_date)
+    if not path.exists():
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            artifact = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if artifact.get('schema_version') != MATCH_EVENTS_SCHEMA_VERSION:
+        return None
+    if not isinstance(artifact.get('matches'), dict):
+        return None
+    return artifact
+
+
+def _attach_match_events(report: Dict, target_date: str) -> Dict:
+    artifact = _load_match_events_artifact(target_date)
+    if not artifact:
+        return report
+
+    snapshots = artifact.get('matches', {})
+    for match in report.get('matches', []):
+        event_id = match.get('event_id')
+        if event_id in (None, ''):
+            continue
+        snapshot = snapshots.get(str(event_id))
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get('events'), list):
+            continue
+        match['match_events'] = copy.deepcopy(snapshot['events'])
+        match['match_events_updated_at'] = snapshot.get('updated_at') or artifact.get('updated_at')
+    return report
+
+
+def _build_match_events_artifact(report: Dict, target_date: str) -> Dict:
+    existing = _load_match_events_artifact(target_date) or {}
+    existing_matches = existing.get('matches', {}) if isinstance(existing.get('matches'), dict) else {}
+    updated_at = report.get('updated_at') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    snapshots = {}
+
+    for match in report.get('matches', []):
+        event_id = match.get('event_id')
+        if event_id in (None, ''):
+            continue
+
+        key = str(event_id)
+        events = match.get('match_events')
+        if isinstance(events, list) and events:
+            snapshots[key] = {
+                'event_id': event_id,
+                'status': match.get('status', 'unknown'),
+                'home_team': match.get('home_team'),
+                'away_team': match.get('away_team'),
+                'updated_at': updated_at,
+                'events': copy.deepcopy(events),
+            }
+            continue
+
+        previous = existing_matches.get(key)
+        if isinstance(previous, dict) and isinstance(previous.get('events'), list):
+            snapshot = copy.deepcopy(previous)
+            snapshot['status'] = match.get('status', snapshot.get('status', 'unknown'))
+            snapshot['home_team'] = match.get('home_team') or snapshot.get('home_team')
+            snapshot['away_team'] = match.get('away_team') or snapshot.get('away_team')
+            snapshots[key] = snapshot
+
+    return {
+        'schema_version': MATCH_EVENTS_SCHEMA_VERSION,
+        'date': target_date,
+        'updated_at': updated_at,
+        'matches': snapshots,
+    }
+
+
+def _report_without_match_events(report: Dict) -> Dict:
+    stored_report = copy.deepcopy(report)
+    for match in stored_report.get('matches', []):
+        match.pop('match_events', None)
+        match.pop('match_events_collected', None)
+        match.pop('match_events_updated_at', None)
+    return stored_report
+
 def get_report_path(target_date: str, status: str = None) -> Path:
     target_date = validate_target_date(target_date)
     date_dir = _date_dir(target_date)
@@ -3791,11 +3976,13 @@ def load_existing_report(target_date: str) -> Optional[Dict]:
         path = date_dir / f"predictions_{status}.json"
         if path.exists():
             with open(path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                report = json.load(f)
+            return _attach_match_events(report, target_date)
         old_path = REPORTS_DIR / f"predictions_{target_date}_{status}.json"
         if old_path.exists():
             with open(old_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                report = json.load(f)
+            return _attach_match_events(report, target_date)
     return None
 
 
@@ -3822,6 +4009,10 @@ def _apply_actual_fields_to_report_match(match_entry: Dict, m: Dict) -> Optional
     if fields.get('actual_penalty_score') is not None or match_entry.get('actual_penalty_score') is not None:
         match_entry['actual_penalty_score'] = fields.get('actual_penalty_score')
     match_entry['decided_by_penalties'] = fields.get('decided_by_penalties', False)
+    if isinstance(m.get('match_events'), list) and m.get('match_events'):
+        match_entry['match_events'] = copy.deepcopy(m['match_events'])
+        match_entry['match_events_collected'] = bool(m.get('match_events_collected'))
+
 
     actual_result = fields.get('actual_result')
     if actual_result:
@@ -4034,6 +4225,8 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
             'odds_availability': _source_match_odds_availability(m),
+            'match_events': copy.deepcopy(m.get('match_events') or []),
+            'match_events_collected': bool(m.get('match_events_collected')),
         }
         match_entry.update(actual_fields)
         match_entry.update(_serialize_result_prediction_data(r, actual_result))
@@ -4166,6 +4359,8 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             'actual_corners': m.get('total_corners'),
             'referee_name': m.get('referee_name'),
             'odds_availability': _source_match_odds_availability(m),
+            'match_events': copy.deepcopy(m.get('match_events') or []),
+            'match_events_collected': bool(m.get('match_events_collected')),
         }
         new_entry.update(actual_fields)
         new_entry.update(_serialize_result_prediction_data(r, actual_result))
@@ -4242,7 +4437,11 @@ def save_report(report: Dict, target_date: str):
     status = report['status']
     new_path = date_dir / f"predictions_{status}.json"
 
-    _atomic_write_json(new_path, report)
+    events_artifact = _build_match_events_artifact(report, target_date)
+    events_path = date_dir / MATCH_EVENTS_FILENAME
+    _atomic_write_json(new_path, _report_without_match_events(report))
+    if events_artifact['matches'] or events_path.exists():
+        _atomic_write_json(events_path, events_artifact)
 
     other_status = 'finished' if status == 'unfinished' else 'unfinished'
     for old in [date_dir / f"predictions_{other_status}.json",
