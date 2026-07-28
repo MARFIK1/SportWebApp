@@ -188,6 +188,65 @@ describe("match page data contracts", () => {
         });
     });
 
+
+    it("shows an in-progress report with its current score", () => {
+        const display = resolveMatchDisplayState(
+            sofascoreMatch({ status: "notstarted" }),
+            predictionMatch({
+                status: "inprogress",
+                actual_score: "1-0",
+                actual_result: null,
+            }),
+        );
+
+        expect(display).toMatchObject({
+            displayStatus: "inprogress",
+            displayHomeScore: 1,
+            displayAwayScore: 0,
+            isFinished: false,
+        });
+    });
+
+    it("shows the current score from an in-progress source match", () => {
+        const display = resolveMatchDisplayState(
+            sofascoreMatch({
+                status: "inprogress",
+                home_score: 2,
+                away_score: 1,
+            }),
+            null,
+        );
+
+        expect(display).toMatchObject({
+            displayStatus: "inprogress",
+            displayHomeScore: 2,
+            displayAwayScore: 1,
+            isFinished: false,
+        });
+    });
+
+    it("prefers a finished source result over a stale live report", () => {
+        const display = resolveMatchDisplayState(
+            sofascoreMatch({
+                status: "finished",
+                home_score: 1,
+                away_score: 2,
+            }),
+            predictionMatch({
+                status: "inprogress",
+                actual_score: "1-0",
+                actual_result: "HOME",
+            }),
+        );
+
+        expect(display).toMatchObject({
+            displayStatus: "finished",
+            displayHomeScore: 1,
+            displayAwayScore: 2,
+            actualResult: "AWAY",
+            isFinished: true,
+        });
+    });
     it("finds report matches by event_id before falling back to home and away team names", () => {
         const byTeams = predictionMatch({ id: "team-fallback", event_id: null });
         const byEvent = predictionMatch({

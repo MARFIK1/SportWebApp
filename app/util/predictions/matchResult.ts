@@ -134,11 +134,21 @@ export function resolveSofascoreMatchResult(
     const rawExtraTimeScore = scorePairFromValues(match.home_score_et, match.away_score_et);
     const extraTimeScore = predictionState?.extraTimeScore ?? rawExtraTimeScore;
     const rawScore = scorePairFromValues(match.home_score, match.away_score);
-    const regularScore = deriveRegularScore(predictionState?.regularScore ?? rawScore, penaltyScore);
+    const preferredScore = match.status === "finished" && rawScore
+        ? rawScore
+        : predictionState?.regularScore ?? rawScore;
+    const regularScore = deriveRegularScore(preferredScore, penaltyScore);
     const normalTimeScore = predictionState?.normalTimeScore ?? subtractScorePair(regularScore, extraTimeScore);
     const wentToExtraTime = Boolean(predictionState?.wentToExtraTime || extraTimeScore);
     const reportFinished = predictionMatch?.status === "finished" && regularScore !== null;
-    const displayStatus = reportFinished ? "finished" : match.status;
+    const rawFinished = match.status === "finished" && regularScore !== null;
+    const displayStatus = reportFinished || rawFinished
+        ? "finished"
+        : predictionMatch?.status === "inprogress" || match.status === "inprogress"
+            ? "inprogress"
+            : predictionMatch?.status === "postponed" || predictionMatch?.status === "canceled"
+                ? predictionMatch.status
+                : match.status;
     const decidedByPenalties = Boolean(
         predictionMatch?.decided_by_penalties ||
         penaltyWinner(penaltyScore),
@@ -146,9 +156,11 @@ export function resolveSofascoreMatchResult(
     const scoreResult = resultFromScorePair(regularScore);
     const predictionResult = decidedByPenalties
         ? scoreResult ?? predictionState?.predictionResult ?? null
-        : predictionState?.predictionResult ?? scoreResult;
+        : rawFinished
+            ? scoreResult
+            : predictionState?.predictionResult ?? scoreResult;
     const actualResult = (decidedByPenalties ? penaltyWinner(penaltyScore) : null)
-        ?? predictionState?.actualResult
+        ?? (rawFinished ? predictionResult : predictionState?.actualResult)
         ?? predictionResult;
     const isFinished = displayStatus === "finished" && predictionResult !== null;
 
