@@ -88,6 +88,10 @@ TEAM_HISTORY_FORCE_REFRESH = (
     str(os.environ.get('SOFASCORE_TEAM_HISTORY_FORCE_REFRESH', '')).strip().lower()
     in {'1', 'true', 'yes', 'on'}
 )
+FETCH_UPCOMING_EVENT_DETAILS = (
+    str(os.environ.get('SOFASCORE_FETCH_UPCOMING_EVENT_DETAILS', '')).strip().lower()
+    in {'1', 'true', 'yes', 'on'}
+)
 try:
     TEAM_HISTORY_MAX_PAGES = max(1, int(os.environ.get('SOFASCORE_TEAM_HISTORY_PAGES', '6')))
 except ValueError:
@@ -1159,6 +1163,84 @@ def _match_belongs_to_date(match: dict, target_date: str) -> bool:
     return False
 
 
+def _scheduled_event_belongs_to_date(event: dict, target_date: str) -> bool:
+    timestamp = event.get("startTimestamp")
+    if timestamp not in (None, ""):
+        try:
+            return datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d") == target_date
+        except (OSError, OverflowError, TypeError, ValueError):
+            pass
+
+    for key in ("date", "start_time", "datetime"):
+        value = event.get(key)
+        if isinstance(value, str) and value:
+            return value.startswith(target_date)
+
+    return True
+
+
+def _filter_scheduled_events_for_date(events, target_date: str):
+    filtered = []
+    ignored = 0
+    for event in events or []:
+        if _scheduled_event_belongs_to_date(event, target_date):
+            filtered.append(event)
+        else:
+            ignored += 1
+    return filtered, ignored
+
+
+def _prune_misaligned_scheduled_cache(base_dir: Path):
+    changed_files = 0
+    removed_matches = 0
+    pattern = re.compile(r"^upcoming_scheduled_(\d{4}-\d{2}-\d{2})\.json$")
+
+    for scheduled_path in base_dir.rglob("upcoming_scheduled_*.json"):
+        filename_match = pattern.match(scheduled_path.name)
+        if not filename_match:
+            continue
+        file_date = filename_match.group(1)
+
+        try:
+            with open(scheduled_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+
+        matches = data.get("matches", []) if isinstance(data, dict) else []
+        if not isinstance(matches, list):
+            continue
+        aligned_matches = [
+            match for match in matches
+            if isinstance(match, dict) and _match_belongs_to_date(match, file_date)
+        ]
+        removed = len(matches) - len(aligned_matches)
+        if not removed:
+            continue
+
+        removed_matches += removed
+        changed_files += 1
+        if not aligned_matches:
+            scheduled_path.unlink(missing_ok=True)
+            continue
+
+        data["matches"] = aligned_matches
+        features = data.get("features")
+        if isinstance(features, list):
+            data["features"] = [
+                feature for feature in features
+                if isinstance(feature, dict) and _match_belongs_to_date(feature, file_date)
+            ]
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict):
+            metadata["total_matches"] = len(aligned_matches)
+
+        with open(scheduled_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return changed_files, removed_matches
+
+
 def _local_scheduled_comp_keys_for_date(base_dir: Path, target_date: str, competitions: dict) -> set:
     comp_refs = set()
     for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
@@ -1199,6 +1281,7 @@ def _fetch_tournament_scheduled_events_by_comp(
 ):
     events_by_comp = {}
     total_events = 0
+    ignored_off_date = 0
 
     scope_keys = set(only_comp_keys or [])
     if not scope_keys:
@@ -1229,8 +1312,19 @@ def _fetch_tournament_scheduled_events_by_comp(
         if not events:
             continue
 
+        events, ignored = _filter_scheduled_events_for_date(events, target_date)
+        ignored_off_date += ignored
+        if not events:
+            continue
+
         events_by_comp[comp_key] = events
         total_events += len(events)
+
+    if ignored_off_date:
+        print(
+            f"[INFO] Ignored {ignored_off_date} scheduled events outside "
+            f"local date {target_date}."
+        )
 
     return events_by_comp, total_events
 
@@ -1304,6 +1398,16 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
     from sofascore.utils import extract_match_data, extract_referee_data, extract_odds
 
     scheduled_events = scraper.get_scheduled_events(target_date)
+    if scheduled_events:
+        scheduled_events, ignored_off_date = _filter_scheduled_events_for_date(
+            scheduled_events,
+            target_date,
+        )
+        if ignored_off_date:
+            print(
+                f"[INFO] Ignored {ignored_off_date} scheduled events outside "
+                f"local date {target_date}."
+            )
     events_by_comp = {}
     total_events = 0
 
@@ -1353,6 +1457,13 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
             print("No scoped tournament scheduled-events found; skipping broad season lookup to avoid API block.")
             return True
 
+    pruned_files, removed_matches = _prune_misaligned_scheduled_cache(base_dir)
+    if removed_matches:
+        print(
+            f"[INFO] Removed {removed_matches} off-date events from "
+            f"{pruned_files} cached schedule files."
+        )
+
     tracked_count = sum(len(v) for v in events_by_comp.values())
     print(f"Scheduled events for {target_date}: {total_events} total, {tracked_count} tracked")
 
@@ -1381,10 +1492,11 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
                     if odds:
                         match_data.update(odds)
 
-                event_details = scraper.get_event_details(event_id)
-                referee_data = extract_referee_data(event_details)
-                if referee_data:
-                    match_data.update(referee_data)
+                if FETCH_UPCOMING_EVENT_DETAILS:
+                    event_details = scraper.get_event_details(event_id)
+                    referee_data = extract_referee_data(event_details)
+                    if referee_data:
+                        match_data.update(referee_data)
 
             processed.append(match_data)
             history_context = finished_matches + [match_data]
@@ -1479,6 +1591,16 @@ def _update_results_from_scheduled_events(
         ]
     else:
         scheduled_events = scraper.get_scheduled_events(target_date)
+        if scheduled_events:
+            scheduled_events, ignored_off_date = _filter_scheduled_events_for_date(
+                scheduled_events,
+                target_date,
+            )
+            if ignored_off_date:
+                print(
+                    f"[INFO] Ignored {ignored_off_date} scheduled events outside "
+                    f"local date {target_date}."
+                )
     if not scheduled_events and not used_scoped_tournament_first:
         if scheduled_events is None:
             print("Scheduled events endpoint unavailable; trying tournament scheduled-events.")
@@ -3685,7 +3807,7 @@ def _print_analysis(analysis: dict, home: str, away: str, indent: str = '     ')
     
     print(f"{indent}  Expected goals:    {home}: {goals.get('expected_goals_home', '?')}  |  {away}: {goals.get('expected_goals_away', '?')}  |  TOTAL: {goals.get('expected_total', '?')}")
     print(f"{indent}  Clean sheets:      {home}: {hg.get('clean_sheets', 0)}/{hg.get('n', 0)}   |   {away}: {ag.get('clean_sheets', 0)}/{ag.get('n', 0)}")
-    print(f"{indent}  Failed to score:   {home}: {hg.get('failed_to_score', 0)}/{hg.get('n', 0)}   |   {away}: {ag.get('failed_to_score', 0)}/{ag.get('n', 0)}")
+    print(f"{indent}  Scoreless matches: {home}: {hg.get('failed_to_score', 0)}/{hg.get('n', 0)}   |   {away}: {ag.get('failed_to_score', 0)}/{ag.get('n', 0)}")
     
     print(f"{indent}")
     print(f"{indent}GOAL MARKETS (Poisson, expected: {goals.get('expected_total', '?')} goals):")

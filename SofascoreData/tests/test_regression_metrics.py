@@ -65,6 +65,7 @@ class RegressionMetricTests(unittest.TestCase):
         self.assertEqual(predictions["consensus"]["prediction"], 3.0)
         self.assertEqual(predictions["consensus"]["model"], "Best")
         self.assertEqual(predictions["consensus"]["strategy"], "best_temporal_mae")
+        self.assertEqual(predictions["consensus"]["input_quality"]["status"], "complete")
 
 
 if __name__ == "__main__":

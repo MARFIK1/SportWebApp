@@ -384,6 +384,10 @@ class SofascoreSeleniumScraper:
         data = self.get_api_data(endpoint)
         if self._has_api_error(endpoint, data):
             error = data.get('error') or {}
+            if str(error.get('code')) == '404':
+                if _truthy_env('SOFASCORE_VERBOSE_API_ERRORS'):
+                    print(f"[DEBUG] no tournament schedule for {tournament_id}/{date_ymd}")
+                return []
             print(f"[WARN] tournament scheduled-events {tournament_id}/{date_ymd}: Sofascore API error {error.get('code')} {error.get('reason')}")
             return None
         if not data or not isinstance(data, dict):

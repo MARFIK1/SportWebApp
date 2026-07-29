@@ -160,15 +160,15 @@ function cleanupStaging() {
         fs.rmSync(STAGING, {
             recursive: true,
             force: true,
-            maxRetries: 12,
-            retryDelay: 250,
+            maxRetries: 30,
+            retryDelay: 500,
         });
     } catch (error) {
         const code = error && typeof error === "object" && "code" in error
             ? error.code
             : undefined;
         if (code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY") {
-            console.warn(`warning: could not remove temporary staging dir (${code}): ${STAGING}`);
+            console.info(`info: deferred temporary staging cleanup (${code}): ${STAGING}`);
             return;
         }
         throw error;

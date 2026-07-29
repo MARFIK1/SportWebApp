@@ -2750,6 +2750,7 @@ class UniversalPredictor:
                 'prediction': round(float(y_pred), 2),
                 'model': model_name,
                 'task': 'regression',
+                'input_quality': input_quality,
             }
 
         class_names = config['class_names']
