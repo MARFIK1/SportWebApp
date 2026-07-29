@@ -19,7 +19,9 @@ const VERCEL_PROJECT = "sport-web-app";
 const VERCEL_SCOPE = "sportwebapp-project";
 const VERCEL_PROD_DOMAIN = "sport-web-app-eight.vercel.app";
 const LOCAL_VERCEL_LINK = path.join(ROOT, ".vercel", "project.json");
-const STAGING = path.join(os.tmpdir(), "sportwebapp-vercel-" + crypto.randomBytes(16).toString("hex"));
+const STAGING_PREFIX = "sportwebapp-vercel-";
+const STALE_STAGING_MIN_AGE_MS = 60 * 60 * 1000;
+const STAGING = path.join(os.tmpdir(), STAGING_PREFIX + crypto.randomBytes(16).toString("hex"));
 
 function fail(message) {
     throw new Error(message);
@@ -174,6 +176,44 @@ function cleanupStaging() {
         throw error;
     }
 }
+
+function cleanupStaleStaging() {
+    const tempRoot = os.tmpdir();
+    let entries;
+    try {
+        entries = fs.readdirSync(tempRoot, { withFileTypes: true });
+    } catch {
+        return;
+    }
+
+    let removed = 0;
+    for (const entry of entries) {
+        if (!entry.isDirectory() || !entry.name.startsWith(STAGING_PREFIX)) continue;
+
+        const stalePath = path.join(tempRoot, entry.name);
+        if (stalePath === STAGING) continue;
+
+        try {
+            const ageMs = Date.now() - fs.statSync(stalePath).mtimeMs;
+            if (ageMs < STALE_STAGING_MIN_AGE_MS) continue;
+            fs.rmSync(stalePath, {
+                recursive: true,
+                force: true,
+                maxRetries: 3,
+                retryDelay: 250,
+            });
+            removed += 1;
+        } catch {
+            // A still-locked staging directory can be retried on the next deploy.
+        }
+    }
+
+    if (removed) {
+        console.info(`cleaned ${removed} stale Vercel staging directories`);
+    }
+}
+
+cleanupStaleStaging();
 
 console.log("staging copy for Vercel (.data included, no node_modules / full SofascoreData)\n");
 console.log(`using data snapshot: ${DATA_SOURCE}\n`);
