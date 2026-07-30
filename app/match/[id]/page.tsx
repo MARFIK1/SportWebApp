@@ -15,6 +15,7 @@ import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
 import MatchHistoryTabs, { type MatchHistoryItem } from "./MatchHistoryTabs";
 import PostMatchInsights from "./PostMatchInsights";
+import MarketSettlement from "./MarketSettlement";
 import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
@@ -775,6 +776,8 @@ export default async function Match({ params, searchParams }: PageProps) {
                             xgAway={displayXgAway ?? null}
                         />
                     )}
+
+                    {isFinished && displayPredMatch && <MarketSettlement />}
 
                     {isFinished && matchStats.length > 0 && (
                         <MatchStatistics stats={matchStats} />
