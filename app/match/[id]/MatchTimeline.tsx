@@ -16,8 +16,14 @@ interface MatchTimelineProps {
     awayTeam: string;
 }
 
+function normalizedAddedTime(event: MatchTimelineEvent): number {
+    const addedTime = event.added_time ?? 0;
+    return addedTime > 0 && addedTime < 100 ? addedTime : 0;
+}
+
 function eventOrder(event: MatchTimelineEvent): number {
-    return (event.minute ?? -1) * 100 + (event.added_time ?? 0);
+    const minuteOffset = event.type === "period" ? 99 : normalizedAddedTime(event);
+    return (event.minute ?? -1) * 100 + minuteOffset;
 }
 
 function eventClass(event: MatchTimelineEvent): string {
@@ -43,8 +49,9 @@ export function visibleTimelineEvents(
 
 export function timelineMinuteLabel(event: MatchTimelineEvent): string {
     if (event.minute == null) return "";
-    return event.added_time
-        ? `${event.minute}+${event.added_time}'`
+    const addedTime = normalizedAddedTime(event);
+    return addedTime
+        ? `${event.minute}+${addedTime}'`
         : `${event.minute}'`;
 }
 

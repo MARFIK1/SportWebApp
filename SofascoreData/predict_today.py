@@ -1736,6 +1736,23 @@ def _update_results_from_scheduled_events(
     }
 
 
+def _match_requires_result_refresh(match: Dict, comp_type: str) -> bool:
+    status = match.get('status', '')
+    has_score = match.get('home_score') is not None and match.get('away_score') is not None
+    needs_score_refresh = comp_type != 'league' and _looks_like_unverified_shootout_score(match)
+    needs_event_backfill = (
+        status == 'finished' and
+        match.get('event_id') not in (None, '') and
+        not match.get('match_events_collected')
+    )
+    return (
+        status in ('inprogress', 'upcoming', 'notstarted') or
+        not has_score or
+        needs_score_refresh or
+        needs_event_backfill
+    )
+
+
 def _collect_competitions_requiring_update(base_dir: Path, target_date: str):
     comps_to_check = set()
 
@@ -1756,10 +1773,7 @@ def _collect_competitions_requiring_update(base_dir: Path, target_date: str):
                     data = json.load(f)
                 for match in data.get('matches', []):
                     if match.get('date', '').startswith(target_date):
-                        status = match.get('status', '')
-                        has_score = match.get('home_score') is not None and match.get('away_score') is not None
-                        needs_score_refresh = comp_type != 'league' and _looks_like_unverified_shootout_score(match)
-                        if status in ('inprogress', 'upcoming', 'notstarted') or not has_score or needs_score_refresh:
+                        if _match_requires_result_refresh(match, comp_type):
                             needs_update = True
                             break
                 if needs_update:
@@ -4120,6 +4134,8 @@ def _actual_fields_from_match(m: Dict) -> Dict:
         'actual_score': m.get('score'),
         'actual_penalty_score': m.get('penalty_score'),
         'decided_by_penalties': bool(m.get('decided_by_penalties')),
+        'actual_cards': m.get('total_cards'),
+        'actual_corners': m.get('total_corners'),
     }
 
 
@@ -4131,6 +4147,9 @@ def _apply_actual_fields_to_report_match(match_entry: Dict, m: Dict) -> Optional
     if fields.get('actual_penalty_score') is not None or match_entry.get('actual_penalty_score') is not None:
         match_entry['actual_penalty_score'] = fields.get('actual_penalty_score')
     match_entry['decided_by_penalties'] = fields.get('decided_by_penalties', False)
+    for key in ('actual_cards', 'actual_corners'):
+        if fields.get(key) is not None:
+            match_entry[key] = fields[key]
     if isinstance(m.get('match_events'), list) and m.get('match_events'):
         match_entry['match_events'] = copy.deepcopy(m['match_events'])
         match_entry['match_events_collected'] = bool(m.get('match_events_collected'))

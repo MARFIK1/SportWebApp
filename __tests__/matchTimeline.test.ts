@@ -22,6 +22,25 @@ describe("match timeline helpers", () => {
         expect(timelineMinuteLabel(result[0])).toBe("90+4'");
     });
 
+    it("ignores period sentinel added time and keeps half time in chronological order", () => {
+        const halfTime = event({
+            id: "half-time",
+            type: "period",
+            source_type: "period",
+            minute: 45,
+            added_time: 999,
+            text: "HT",
+        });
+        const result = visibleTimelineEvents([
+            event({ id: "second-half", minute: 49 }),
+            halfTime,
+            event({ id: "stoppage", minute: 45, added_time: 1 }),
+        ], false);
+
+        expect(result.map((item) => item.id)).toEqual(["second-half", "half-time", "stoppage"]);
+        expect(timelineMinuteLabel(halfTime)).toBe("45'");
+    });
+
     it("hides substitutions until the user expands them", () => {
         const events = [
             event({ id: "goal", minute: 50 }),

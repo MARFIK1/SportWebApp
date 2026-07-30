@@ -1,6 +1,7 @@
 import unittest
 
 from predict_today import (
+    _actual_fields_from_match,
     _agreement_strength,
     _dedupe_source_matches,
     _get_missing_odds_features,
@@ -8,6 +9,7 @@ from predict_today import (
     _has_confirmed_lineup_features,
     _matches_with_source_season,
     _model_release_summary,
+    _match_requires_result_refresh,
     _prediction_quality_summary,
     _raw_match_to_match_data,
     _serialize_result_prediction_data,
@@ -196,6 +198,39 @@ class PredictionQualitySummaryTests(unittest.TestCase):
 
 
 class PredictionInputContractTests(unittest.TestCase):
+    def test_finished_match_without_events_requires_detail_backfill(self):
+        match = {
+            "event_id": 16316943,
+            "status": "finished",
+            "home_score": 1,
+            "away_score": 0,
+        }
+
+        self.assertTrue(_match_requires_result_refresh(match, "league"))
+
+        match["match_events_collected"] = True
+        self.assertFalse(_match_requires_result_refresh(match, "league"))
+
+    def test_finished_match_without_event_id_does_not_loop_forever(self):
+        match = {
+            "status": "finished",
+            "home_score": 1,
+            "away_score": 0,
+        }
+
+        self.assertFalse(_match_requires_result_refresh(match, "league"))
+
+    def test_actual_fields_include_settlement_statistics(self):
+        fields = _actual_fields_from_match({
+            "result": "H",
+            "score": "2-1",
+            "total_cards": 5,
+            "total_corners": 9,
+        })
+
+        self.assertEqual(fields["actual_cards"], 5)
+        self.assertEqual(fields["actual_corners"], 9)
+
     def test_penalty_shootout_keeps_draw_for_1x2_and_winner_metadata(self):
         match = {
             "event_id": 10,
