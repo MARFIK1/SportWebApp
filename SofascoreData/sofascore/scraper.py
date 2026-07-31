@@ -153,7 +153,10 @@ class SofascoreSeleniumScraper:
 
     def _is_endpoint_optional_for_fallback(self, endpoint):
         endpoint = str(endpoint or '')
-        return endpoint.startswith('/sport/football/scheduled-events/')
+        return (
+            endpoint.startswith('/sport/football/scheduled-events/') or
+            endpoint.endswith('/lineups')
+        )
 
     def _record_api_error(self, endpoint, data):
         if not isinstance(data, dict) or not isinstance(data.get('error'), dict):
@@ -315,6 +318,15 @@ class SofascoreSeleniumScraper:
         """Get incidents (goals, cards) for a match"""
         data = self.get_api_data(f"/event/{event_id}/incidents")
         return data.get('incidents', []) if data else None
+    def get_match_lineups(self, event_id):
+        """Get formations and player lineups for a match when available."""
+        endpoint = f"/event/{event_id}/lineups"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            error = data.get('error') or {}
+            return {} if error.get('code') in (404, 422) else None
+        return data if isinstance(data, dict) else None
+
     
     def get_upcoming_matches(self, tournament_id, season_id, page=0):
         endpoint = f"/unique-tournament/{tournament_id}/season/{season_id}/events/next/{page}"

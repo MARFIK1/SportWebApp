@@ -198,7 +198,7 @@ class PredictionQualitySummaryTests(unittest.TestCase):
 
 
 class PredictionInputContractTests(unittest.TestCase):
-    def test_finished_match_without_events_requires_detail_backfill(self):
+    def test_finished_match_without_event_details_requires_backfill(self):
         match = {
             "event_id": 16316943,
             "status": "finished",
@@ -209,6 +209,9 @@ class PredictionInputContractTests(unittest.TestCase):
         self.assertTrue(_match_requires_result_refresh(match, "league"))
 
         match["match_events_collected"] = True
+        self.assertTrue(_match_requires_result_refresh(match, "league"))
+
+        match["match_lineups_checked"] = True
         self.assertFalse(_match_requires_result_refresh(match, "league"))
 
     def test_finished_match_without_event_id_does_not_loop_forever(self):
