@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions, resolveCompetitionByDataPath, type Competition } from "@/app/util/league/leagueRegistry";
 import { buildMatchLookupMaps, computeStandings, findMatchInCompetitions, findMatchInTeamHistory, listSeasonFiles, loadAllSeasons, loadSeasonMatches, loadTeamHistory, loadUpcomingMatches, resolveLeagueTableContext } from "@/app/util/data/dataService";
-import { getMatchPrediction, loadPredictionReport, loadAnalysisReport, loadMatchEventSnapshot } from "@/app/util/data/predictionService";
+import { getMatchPrediction, loadPredictionReport, loadAnalysisReport, loadMatchEventSnapshot, loadMatchLineupSnapshot } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import type { PredictionMatch, PredictionReport } from "@/types/predictions";
 import CompactLeagueTable from "./CompactLeagueTable";
@@ -20,6 +20,7 @@ import PredictionExplanation from "./PredictionExplanation";
 import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 import MatchTimeline from "./MatchTimeline";
+import MatchLineups from "./MatchLineups";
 import TournamentContext from "./TournamentContext";
 import { computeWorldCupBracketSlots, detectWorldCupFormat } from "./bracketConfig";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
@@ -517,6 +518,7 @@ export default async function Match({ params, searchParams }: PageProps) {
     const date = initialDate || sourceMatch.date.slice(0, 10);
     const worldCupCompetition = resolveWorldCupCompetition(competition, competitions);
     const matchEventSnapshot = loadMatchEventSnapshot(date, eventId);
+    const matchLineupSnapshot = loadMatchLineupSnapshot(date, eventId);
     const contextCompetition = worldCupCompetition ?? competition;
     const competitionMatches = loadContextMatches(contextCompetition, date.slice(0, 4));
     const selectedPredictionMatches = predReport?.matches ?? [];
@@ -733,6 +735,16 @@ export default async function Match({ params, searchParams }: PageProps) {
                             snapshot={matchEventSnapshot}
                             homeTeam={displayHomeTeam}
                             awayTeam={displayAwayTeam}
+                        />
+                    )}
+
+                    {matchLineupSnapshot && (
+                        <MatchLineups
+                            snapshot={matchLineupSnapshot}
+                            homeTeam={displayHomeTeam}
+                            awayTeam={displayAwayTeam}
+                            homeTeamId={match.home_team_id}
+                            awayTeamId={match.away_team_id}
                         />
                     )}
 
