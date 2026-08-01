@@ -6,6 +6,7 @@ import { filterReportDatesByWindow } from "./reportWindow";
 import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
 import type { MatchEventSnapshot, MatchEventsArtifact, MatchTimelineEvent } from "@/types/matchEvents";
+import type { MatchLineupPlayer, MatchLineupSide, MatchLineupSnapshot, MatchLineupsArtifact, MatchTopRatedPlayer } from "@/types/matchLineups";
 import { getConsensusConfidence } from "@/app/util/predictions/confidence";
 import { normalizePredictionMatchResult, predictionCorrectness } from "@/app/util/predictions/matchResult";
 
@@ -555,6 +556,69 @@ export const loadMatchEventSnapshot = cache((
     if (!snapshot || !Array.isArray(snapshot.events)) return null;
 
     return { ...snapshot, events: snapshot.events.filter(isTimelineEvent) };
+});
+
+
+function isLineupPlayer(value: unknown): value is MatchLineupPlayer {
+    if (!value || typeof value !== "object") return false;
+    const player = value as Partial<MatchLineupPlayer>;
+    return (
+        typeof player.name === "string" &&
+        (player.rating == null || typeof player.rating === "number")
+    );
+}
+function isTopRatedPlayer(value: unknown): value is MatchTopRatedPlayer {
+    if (!isLineupPlayer(value)) return false;
+    const player = value as Partial<MatchTopRatedPlayer>;
+    return (
+        (player.team_side === "home" || player.team_side === "away") &&
+        player.selection_method === "highest_rating"
+    );
+}
+
+
+
+function isLineupSide(value: unknown): value is MatchLineupSide {
+    if (!value || typeof value !== "object") return false;
+    const side = value as Partial<MatchLineupSide>;
+    return Array.isArray(side.starters) && Array.isArray(side.substitutes);
+}
+
+export const loadMatchLineupSnapshot = cache((
+    date: string,
+    eventId: number | string,
+): MatchLineupSnapshot | null => {
+    const safeDate = safeReportDate(date);
+    if (!safeDate || String(eventId).trim() === "") return null;
+
+    const artifactPath = newestMatchEventsFile(
+        reportDirs().map((dir) => path.join(dir, safeDate, "match_lineups.json")),
+    );
+    if (!artifactPath) return null;
+
+    const artifact = readJson<MatchLineupsArtifact>(artifactPath);
+    if (artifact?.schema_version !== 1 || !artifact.matches || typeof artifact.matches !== "object") return null;
+    const snapshot = artifact.matches[String(eventId)];
+    if (!snapshot || !isLineupSide(snapshot.home) || !isLineupSide(snapshot.away)) return null;
+
+    const topRatedPlayer = isTopRatedPlayer(snapshot.top_rated_player)
+        ? snapshot.top_rated_player
+        : undefined;
+    return {
+        ...snapshot,
+        confirmed: Boolean(snapshot.confirmed),
+        home: {
+            ...snapshot.home,
+            starters: snapshot.home.starters.filter(isLineupPlayer),
+            substitutes: snapshot.home.substitutes.filter(isLineupPlayer),
+        },
+        away: {
+            ...snapshot.away,
+            starters: snapshot.away.starters.filter(isLineupPlayer),
+            substitutes: snapshot.away.substitutes.filter(isLineupPlayer),
+        },
+        top_rated_player: topRatedPlayer,
+    };
 });
 
 export const loadPredictionReport = cache((date: string): PredictionReport | null => {

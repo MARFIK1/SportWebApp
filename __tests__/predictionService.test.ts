@@ -7,6 +7,7 @@ import {
     computeResultTypeAccuracy,
     getMatchPrediction,
     loadMatchEventSnapshot,
+    loadMatchLineupSnapshot,
     loadPredictionReport,
     loadComparisonSummary,
 } from "@/app/util/data/predictionService";
@@ -384,6 +385,100 @@ describe("match event snapshots", () => {
         ]);
     });
 });
+
+describe("match lineup snapshots", () => {
+    it("rejects invalid dates before reading the sidecar", () => {
+        const loaded = loadMatchLineupSnapshot("../2026-07-27", 16316950);
+
+        expect(loaded).toBeNull();
+        expect(mockedFs.readFileSync).not.toHaveBeenCalled();
+    });
+
+    it("loads valid lineups and removes malformed players", () => {
+        mockedFs.readFileSync.mockReturnValue(JSON.stringify({
+            schema_version: 1,
+            date: "2026-07-27",
+            updated_at: "2026-07-28 00:10:00",
+            matches: {
+                "16316950": {
+                    event_id: 16316950,
+                    status: "finished",
+                    home_team: "Zaglebie Lubin",
+                    away_team: "Piast Gliwice",
+                    updated_at: "2026-07-28 00:10:00",
+                    confirmed: true,
+                    home: {
+                        formation: "4-2-3-1",
+                        starters: [
+                            { id: 1, name: "Home Goalkeeper", position: "G", rating: 7.1 },
+                            { id: 2, position: "D" },
+                        ],
+                        substitutes: [],
+                    },
+                    away: {
+                        formation: "4-4-2",
+                        starters: [
+                            { id: 3, name: "Away Forward", position: "F", rating: 8.2 },
+                        ],
+                        substitutes: [
+                            { id: 4, name: "Away Substitute", position: "M" },
+                        ],
+                    },
+                    top_rated_player: {
+                        id: 3,
+                        name: "Away Forward",
+                        position: "F",
+                        rating: 8.2,
+                        team_side: "away",
+                        selection_method: "highest_rating",
+                    },
+                },
+            },
+        }));
+
+        const loaded = loadMatchLineupSnapshot("2026-07-27", 16316950);
+
+        expect(loaded).toMatchObject({
+            event_id: 16316950,
+            confirmed: true,
+            home: { formation: "4-2-3-1" },
+            away: { formation: "4-4-2" },
+            top_rated_player: {
+                name: "Away Forward",
+                rating: 8.2,
+                team_side: "away",
+            },
+        });
+        expect(loaded?.home.starters).toHaveLength(1);
+        expect(loaded?.away.substitutes).toEqual([
+            expect.objectContaining({ name: "Away Substitute" }),
+        ]);
+    });
+
+    it("ignores malformed top-rated metadata", () => {
+        mockedFs.readFileSync.mockReturnValue(JSON.stringify({
+            schema_version: 1,
+            matches: {
+                "99": {
+                    event_id: 99,
+                    status: "finished",
+                    updated_at: "2026-07-28 00:10:00",
+                    confirmed: false,
+                    home: { starters: [{ name: "Home Player" }], substitutes: [] },
+                    away: { starters: [{ name: "Away Player" }], substitutes: [] },
+                    top_rated_player: {
+                        name: "Invalid Team Side",
+                        team_side: "neutral",
+                        selection_method: "highest_rating",
+                    },
+                },
+            },
+        }));
+
+        expect(loadMatchLineupSnapshot("2026-07-28", 99)?.top_rated_player).toBeUndefined();
+    });
+});
+
 
 describe("computeConsensusAccuracy", () => {
     it("derives correctness from actual result instead of trusting report flag", () => {
