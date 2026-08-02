@@ -1,8 +1,27 @@
 import { deduplicateMatchesByEventId } from "@/app/util/data/matchDeduplication";
 import type { SofascoreMatch } from "@/types/sofascore";
 
+function expandSeasonYear(value: number, referenceYear?: number): number {
+    if (value >= 100) return value;
+    if (referenceYear == null) return 2000 + value;
+
+    const century = Math.floor(referenceYear / 100) * 100;
+    const expanded = century + value;
+    return expanded < referenceYear ? expanded + 100 : expanded;
+}
+
 function extractSeasonYear(value: unknown): number | null {
-    const years = Array.from(String(value ?? "").matchAll(/\b(?:19|20)\d{2}\b/g), (match) => Number(match[0]));
+    const label = String(value ?? "");
+    const isIsoDate = /^\d{4}-\d{1,2}-\d{1,2}(?:[T\s]|$)/.test(label.trim());
+    const seasonSpan = isIsoDate
+        ? null
+        : label.match(/\b((?:19|20)\d{2}|\d{2})\s*[/-]\s*((?:19|20)\d{2}|\d{2})\b/);
+    if (seasonSpan) {
+        const startYear = expandSeasonYear(Number(seasonSpan[1]));
+        return expandSeasonYear(Number(seasonSpan[2]), startYear);
+    }
+
+    const years = Array.from(label.matchAll(/\b(?:19|20)\d{2}\b/g), (match) => Number(match[0]));
     if (years.length === 0) return null;
     return Math.max(...years.filter(Number.isFinite));
 }

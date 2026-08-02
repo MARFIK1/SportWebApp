@@ -118,7 +118,7 @@ function reportOnlyMatch(
             home_score_et: extraTimeScore?.home ?? null,
             away_score_et: extraTimeScore?.away ?? null,
             status: predMatch.status,
-            season: date.slice(0, 4),
+            season: predMatch.season?.trim() || date.slice(0, 4),
         } as SofascoreMatch,
     };
 }
@@ -196,7 +196,7 @@ function addContextMatches(matchesByEventId: Map<number, SofascoreMatch>, matche
 function upcomingToContextMatch(match: ReturnType<typeof loadUpcomingMatches>[number]): SofascoreMatch {
     return {
         ...match,
-        season: match.date.slice(0, 4),
+        season: match.season?.trim() || match.date.slice(0, 4),
     } as unknown as SofascoreMatch;
 }
 

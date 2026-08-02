@@ -126,6 +126,7 @@ export interface PredictionMatch {
     event_id?: number | null;
     league: string;
     comp_type: string;
+    season?: string | null;
     home_team: string;
     away_team: string;
     start_time: string;

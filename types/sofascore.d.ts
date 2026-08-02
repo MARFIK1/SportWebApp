@@ -128,6 +128,7 @@ export interface SofascoreUpcomingMatch {
     date: string;
     time: string;
     round: number;
+    season?: string | null;
     home_team_id: number;
     home_team: string;
     away_team_id: number;

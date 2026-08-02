@@ -53,11 +53,10 @@ export function loserSlotFromTeamName(name: string): number | null {
 }
 
 function asSofascoreMatch(match: SofascoreMatch | SofascoreUpcomingMatch): SofascoreMatch {
-    if ("season" in match && typeof match.season === "string") return match;
     return {
         ...match,
-        season: match.date.slice(0, 4),
-    } as SofascoreMatch;
+        season: match.season?.trim() || match.date.slice(0, 4),
+    } as unknown as SofascoreMatch;
 }
 
 function seasonYearFromMatch(match: SofascoreMatch): string | null {

@@ -37,7 +37,7 @@ const teamHistoryIndexCache = new Map<string, Map<number, SofascoreMatch>>();
 function upcomingToMatch(match: SofascoreUpcomingMatch): SofascoreMatch {
     return {
         ...match,
-        season: match.date.slice(0, 4),
+        season: match.season?.trim() || match.date.slice(0, 4),
     } as unknown as SofascoreMatch;
 }
 
