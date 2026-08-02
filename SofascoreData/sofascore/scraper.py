@@ -145,6 +145,7 @@ class SofascoreSeleniumScraper:
         self.driver = driver
         self.last_api_error = None
         self.api_blocked = False
+        self.api_budget_exhausted = False
         self.api_request_count = 0
         self.max_api_requests = _int_env('SOFASCORE_MAX_API_REQUESTS', 90, minimum=0)
         self.api_delay = _float_env('SOFASCORE_API_DELAY', 0.75)
@@ -181,11 +182,11 @@ class SofascoreSeleniumScraper:
         return isinstance(data, dict) and isinstance(data.get('error'), dict)
 
     def _can_make_api_request(self, endpoint):
-        if self.api_blocked:
+        if self.api_blocked or self.api_budget_exhausted:
             return False
 
         if self.max_api_requests and self.api_request_count >= self.max_api_requests:
-            self.api_blocked = True
+            self.api_budget_exhausted = True
             self.last_api_error = {
                 'endpoint': endpoint,
                 'code': 'request_limit',

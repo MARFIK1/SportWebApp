@@ -48,6 +48,8 @@ from .pipeline import (
     scrape_upcoming_matches,
 )
 
+from .season_archive import sync_scheduled_matches_to_season_archives
+
 __all__ = [
     'BASE_DIR',
     'COMPETITIONS',
@@ -79,6 +81,7 @@ __all__ = [
     'scrape_competition',
     'combine_all_seasons_data',
     'scrape_upcoming_matches',
+    'sync_scheduled_matches_to_season_archives',
 ]
 
 __version__ = '1.0.0'

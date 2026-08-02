@@ -12,6 +12,7 @@ from predict_today import (
     _configured_daily_discovery_comp_keys,
     _fetch_tournament_scheduled_events_by_comp,
     _filter_scheduled_events_for_date,
+    _match_requires_result_refresh,
     _prune_misaligned_scheduled_cache,
     _unreported_source_matches,
 )
@@ -169,6 +170,31 @@ class DailyDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(events, [])
         self.assertNotIn("[WARN]", output.getvalue())
+
+
+    def test_request_budget_exhaustion_is_not_reported_as_api_block(self):
+        scraper = SofascoreSeleniumScraper.__new__(SofascoreSeleniumScraper)
+        scraper.last_api_error = None
+        scraper.api_blocked = False
+        scraper.api_budget_exhausted = False
+        scraper.api_request_count = 1
+        scraper.max_api_requests = 1
+
+        self.assertFalse(scraper._can_make_api_request("/event/1/lineups"))
+        self.assertTrue(scraper.api_budget_exhausted)
+        self.assertFalse(scraper.api_blocked)
+        self.assertEqual(scraper.last_api_error["code"], "request_limit")
+
+    def test_postponed_and_canceled_matches_do_not_require_result_refresh(self):
+        for status in ("postponed", "canceled"):
+            match = {
+                "event_id": 101,
+                "status": status,
+                "home_score": None,
+                "away_score": None,
+            }
+
+            self.assertFalse(_match_requires_result_refresh(match, "league"))
 
     def test_misaligned_scheduled_cache_entries_are_removed(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import predict_today
 from sofascore.lineups import normalize_match_lineups
@@ -54,6 +55,34 @@ class MatchLineupNormalizationTests(unittest.TestCase):
         self.assertEqual(result["top_rated_player"]["team_side"], "away")
         self.assertEqual(result["top_rated_player"]["rating"], 8.6)
 
+    def test_prefers_official_player_marker_over_highest_rating(self):
+        payload = {
+            "confirmed": True,
+            "home": {
+                "players": [
+                    {
+                        "player": {"id": 1, "name": "Official Player"},
+                        "statistics": {"rating": 7.4, "isPlayerOfTheMatch": True},
+                    }
+                ],
+            },
+            "away": {
+                "players": [
+                    {
+                        "player": {"id": 2, "name": "Higher Rated Player"},
+                        "statistics": {"rating": 8.8},
+                    }
+                ],
+            },
+        }
+
+        result = normalize_match_lineups(payload)
+
+        self.assertEqual(result["player_of_the_match"]["name"], "Official Player")
+        self.assertEqual(result["player_of_the_match"]["team_side"], "home")
+        self.assertEqual(result["player_of_the_match"]["selection_method"], "official")
+        self.assertEqual(result["top_rated_player"]["name"], "Higher Rated Player")
+
     def test_rejects_payload_without_starters(self):
         self.assertIsNone(normalize_match_lineups({"confirmed": False, "home": {}, "away": {}}))
 
@@ -67,6 +96,84 @@ class MatchLineupNormalizationTests(unittest.TestCase):
         match = {}
         self.assertFalse(predict_today._apply_match_lineups(match, {}, final=False))
         self.assertNotIn("match_lineups_checked", match)
+
+    def test_provisional_lineups_remain_retryable_until_confirmed(self):
+        match = {}
+        payload = {
+            "confirmed": False,
+            "home": {"players": [{"player": {"id": 1, "name": "Home Player"}}]},
+            "away": {"players": [{"player": {"id": 2, "name": "Away Player"}}]},
+        }
+
+        self.assertTrue(predict_today._apply_match_lineups(match, payload, final=False))
+        self.assertTrue(match["match_lineups_collected"])
+        self.assertNotIn("match_lineups_checked", match)
+
+    def test_finished_match_prioritizes_lineups_before_other_details(self):
+        class FakeScraper:
+            def __init__(self):
+                self.calls = []
+
+            def get_match_lineups(self, _event_id):
+                self.calls.append("lineups")
+                return {
+                    "confirmed": True,
+                    "home": {"players": [{"player": {"id": 1, "name": "Home Player"}}]},
+                    "away": {"players": [{"player": {"id": 2, "name": "Away Player"}}]},
+                }
+
+            def get_match_statistics(self, _event_id):
+                self.calls.append("statistics")
+                return []
+
+            def get_match_incidents(self, _event_id):
+                self.calls.append("incidents")
+                return []
+
+        scraper = FakeScraper()
+        with patch("predict_today.time.sleep"):
+            predict_today._refresh_match_details(scraper, {}, 99, final=True)
+
+        self.assertEqual(scraper.calls, ["lineups", "statistics", "incidents"])
+
+    def test_finished_match_only_fetches_missing_lineups(self):
+        class FakeScraper:
+            def __init__(self):
+                self.calls = []
+
+            def get_match_statistics(self, _event_id):
+                self.calls.append("statistics")
+                return []
+
+            def get_match_incidents(self, _event_id):
+                self.calls.append("incidents")
+                return []
+
+            def get_match_lineups(self, _event_id):
+                self.calls.append("lineups")
+                return {
+                    "confirmed": True,
+                    "home": {"players": [{"player": {"id": 1, "name": "Home Player"}}]},
+                    "away": {"players": [{"player": {"id": 2, "name": "Away Player"}}]},
+                }
+
+        scraper = FakeScraper()
+        match = {
+            "match_statistics_checked": True,
+            "match_events_collected": True,
+        }
+
+        with patch("predict_today.time.sleep"):
+            changed = predict_today._refresh_match_details(
+                scraper,
+                match,
+                99,
+                final=True,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(scraper.calls, ["lineups"])
+        self.assertTrue(match["match_lineups_checked"])
 
 
 class MatchLineupSidecarTests(unittest.TestCase):
@@ -92,6 +199,12 @@ class MatchLineupSidecarTests(unittest.TestCase):
                             "formation": "4-3-3",
                             "starters": [{"id": 2, "name": "Away Player"}],
                             "substitutes": [],
+                        },
+                        "player_of_the_match": {
+                            "id": 1,
+                            "name": "Home Player",
+                            "team_side": "home",
+                            "selection_method": "official",
                         },
                     },
                     "match_lineups_collected": True,
@@ -120,6 +233,10 @@ class MatchLineupSidecarTests(unittest.TestCase):
                 self.assertEqual(
                     loaded["matches"][0]["match_lineups"]["away"]["starters"][0]["name"],
                     "Away Player",
+                )
+                self.assertEqual(
+                    loaded["matches"][0]["match_lineups"]["player_of_the_match"]["name"],
+                    "Home Player",
                 )
         finally:
             predict_today.REPORTS_DIR = original_reports_dir

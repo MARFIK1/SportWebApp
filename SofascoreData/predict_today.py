@@ -42,6 +42,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from sofascore.features import MLFeatureGenerator
 from sofascore.incidents import normalize_match_incidents
 from sofascore.lineups import normalize_match_lineups
+from sofascore.season_archive import sync_scheduled_matches_to_season_archives
 from sofascore.model_release import (
     PREDICTION_CONTRACT_SCHEMA_VERSION,
     predictor_artifact_contract,
@@ -597,7 +598,10 @@ def _apply_match_lineups(match: Dict, payload, final: bool = False) -> bool:
     if normalized:
         match['match_lineups'] = normalized
         match['match_lineups_collected'] = True
-        match['match_lineups_checked'] = True
+        if normalized.get('confirmed') or final:
+            match['match_lineups_checked'] = True
+        else:
+            match.pop('match_lineups_checked', None)
     elif final:
         match['match_lineups_checked'] = True
 
@@ -618,31 +622,7 @@ def _refresh_match_details(
 ) -> bool:
     cache_key = str(event_id)
     cached = cache.setdefault(cache_key, {}) if cache is not None else {}
-
-    if 'statistics' in cached:
-        stats = cached['statistics']
-    else:
-        stats = scraper.get_match_statistics(event_id)
-        time.sleep(0.3)
-        cached['statistics'] = stats
-
-    if 'incidents' in cached:
-        incidents = cached['incidents']
-    else:
-        incidents = scraper.get_match_incidents(event_id)
-        time.sleep(0.3)
-        cached['incidents'] = incidents
-
     changed = False
-    if stats:
-        from sofascore.utils import extract_statistics
-        stat_data = extract_statistics(stats, period='ALL')
-        before_stats = {key: match.get(key) for key in stat_data}
-        match.update(stat_data)
-        changed = changed or any(before_stats.get(key) != value for key, value in stat_data.items())
-
-    if incidents is not None:
-        changed = _apply_match_incidents(match, incidents) or changed
 
     if not match.get('match_lineups_checked'):
         if 'lineups' in cached:
@@ -653,7 +633,42 @@ def _refresh_match_details(
             time.sleep(0.3)
             cached['lineups'] = lineups
         changed = _apply_match_lineups(match, lineups, final=final) or changed
+
+    stats = None
+    should_fetch_statistics = not final or not match.get('match_statistics_checked')
+    if should_fetch_statistics:
+        if 'statistics' in cached:
+            stats = cached['statistics']
+        else:
+            stats = scraper.get_match_statistics(event_id)
+            time.sleep(0.3)
+            cached['statistics'] = stats
+
+    incidents = None
+    should_fetch_incidents = not final or not match.get('match_events_collected')
+    if should_fetch_incidents:
+        if 'incidents' in cached:
+            incidents = cached['incidents']
+        else:
+            incidents = scraper.get_match_incidents(event_id)
+            time.sleep(0.3)
+            cached['incidents'] = incidents
+
+    if stats is not None and final and not match.get('match_statistics_checked'):
+        match['match_statistics_checked'] = True
+        changed = True
+    if stats:
+        from sofascore.utils import extract_statistics
+        stat_data = extract_statistics(stats, period='ALL')
+        before_stats = {key: match.get(key) for key in stat_data}
+        match.update(stat_data)
+        changed = changed or any(before_stats.get(key) != value for key, value in stat_data.items())
+
+    if incidents is not None:
+        changed = _apply_match_incidents(match, incidents) or changed
+
     return changed
+
 
 def _refresh_score_details_if_needed(scraper, match: Dict, api_match: Dict, api_status: str) -> bool:
     if not _looks_like_unverified_shootout_score(match, api_status):
@@ -1414,6 +1429,17 @@ def _print_sofascore_api_blocked(scraper) -> bool:
     return True
 
 
+def _print_sofascore_budget_exhausted(scraper) -> bool:
+    if not getattr(scraper, 'api_budget_exhausted', False):
+        return False
+
+    limit = getattr(scraper, 'max_api_requests', None) or 'unlimited'
+    count = getattr(scraper, 'api_request_count', 0)
+    print(f"\n[WARN] Sofascore request budget exhausted: {count}/{limit}.")
+    print("Saved match updates are preserved; missing optional details will be retried next run.")
+    return True
+
+
 def _sofascore_bootstrap_url(target_date: Optional[str]) -> str:
     if target_date:
         return f"https://www.sofascore.com/api/v1/sport/football/scheduled-events/{target_date}"
@@ -1534,6 +1560,13 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
         raw_dir = Path(dm.paths['raw'])
         raw_dir.mkdir(parents=True, exist_ok=True)
 
+        archived_before = sync_scheduled_matches_to_season_archives(dm)
+        if archived_before['scheduled_matches']:
+            print(
+                f"Synced {archived_before['scheduled_matches']} scheduled matches "
+                f"across {archived_before['seasons']} season archive(s)"
+            )
+
         finished_matches = _load_finished_matches_for_features(raw_dir)
         fg = MLFeatureGenerator(dm)
 
@@ -1615,6 +1648,8 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
                 'matches': processed,
                 'features': features,
             }, f, ensure_ascii=False, indent=2)
+
+        sync_scheduled_matches_to_season_archives(dm)
 
         print(f"  Saved {len(processed)} scheduled matches")
 
@@ -1704,8 +1739,10 @@ def _update_results_from_scheduled_events(
 
     updated_count = 0
     matched_count = 0
+    details_pending_count = 0
     team_history_updates = []
     match_details_cache = {}
+    modified_competitions = set()
     for _comp_type, _country, _comp_name, comp_dir in iter_competition_dirs(base_dir):
         raw_dir = comp_dir / 'raw'
         if not raw_dir.exists():
@@ -1751,7 +1788,11 @@ def _update_results_from_scheduled_events(
                         )
                     )
                 )
-                if event_id and should_refresh_details:
+                if (
+                    event_id and
+                    should_refresh_details and
+                    not getattr(scraper, 'api_budget_exhausted', False)
+                ):
                     try:
                         modified = _refresh_match_details(
                             scraper,
@@ -1762,6 +1803,15 @@ def _update_results_from_scheduled_events(
                         ) or modified
                     except Exception as exc:
                         print(f"    [WARN] Failed to fetch match details: {exc}")
+                if (
+                    api_status == 'finished' and
+                    event_id and
+                    (
+                        not match.get('match_events_collected') or
+                        not match.get('match_lineups_checked')
+                    )
+                ):
+                    details_pending_count += 1
                 has_score = _apply_api_score_fields(match, api_match)
                 _refresh_score_details_if_needed(scraper, match, api_match, api_status)
 
@@ -1790,6 +1840,13 @@ def _update_results_from_scheduled_events(
                     data['metadata']['last_update'] = datetime.now().isoformat()
                 with open(raw_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
+                modified_competitions.add((_comp_type, _country, _comp_name))
+
+    if modified_competitions:
+        from sofascore import FootballDataManager
+        for comp_type, country, comp_name in sorted(modified_competitions):
+            dm = FootballDataManager(base_dir, comp_type, country, comp_name)
+            sync_scheduled_matches_to_season_archives(dm)
 
     team_history_updates.extend(_collect_local_finished_international_matches(base_dir, target_date))
     synced_history = _sync_finished_matches_to_team_history(team_history_updates)
@@ -1797,16 +1854,25 @@ def _update_results_from_scheduled_events(
         print(f"[OK] Synced {synced_history} team history cache entries from finished international matches")
 
     print(f"[OK] Matched {matched_count}, updated {updated_count} matches from scheduled events")
+    if details_pending_count:
+        print(f"[WARN] Match details still pending for {details_pending_count} matches")
+    _print_sofascore_budget_exhausted(scraper)
 
     return {
         'source_ok': matched_count > 0,
+        'api_blocked': False,
+        'budget_exhausted': bool(getattr(scraper, 'api_budget_exhausted', False)),
         'matched_count': matched_count,
         'updated_count': updated_count,
+        'details_pending_count': details_pending_count,
     }
 
 
 def _match_requires_result_refresh(match: Dict, comp_type: str) -> bool:
     status = match.get('status', '')
+    if status in ('postponed', 'canceled'):
+        return False
+
     has_score = match.get('home_score') is not None and match.get('away_score') is not None
     needs_score_refresh = comp_type != 'league' and _looks_like_unverified_shootout_score(match)
     needs_event_backfill = (
@@ -2026,6 +2092,8 @@ def update_match_results(target_date: str):
                 return scheduled_update
             matched_count += scheduled_update.get('matched_count', 0)
             updated_count += scheduled_update.get('updated_count', 0)
+            if scheduled_update.get('budget_exhausted'):
+                return scheduled_update
             remaining = _collect_competitions_requiring_update(base_dir, target_date)
             if not remaining:
                 return {
@@ -4204,7 +4272,7 @@ def _attach_match_lineups(report: Dict, target_date: str) -> Dict:
             continue
         match['match_lineups'] = {
             key: copy.deepcopy(snapshot[key])
-            for key in ('confirmed', 'home', 'away', 'top_rated_player')
+            for key in ('confirmed', 'home', 'away', 'player_of_the_match', 'top_rated_player')
             if key in snapshot
         }
         match['match_lineups_collected'] = True
@@ -4546,6 +4614,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'event_id': m.get('event_id'),
             'league': f"{m['country']}/{m['league']}",
             'comp_type': comp_type,
+            'season': _usable_source_season(m.get('season')),
             'home_team': m['home'],
             'away_team': m['away'],
             'start_time': m.get('start_time', ''),
@@ -4630,6 +4699,9 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
 
         if m.get('event_id') and not match.get('event_id'):
             match['event_id'] = m.get('event_id')
+        source_season = _usable_source_season(m.get('season'))
+        if source_season:
+            match['season'] = source_season
         
         if m.get('total_cards') is not None:
             match['actual_cards'] = m['total_cards']
@@ -4684,6 +4756,7 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             'event_id': m.get('event_id'),
             'league': f"{m['country']}/{m['league']}",
             'comp_type': comp_type,
+            'season': _usable_source_season(m.get('season')),
             'home_team': m['home'],
             'away_team': m['away'],
             'status': m.get('status', 'finished' if is_finished else 'upcoming'),
@@ -5023,6 +5096,9 @@ def main():
             m = r['match']
             if m.get('event_id') and not match_entry.get('event_id'):
                 match_entry['event_id'] = m.get('event_id')
+            source_season = _usable_source_season(m.get('season'))
+            if source_season:
+                match_entry['season'] = source_season
             match_entry['odds_availability'] = _source_match_odds_availability(m)
             serialized_predictions = _serialize_result_prediction_data(r, match_entry.get('actual_result'))
             match_entry['predictions'] = serialized_predictions['predictions']
@@ -5064,6 +5140,9 @@ def main():
                     continue
                 if m_data.get('event_id') and not match_entry.get('event_id'):
                     match_entry['event_id'] = m_data.get('event_id')
+                source_season = _usable_source_season(m_data.get('season'))
+                if source_season:
+                    match_entry['season'] = source_season
                 match_entry['odds_availability'] = _source_match_odds_availability(m_data)
                 if not m_data.get('result'):
                     continue

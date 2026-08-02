@@ -298,6 +298,20 @@ def _merge_missing_fields(target, source):
             continue
         if merged.get(key) in (None, ''):
             merged[key] = value
+
+    for key in (
+        'match_events_collected',
+        'match_lineups_collected',
+        'match_lineups_checked',
+        'match_statistics_checked',
+    ):
+        if source.get(key):
+            merged[key] = True
+
+    for key in ('match_events', 'match_lineups'):
+        if not merged.get(key) and source.get(key):
+            merged[key] = source[key]
+
     return merged
 
 
