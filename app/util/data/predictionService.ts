@@ -6,7 +6,7 @@ import { filterReportDatesByWindow } from "./reportWindow";
 import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
 import type { MatchEventSnapshot, MatchEventsArtifact, MatchTimelineEvent } from "@/types/matchEvents";
-import type { MatchLineupPlayer, MatchLineupSide, MatchLineupSnapshot, MatchLineupsArtifact, MatchTopRatedPlayer } from "@/types/matchLineups";
+import type { MatchLineupPlayer, MatchLineupSide, MatchLineupSnapshot, MatchLineupsArtifact, MatchPlayerOfTheMatch, MatchTopRatedPlayer } from "@/types/matchLineups";
 import { getConsensusConfidence } from "@/app/util/predictions/confidence";
 import { normalizePredictionMatchResult, predictionCorrectness } from "@/app/util/predictions/matchResult";
 
@@ -576,6 +576,15 @@ function isTopRatedPlayer(value: unknown): value is MatchTopRatedPlayer {
     );
 }
 
+function isPlayerOfTheMatch(value: unknown): value is MatchPlayerOfTheMatch {
+    if (!isLineupPlayer(value)) return false;
+    const player = value as Partial<MatchPlayerOfTheMatch>;
+    return (
+        (player.team_side === "home" || player.team_side === "away") &&
+        player.selection_method === "official"
+    );
+}
+
 
 
 function isLineupSide(value: unknown): value is MatchLineupSide {
@@ -604,6 +613,9 @@ export const loadMatchLineupSnapshot = cache((
     const topRatedPlayer = isTopRatedPlayer(snapshot.top_rated_player)
         ? snapshot.top_rated_player
         : undefined;
+    const playerOfTheMatch = isPlayerOfTheMatch(snapshot.player_of_the_match)
+        ? snapshot.player_of_the_match
+        : undefined;
     return {
         ...snapshot,
         confirmed: Boolean(snapshot.confirmed),
@@ -617,6 +629,7 @@ export const loadMatchLineupSnapshot = cache((
             starters: snapshot.away.starters.filter(isLineupPlayer),
             substitutes: snapshot.away.substitutes.filter(isLineupPlayer),
         },
+        player_of_the_match: playerOfTheMatch,
         top_rated_player: topRatedPlayer,
     };
 });

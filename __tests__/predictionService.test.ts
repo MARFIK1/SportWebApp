@@ -424,6 +424,14 @@ describe("match lineup snapshots", () => {
                             { id: 4, name: "Away Substitute", position: "M" },
                         ],
                     },
+                    player_of_the_match: {
+                        id: 1,
+                        name: "Home Goalkeeper",
+                        position: "G",
+                        rating: 7.1,
+                        team_side: "home",
+                        selection_method: "official",
+                    },
                     top_rated_player: {
                         id: 3,
                         name: "Away Forward",
@@ -443,6 +451,11 @@ describe("match lineup snapshots", () => {
             confirmed: true,
             home: { formation: "4-2-3-1" },
             away: { formation: "4-4-2" },
+            player_of_the_match: {
+                name: "Home Goalkeeper",
+                team_side: "home",
+                selection_method: "official",
+            },
             top_rated_player: {
                 name: "Away Forward",
                 rating: 8.2,

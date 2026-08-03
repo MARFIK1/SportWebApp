@@ -19,6 +19,11 @@ export interface MatchTopRatedPlayer extends MatchLineupPlayer {
     selection_method: "highest_rating";
 }
 
+export interface MatchPlayerOfTheMatch extends MatchLineupPlayer {
+    team_side: "home" | "away";
+    selection_method: "official";
+}
+
 export interface MatchLineupSnapshot {
     event_id: number | string;
     status: string;
@@ -28,6 +33,7 @@ export interface MatchLineupSnapshot {
     confirmed: boolean;
     home: MatchLineupSide;
     away: MatchLineupSide;
+    player_of_the_match?: MatchPlayerOfTheMatch;
     top_rated_player?: MatchTopRatedPlayer;
 }
 

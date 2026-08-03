@@ -176,8 +176,9 @@ export default function MatchLineups({
     const { t } = useLanguage();
     const home = { name: homeTeam, id: homeTeamId };
     const away = { name: awayTeam, id: awayTeamId };
-    const topRated = snapshot.top_rated_player;
-    const topRatedTeam = topRated?.team_side === "home" ? homeTeam : awayTeam;
+    const featuredPlayer = snapshot.player_of_the_match ?? snapshot.top_rated_player;
+    const featuredPlayerTeam = featuredPlayer?.team_side === "home" ? homeTeam : awayTeam;
+    const featuredPlayerLabel = snapshot.player_of_the_match ? "player_of_the_match" : "top_rated_player";
     const hasSubstitutes = snapshot.home.substitutes.length > 0 || snapshot.away.substitutes.length > 0;
 
     return (
@@ -202,20 +203,22 @@ export default function MatchLineups({
                 </span>
             </div>
 
-            {topRated && (
+            {featuredPlayer && (
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 sm:px-6">
                     <div className="flex min-w-0 items-center gap-2">
                         <StarIcon aria-hidden="true" className="h-5 w-5 shrink-0 text-amber-300" />
                         <div className="min-w-0">
-                            <p className="text-[10px] font-bold uppercase text-amber-300">{t("top_rated_player")}</p>
+                            <p className="text-[10px] font-bold uppercase text-amber-300">{t(featuredPlayerLabel)}</p>
                             <p className="truncate text-sm font-bold text-gray-100">
-                                {topRated.name} <span className="font-medium text-gray-500">{"\u2022"} {topRatedTeam}</span>
+                                {featuredPlayer.name} <span className="font-medium text-gray-500">{"\u2022"} {featuredPlayerTeam}</span>
                             </p>
                         </div>
                     </div>
-                    <span className="rounded bg-amber-300 px-2 py-1 text-sm font-black tabular-nums text-gray-950">
-                        {topRated.rating?.toFixed(1)}
-                    </span>
+                    {featuredPlayer.rating != null && (
+                        <span className="rounded bg-amber-300 px-2 py-1 text-sm font-black tabular-nums text-gray-950">
+                            {featuredPlayer.rating.toFixed(1)}
+                        </span>
+                    )}
                 </div>
             )}
 
@@ -223,12 +226,12 @@ export default function MatchLineups({
                 <FormationPitch
                     lineup={snapshot.home}
                     team={home}
-                    highlightedPlayerId={topRated?.team_side === "home" ? topRated.id : undefined}
+                    highlightedPlayerId={featuredPlayer?.team_side === "home" ? featuredPlayer.id : undefined}
                 />
                 <FormationPitch
                     lineup={snapshot.away}
                     team={away}
-                    highlightedPlayerId={topRated?.team_side === "away" ? topRated.id : undefined}
+                    highlightedPlayerId={featuredPlayer?.team_side === "away" ? featuredPlayer.id : undefined}
                 />
             </div>
 
