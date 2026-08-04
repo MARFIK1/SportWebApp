@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { detectWorldCupFormat } from "@/app/match/[id]/bracketConfig";
 import { getCompetitionBySlug } from "@/app/util/league/leagueRegistry";
+import { resolveCompetitionTableSections } from "@/app/util/league/competitionTableView";
 import { resolveSeasonSelection } from "@/app/util/league/seasonResolver";
 import { todayYmd } from "@/app/util/data/dateUtils";
 import { loadAllSeasons, computeStandings, resolveLeagueTableContext, type StandingRow } from "@/app/util/data/dataService";
@@ -9,7 +10,6 @@ import { loadPredictionReport } from "@/app/util/data/predictionService";
 import {
     detectTournamentGroups,
     partitionTournamentMatches,
-    type TournamentGroup,
 } from "@/app/util/tournament/tournamentGroups";
 import {
     isUpcomingTournamentMatch,
@@ -32,14 +32,6 @@ function loadTournamentPredictionMatches(matches: SofascoreMatch[]): PredictionM
     return Array.from(reportDates)
         .flatMap((date) => loadPredictionReport(date)?.matches ?? [])
         .filter((match) => typeof match.event_id === "number" && eventIds.has(match.event_id));
-}
-
-function detectLegacyGroups(matches: SofascoreMatch[]): TournamentGroup[] | null {
-    const groupMatches = matches.filter((m) => m.round != null && m.round <= 10 && m.status === "finished");
-    if (groupMatches.length === 0) return null;
-    const groupEventIds = new Set(groupMatches.map((match) => match.event_id));
-    const groups = detectTournamentGroups(groupMatches, groupEventIds);
-    return groups.length > 1 ? groups : null;
 }
 
 function StandingsTable({ standings, t }: { standings: StandingRow[]; t: (key: string) => string }) {
@@ -151,8 +143,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
     const leagueTableContext = competition.compType === "league" ? resolveLeagueTableContext(displayMatches) : null;
     const standingsMatches = leagueTableContext?.standingsMatches ?? displayMatches;
 
-    let groups = detectLegacyGroups(displayMatches);
-    let playoffMatches = displayMatches.filter((m) => m.round != null && m.round > 10);
+    let { groups, playoffMatches } = resolveCompetitionTableSections(displayMatches, competition.compType);
 
     if (competition.slug === "fifa-world-cup" && displayMatches.length > 0) {
         const format = detectWorldCupFormat(displayMatches[displayMatches.length - 1], displayMatches);
