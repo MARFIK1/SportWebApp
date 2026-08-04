@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckBadgeIcon, StarIcon, UserGroupIcon } from "@heroicons/react/24/outline";
+import PlayerAvatar from "@/app/components/common/PlayerAvatar";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import type { MatchLineupPlayer, MatchLineupSide, MatchLineupSnapshot } from "@/types/matchLineups";
@@ -31,14 +32,16 @@ function PlayerMarker({
 
     return (
         <div className="flex min-w-0 max-w-[88px] flex-1 flex-col items-center" title={player.name}>
-            <span
-                className={"relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 text-[11px] font-black tabular-nums shadow-md " + (
-                    highlighted
-                        ? "border-amber-300 bg-amber-300 text-gray-950"
-                        : "border-white/80 bg-gray-950 text-white"
-                )}
-            >
-                {jersey}
+            <span className="relative">
+                <PlayerAvatar
+                    playerId={player.id}
+                    name={player.name}
+                    fallbackText={jersey}
+                    badgeText={jersey}
+                    size={40}
+                    className={`border-2 shadow-md ${highlighted ? "border-amber-300" : "border-white/80"}`}
+                    fallbackClassName={highlighted ? "bg-amber-300 text-gray-950" : "bg-gray-950 text-white"}
+                />
                 {player.captain && (
                     <span className="absolute -right-2 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-gray-950 bg-sky-400 text-[8px] font-black text-gray-950">
                         C
@@ -205,8 +208,16 @@ export default function MatchLineups({
 
             {featuredPlayer && (
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 sm:px-6">
-                    <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-3">
                         <StarIcon aria-hidden="true" className="h-5 w-5 shrink-0 text-amber-300" />
+                        <PlayerAvatar
+                            playerId={featuredPlayer.id}
+                            name={featuredPlayer.name}
+                            fallbackText={featuredPlayer.jersey_number}
+                            size={40}
+                            className="border-2 border-amber-300/70"
+                            fallbackClassName="bg-gray-950 text-amber-200"
+                        />
                         <div className="min-w-0">
                             <p className="text-[10px] font-bold uppercase text-amber-300">{t(featuredPlayerLabel)}</p>
                             <p className="truncate text-sm font-bold text-gray-100">
@@ -222,7 +233,7 @@ export default function MatchLineups({
                 </div>
             )}
 
-            <div className="grid gap-6 p-4 sm:p-6 2xl:grid-cols-2">
+            <div className="grid gap-6 p-4 sm:p-6 xl:grid-cols-2">
                 <FormationPitch
                     lineup={snapshot.home}
                     team={home}
@@ -236,7 +247,7 @@ export default function MatchLineups({
             </div>
 
             {hasSubstitutes && (
-                <div className="grid gap-6 border-t border-gray-800 px-4 py-5 sm:px-6 2xl:grid-cols-2">
+                <div className="grid gap-6 border-t border-gray-800 px-4 py-5 sm:px-6 xl:grid-cols-2">
                     <SubstituteList lineup={snapshot.home} team={home} />
                     <SubstituteList lineup={snapshot.away} team={away} />
                 </div>
