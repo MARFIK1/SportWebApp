@@ -1,4 +1,4 @@
-import { timelineMinuteLabel, visibleTimelineEvents } from "@/app/match/[id]/MatchTimeline";
+import { groupTimelineEvents, timelineMinuteLabel, visibleTimelineEvents } from "@/app/match/[id]/MatchTimeline";
 import type { MatchTimelineEvent } from "@/types/matchEvents";
 
 function event(overrides: Partial<MatchTimelineEvent>): MatchTimelineEvent {
@@ -16,7 +16,7 @@ describe("match timeline helpers", () => {
             event({ id: "first", minute: 12 }),
             event({ id: "latest", minute: 90, added_time: 4 }),
             event({ id: "middle", minute: 67 }),
-        ], false);
+        ]);
 
         expect(result.map((item) => item.id)).toEqual(["latest", "middle", "first"]);
         expect(timelineMinuteLabel(result[0])).toBe("90+4'");
@@ -35,25 +35,45 @@ describe("match timeline helpers", () => {
             event({ id: "second-half", minute: 49 }),
             halfTime,
             event({ id: "stoppage", minute: 45, added_time: 1 }),
-        ], false);
+        ]);
 
         expect(result.map((item) => item.id)).toEqual(["second-half", "half-time", "stoppage"]);
         expect(timelineMinuteLabel(halfTime)).toBe("45'");
     });
 
-    it("hides substitutions until the user expands them", () => {
-        const events = [
+    it("keeps substitutions visible and groups both teams by match moment", () => {
+        const result = groupTimelineEvents([
             event({ id: "goal", minute: 50 }),
             event({
-                id: "sub",
+                id: "home-sub",
                 type: "substitution",
                 source_type: "substitution",
                 minute: 60,
+                is_home: true,
             }),
-        ];
+            event({
+                id: "away-sub",
+                type: "substitution",
+                source_type: "substitution",
+                minute: 60,
+                is_home: false,
+            }),
+            event({
+                id: "earlier-sub",
+                type: "substitution",
+                source_type: "substitution",
+                minute: 55,
+                is_home: true,
+            }),
+        ]);
 
-        expect(visibleTimelineEvents(events, false).map((item) => item.id)).toEqual(["goal"]);
-        expect(visibleTimelineEvents(events, true).map((item) => item.id)).toEqual(["sub", "goal"]);
+        expect(result.map((group) => group.kind)).toEqual([
+            "substitutions",
+            "substitutions",
+            "event",
+        ]);
+        expect(result[0].events.map((item) => item.id)).toEqual(["away-sub", "home-sub"]);
+        expect(result[1].events.map((item) => item.id)).toEqual(["earlier-sub"]);
     });
 
     it("keeps unknown events only when they contain readable details", () => {
@@ -66,7 +86,7 @@ describe("match timeline helpers", () => {
                 text: "Cooling break",
                 minute: 30,
             }),
-        ], false);
+        ]);
 
         expect(result.map((item) => item.id)).toEqual(["readable"]);
     });

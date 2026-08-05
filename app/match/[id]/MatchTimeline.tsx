@@ -1,12 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-    ArrowsRightLeftIcon,
-    ChevronDownIcon,
-    ChevronUpIcon,
-    VideoCameraIcon,
-} from "@heroicons/react/24/outline";
+import { useMemo } from "react";
+import { ArrowsRightLeftIcon, VideoCameraIcon } from "@heroicons/react/24/outline";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import type { MatchEventSnapshot, MatchTimelineEvent } from "@/types/matchEvents";
 
@@ -35,16 +30,52 @@ function isDisplayableEvent(event: MatchTimelineEvent): boolean {
     return Boolean(event.player?.name || event.text || event.reason);
 }
 
-export function visibleTimelineEvents(
-    events: MatchTimelineEvent[],
-    showSubstitutions: boolean,
-): MatchTimelineEvent[] {
+export function visibleTimelineEvents(events: MatchTimelineEvent[]): MatchTimelineEvent[] {
     return events
         .map((event, index) => ({ event, index }))
         .filter(({ event }) => isDisplayableEvent(event))
-        .filter(({ event }) => showSubstitutions || event.type !== "substitution")
         .sort((left, right) => eventOrder(right.event) - eventOrder(left.event) || right.index - left.index)
         .map(({ event }) => event);
+}
+
+export interface TimelineEventGroup {
+    id: string;
+    kind: "event" | "substitutions";
+    events: MatchTimelineEvent[];
+}
+
+function substitutionGroupKey(event: MatchTimelineEvent): string {
+    if (event.minute == null) return event.id;
+    return [event.period ?? "", event.minute, normalizedAddedTime(event)].join(":");
+}
+
+export function groupTimelineEvents(events: MatchTimelineEvent[]): TimelineEventGroup[] {
+    const groups: TimelineEventGroup[] = [];
+    const substitutionsByMoment = new Map<string, TimelineEventGroup>();
+
+    for (const event of visibleTimelineEvents(events)) {
+        if (event.type !== "substitution" || event.is_home == null) {
+            groups.push({ id: event.id, kind: "event", events: [event] });
+            continue;
+        }
+
+        const key = substitutionGroupKey(event);
+        const existingGroup = substitutionsByMoment.get(key);
+        if (existingGroup) {
+            existingGroup.events.push(event);
+            continue;
+        }
+
+        const group: TimelineEventGroup = {
+            id: `substitutions-${key}`,
+            kind: "substitutions",
+            events: [event],
+        };
+        substitutionsByMoment.set(key, group);
+        groups.push(group);
+    }
+
+    return groups;
 }
 
 export function timelineMinuteLabel(event: MatchTimelineEvent): string {
@@ -180,16 +211,76 @@ function SystemEvent({ event }: { event: MatchTimelineEvent }) {
     );
 }
 
+function SubstitutionDetails({
+    events,
+    align,
+}: {
+    events: MatchTimelineEvent[];
+    align: "left" | "right";
+}) {
+    const { t } = useLanguage();
+    if (events.length === 0) return null;
+
+    return (
+        <div className={`inline-flex max-w-full flex-col rounded-lg border border-emerald-400/20 bg-emerald-400/[0.06] px-2.5 py-1.5 ${align === "right" ? "items-end text-right" : "items-start text-left"}`}>
+            {events.map((event, index) => {
+                const playerIn = event.player_in?.short_name ?? event.player_in?.name;
+                const playerOut = event.player_out?.short_name ?? event.player_out?.name;
+                return (
+                    <div
+                        key={event.id}
+                        className={`${index > 0 ? "mt-1.5 border-t border-emerald-400/15 pt-1.5" : ""} max-w-full`}
+                    >
+                        <p className="break-words text-xs font-semibold text-gray-100 sm:text-sm">
+                            {playerIn || t("substitution")}
+                        </p>
+                        {playerOut && (
+                            <p className="mt-0.5 break-words text-[10px] text-gray-500 sm:text-[11px]">
+                                {t("player_out")}: {playerOut}
+                            </p>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function SubstitutionGroup({ events }: { events: MatchTimelineEvent[] }) {
+    const representative = events[0];
+    const homeEvents = events.filter((event) => event.is_home === true);
+    const awayEvents = events.filter((event) => event.is_home === false);
+
+    return (
+        <li className="grid grid-cols-[minmax(0,1fr)_52px_minmax(0,1fr)] items-center gap-2 py-2.5">
+            <div className="flex min-w-0 justify-end">
+                <SubstitutionDetails events={homeEvents} align="right" />
+            </div>
+            <div className="flex flex-col items-center gap-1">
+                <span className="text-[10px] font-bold tabular-nums text-gray-400">
+                    {timelineMinuteLabel(representative)}
+                </span>
+                <span className="relative flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10">
+                    <ArrowsRightLeftIcon aria-hidden="true" className="h-3.5 w-3.5 text-emerald-400" />
+                    {events.length > 1 && (
+                        <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-400 px-1 text-[8px] font-black text-gray-950">
+                            {events.length}
+                        </span>
+                    )}
+                </span>
+            </div>
+            <div className="flex min-w-0 justify-start">
+                <SubstitutionDetails events={awayEvents} align="left" />
+            </div>
+        </li>
+    );
+}
+
 export default function MatchTimeline({ snapshot, homeTeam, awayTeam }: MatchTimelineProps) {
     const { t } = useLanguage();
-    const [showSubstitutions, setShowSubstitutions] = useState(false);
-    const hasSubstitutions = snapshot.events.some((event) => event.type === "substitution");
-    const visibleEvents = useMemo(
-        () => visibleTimelineEvents(snapshot.events, showSubstitutions),
-        [showSubstitutions, snapshot.events],
-    );
+    const eventGroups = useMemo(() => groupTimelineEvents(snapshot.events), [snapshot.events]);
 
-    if (visibleEvents.length === 0 && !hasSubstitutions) return null;
+    if (eventGroups.length === 0) return null;
 
     const isLive = snapshot.status === "inprogress";
 
@@ -216,9 +307,14 @@ export default function MatchTimeline({ snapshot, homeTeam, awayTeam }: MatchTim
             </div>
 
             <ol className="divide-y divide-gray-800/80 px-4 sm:px-6">
-                {visibleEvents.map((event) => {
+                {eventGroups.map((group) => {
+                    if (group.kind === "substitutions") {
+                        return <SubstitutionGroup key={group.id} events={group.events} />;
+                    }
+
+                    const event = group.events[0];
                     if (event.is_home == null) {
-                        return <SystemEvent key={event.id} event={event} />;
+                        return <SystemEvent key={group.id} event={event} />;
                     }
 
                     return (
@@ -239,22 +335,10 @@ export default function MatchTimeline({ snapshot, homeTeam, awayTeam }: MatchTim
                 })}
             </ol>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-800 px-4 py-3 sm:px-6">
+            <div className="border-t border-gray-800 px-4 py-3 sm:px-6">
                 <p className="text-[10px] text-gray-500">
                     {t("timeline_snapshot")}: {snapshot.updated_at}
                 </p>
-                {hasSubstitutions && (
-                    <button
-                        type="button"
-                        onClick={() => setShowSubstitutions((visible) => !visible)}
-                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 transition-colors hover:text-emerald-300"
-                    >
-                        {showSubstitutions ? t("hide_substitutions") : t("show_substitutions")}
-                        {showSubstitutions
-                            ? <ChevronUpIcon aria-hidden="true" className="h-4 w-4" />
-                            : <ChevronDownIcon aria-hidden="true" className="h-4 w-4" />}
-                    </button>
-                )}
             </div>
         </section>
     );
