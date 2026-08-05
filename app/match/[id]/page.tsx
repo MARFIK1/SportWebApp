@@ -21,6 +21,8 @@ import PredictionTriangle from "./PredictionTriangle";
 import TeamRadar from "./TeamRadar";
 import MatchTimeline from "./MatchTimeline";
 import MatchLineups from "./MatchLineups";
+import MatchCenterTabs from "./MatchCenterTabs";
+import PreMatchAnalysis from "./PreMatchAnalysis";
 import TournamentContext from "./TournamentContext";
 import { computeWorldCupBracketSlots, detectWorldCupFormat } from "./bracketConfig";
 import { findPredictionMatch, repairMatchAnalysis, resolveMatchDisplayState } from "./matchData";
@@ -660,85 +662,127 @@ export default async function Match({ params, searchParams }: PageProps) {
                 )}
             </div>
 
-            <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
-                <div className="flex-1">
-                    <div className="mb-6 rounded-2xl bg-white p-5 dark:bg-gray-900/50 sm:p-8">
-                        <div className="text-center text-xs text-gray-500 dark:text-gray-400 mb-6">
-                            {competition.country.toUpperCase()} {"\u2022"} {competition.name} {"\u2022"} {match.date.slice(0, 10)}
-                        </div>
-
-                        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-8">
-                            <MatchHeaderTeam teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidatePair} />
-
-                            <div className="flex min-w-[74px] flex-col items-center gap-2 sm:min-w-[120px]">
-                                {isFinished ? (
-                                    <>
-                                        <span className="text-3xl font-bold sm:text-5xl">
-                                            {displayHomeScore} - {displayAwayScore}
-                                        </span>
-                                        <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white sm:px-3 sm:text-xs">
-                                            {finishedStatusLabel}
-                                        </span>
-                                        {wentToExtraTime && normalTimeScore && (
-                                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                                                90&apos;: {normalTimeScore.home} - {normalTimeScore.away}
-                                            </span>
-                                        )}
-                                        {wentToExtraTime && extraTimeScore && (extraTimeScore.home !== 0 || extraTimeScore.away !== 0) && (
-                                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                                                ET: {extraTimeScore.home} - {extraTimeScore.away}
-                                            </span>
-                                        )}
-                                        {penaltyScore && (
-                                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                                                {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
-                                            </span>
-                                        )}
-                                        {penaltyWinnerName && (
-                                            <span className="mt-0.5 max-w-[180px] rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-center text-[11px] font-bold leading-tight text-amber-600 dark:text-amber-300">
-                                                {penaltyWinnerName} {t("won_on_penalties")}
-                                            </span>
-                                        )}
-                                        {match.home_score_ht != null && match.away_score_ht != null && (
-                                            <span className="text-xs text-gray-400 dark:text-gray-500">
-                                                {t("half_time")}: {match.home_score_ht} - {match.away_score_ht}
-                                            </span>
-                                        )}
-                                    </>
-                                ) : isInProgress ? (
-                                    <>
-                                        <span className="text-3xl font-bold tabular-nums sm:text-5xl">
-                                            {displayHomeScore != null && displayAwayScore != null
-                                                ? `${displayHomeScore} - ${displayAwayScore}`
-                                                : "vs"}
-                                        </span>
-                                        <span className="rounded-full border border-rose-400/40 bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold uppercase text-rose-500 dark:text-rose-300 sm:px-3 sm:text-xs">
-                                            {t("live")}
-                                        </span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <span className="text-2xl font-semibold text-emerald-400 sm:text-3xl">vs</span>
-                                        <span className="text-center text-xs text-gray-500 dark:text-gray-400 sm:text-sm">
-                                            {displayStatus === "postponed" ? t("postponed") : displayStatus === "canceled" ? t("canceled") : t("not_started")}
-                                        </span>
-                                    </>
-                                )}
-                            </div>
-
-                            <MatchHeaderTeam teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} />
-                        </div>
+            <div className={`grid items-start gap-6 ${displayPredMatch ? "lg:grid-cols-[minmax(0,1.12fr)_minmax(420px,0.88fr)] lg:gap-8" : ""}`}>
+                <div className="rounded-2xl bg-white p-5 dark:bg-gray-900/50 sm:p-8">
+                    <div className="mb-6 text-center text-xs text-gray-500 dark:text-gray-400">
+                        {competition.country.toUpperCase()} {"\u2022"} {competition.name} {"\u2022"} {match.date.slice(0, 10)}
                     </div>
 
-                    {matchEventSnapshot && (
-                        <MatchTimeline
-                            snapshot={matchEventSnapshot}
-                            homeTeam={displayHomeTeam}
-                            awayTeam={displayAwayTeam}
-                        />
-                    )}
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 sm:gap-8">
+                        <MatchHeaderTeam teamId={match.home_team_id} teamName={match.home_team} candidatePair={homeCandidatePair} />
 
-                    {matchLineupSnapshot && (
+                        <div className="flex min-w-[74px] flex-col items-center gap-2 sm:min-w-[120px]">
+                            {isFinished ? (
+                                <>
+                                    <span className="text-3xl font-bold sm:text-5xl">
+                                        {displayHomeScore} - {displayAwayScore}
+                                    </span>
+                                    <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white sm:px-3 sm:text-xs">
+                                        {finishedStatusLabel}
+                                    </span>
+                                    {wentToExtraTime && normalTimeScore && (
+                                        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                                            90&apos;: {normalTimeScore.home} - {normalTimeScore.away}
+                                        </span>
+                                    )}
+                                    {wentToExtraTime && extraTimeScore && (extraTimeScore.home !== 0 || extraTimeScore.away !== 0) && (
+                                        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                                            ET: {extraTimeScore.home} - {extraTimeScore.away}
+                                        </span>
+                                    )}
+                                    {penaltyScore && (
+                                        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                                            {t("penalties")} {penaltyScore.home} - {penaltyScore.away}
+                                        </span>
+                                    )}
+                                    {penaltyWinnerName && (
+                                        <span className="mt-0.5 max-w-[180px] rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-center text-[11px] font-bold leading-tight text-amber-600 dark:text-amber-300">
+                                            {penaltyWinnerName} {t("won_on_penalties")}
+                                        </span>
+                                    )}
+                                    {match.home_score_ht != null && match.away_score_ht != null && (
+                                        <span className="text-xs text-gray-400 dark:text-gray-500">
+                                            {t("half_time")}: {match.home_score_ht} - {match.away_score_ht}
+                                        </span>
+                                    )}
+                                </>
+                            ) : isInProgress ? (
+                                <>
+                                    <span className="text-3xl font-bold tabular-nums sm:text-5xl">
+                                        {displayHomeScore != null && displayAwayScore != null
+                                            ? `${displayHomeScore} - ${displayAwayScore}`
+                                            : "vs"}
+                                    </span>
+                                    <span className="rounded-full border border-rose-400/40 bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold uppercase text-rose-500 dark:text-rose-300 sm:px-3 sm:text-xs">
+                                        {t("live")}
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="text-2xl font-semibold text-emerald-400 sm:text-3xl">vs</span>
+                                    <span className="text-center text-xs text-gray-500 dark:text-gray-400 sm:text-sm">
+                                        {displayStatus === "postponed" ? t("postponed") : displayStatus === "canceled" ? t("canceled") : t("not_started")}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+
+                        <MatchHeaderTeam teamId={match.away_team_id} teamName={match.away_team} candidatePair={awayCandidatePair} />
+                    </div>
+                </div>
+
+                {displayPredMatch && (
+                    <PredictionExplanation
+                        homeTeam={displayHomeTeam}
+                        awayTeam={displayAwayTeam}
+                        analysis={analysis}
+                    />
+                )}
+            </div>
+
+            <MatchCenterTabs
+                overview={
+                    matchEventSnapshot
+                    || displayPredMatch
+                    || leagueStandings.length > 0
+                    || leaguePlayoffMatches.length > 0
+                    || (analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form))
+                        ? (
+                            <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(380px,0.82fr)]">
+                                <div className="min-w-0 space-y-6 [&>section]:mb-0">
+                                    {matchEventSnapshot && (
+                                        <MatchTimeline
+                                            snapshot={matchEventSnapshot}
+                                            homeTeam={displayHomeTeam}
+                                            awayTeam={displayAwayTeam}
+                                        />
+                                    )}
+                                    {(leagueStandings.length > 0 || leaguePlayoffMatches.length > 0) && (
+                                        <CompactLeagueTable
+                                            standings={leagueStandings}
+                                            homeTeamId={match.home_team_id}
+                                            awayTeamId={match.away_team_id}
+                                            leagueSlug={competition.slug}
+                                            season={match.season || date || match.date}
+                                            playoffMatches={leaguePlayoffMatches}
+                                            regularTeamIds={leagueTableContext?.regularTeamIds}
+                                            currentMatchId={match.event_id}
+                                            t={t}
+                                        />
+                                    )}
+                                </div>
+                                <div className="min-w-0 space-y-6 [&>section]:mb-0">
+                                    {displayPredMatch && <MatchPredictionSidebar />}
+                                    {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
+                                        <PreMatchAnalysis analysis={analysis} />
+                                    )}
+                                </div>
+                            </div>
+                        )
+                        : undefined
+                }
+                lineups={
+                    matchLineupSnapshot ? (
                         <MatchLineups
                             snapshot={matchLineupSnapshot}
                             homeTeam={displayHomeTeam}
@@ -746,56 +790,89 @@ export default async function Match({ params, searchParams }: PageProps) {
                             homeTeamId={match.home_team_id}
                             awayTeamId={match.away_team_id}
                         />
-                    )}
+                    ) : undefined
+                }
+                analysis={
+                    Boolean(
+                        (displayXgHome != null && displayXgAway != null)
+                        || analysis
+                        || displayPredMatch
+                    ) ? (
+                        <div className="space-y-6">
+                            {displayXgHome != null && displayXgAway != null && (() => {
+                                const xgHome = displayXgHome;
+                                const xgAway = displayXgAway;
+                                const xgTotal = xgHome + xgAway;
+                                const homePct = xgTotal > 0 ? (xgHome / xgTotal) * 100 : 50;
+                                const awayPct = xgTotal > 0 ? (xgAway / xgTotal) * 100 : 50;
+                                return (
+                                    <section className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
+                                        <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                                            {t("expected_goals")}
+                                        </h3>
+                                        <div className="flex items-center gap-2 sm:gap-4">
+                                            <span className="w-12 text-center text-xl font-bold text-gray-900 dark:text-white sm:w-16 sm:text-2xl">
+                                                {xgHome.toFixed(2)}
+                                            </span>
+                                            <div className="flex h-4 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700 sm:h-6">
+                                                <div className="h-full bg-emerald-500" style={{ width: `${homePct}%` }} />
+                                                <div className="h-full bg-blue-500" style={{ width: `${awayPct}%` }} />
+                                            </div>
+                                            <span className="w-12 text-center text-xl font-bold text-gray-900 dark:text-white sm:w-16 sm:text-2xl">
+                                                {xgAway.toFixed(2)}
+                                            </span>
+                                        </div>
+                                    </section>
+                                );
+                            })()}
 
-                    {displayXgHome != null && displayXgAway != null && (() => {
-                        const xgHome = displayXgHome;
-                        const xgAway = displayXgAway;
-                        const xgTotal = xgHome + xgAway;
-                        const homePct = xgTotal > 0 ? (xgHome / xgTotal) * 100 : 50;
-                        const awayPct = xgTotal > 0 ? (xgAway / xgTotal) * 100 : 50;
-                        return (
-                            <div className="mb-6 rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
-                                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("expected_goals")}</h3>
-                                <div className="flex items-center gap-2 sm:gap-4">
-                                    <span className="w-12 text-center text-xl font-bold text-gray-900 dark:text-white sm:w-16 sm:text-2xl">{xgHome.toFixed(2)}</span>
-                                    <div className="flex h-4 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700 sm:h-6">
-                                        <div className="bg-emerald-500 h-full" style={{ width: `${homePct}%` }} />
-                                        <div className="bg-blue-500 h-full" style={{ width: `${awayPct}%` }} />
-                                    </div>
-                                    <span className="w-12 text-center text-xl font-bold text-gray-900 dark:text-white sm:w-16 sm:text-2xl">{xgAway.toFixed(2)}</span>
+                            {(analysis || displayPredMatch) && (
+                                <div className="grid min-w-0 gap-6 2xl:grid-cols-2 [&>section]:mb-0">
+                                    <TeamRadar analysis={analysis} homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} />
+                                    {displayPredMatch && (
+                                        <PredictionTriangle
+                                            homeTeam={displayHomeTeam}
+                                            awayTeam={displayAwayTeam}
+                                            actualResult={isFinished ? actualResult : null}
+                                        />
+                                    )}
                                 </div>
-                            </div>
-                        );
-                    })()}
+                            )}
 
-                    {(predMatch || analysis) && (
-                        <div className="mb-6 space-y-6">
-                            {(analysis || displayPredMatch) && <TeamRadar analysis={analysis} homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} />}
-                            {displayPredMatch && <PredictionTriangle homeTeam={displayHomeTeam} awayTeam={displayAwayTeam} actualResult={isFinished ? actualResult : null} />}
+                            {displayPredMatch && <MatchPredictions />}
                         </div>
-                    )}
-
-                    {isFinished && actualResult && displayHomeScore != null && displayAwayScore != null && (
-                        <PostMatchInsights
-                            homeTeam={displayHomeTeam}
-                            awayTeam={displayAwayTeam}
-                            homeScore={displayHomeScore}
-                            awayScore={displayAwayScore}
-                            actualResult={actualResult}
-                            stats={matchStats}
-                            xgHome={displayXgHome ?? null}
-                            xgAway={displayXgAway ?? null}
-                        />
-                    )}
-
-                    {isFinished && displayPredMatch && <MarketSettlement />}
-
-                    {isFinished && matchStats.length > 0 && (
-                        <MatchStatistics stats={matchStats} />
-                    )}
-
-                    {(h2h.length > 0 || homeRecent.length > 0 || awayRecent.length > 0) && (
+                    ) : undefined
+                }
+                statistics={
+                    Boolean(
+                        isFinished && (
+                            (actualResult && displayHomeScore != null && displayAwayScore != null)
+                            || displayPredMatch
+                            || matchStats.length > 0
+                        )
+                    ) ? (
+                        <div className="space-y-6">
+                            <div className="grid gap-6 xl:grid-cols-2 [&>section]:mb-0">
+                                {actualResult && displayHomeScore != null && displayAwayScore != null && (
+                                    <PostMatchInsights
+                                        homeTeam={displayHomeTeam}
+                                        awayTeam={displayAwayTeam}
+                                        homeScore={displayHomeScore}
+                                        awayScore={displayAwayScore}
+                                        actualResult={actualResult}
+                                        stats={matchStats}
+                                        xgHome={displayXgHome ?? null}
+                                        xgAway={displayXgAway ?? null}
+                                    />
+                                )}
+                                {displayPredMatch && <MarketSettlement />}
+                            </div>
+                            {matchStats.length > 0 && <MatchStatistics stats={matchStats} />}
+                        </div>
+                    ) : undefined
+                }
+                history={
+                    h2h.length > 0 || homeRecent.length > 0 || awayRecent.length > 0 ? (
                         <MatchHistoryTabs
                             homeTeam={displayHomeTeam}
                             awayTeam={displayAwayTeam}
@@ -806,86 +883,9 @@ export default async function Match({ params, searchParams }: PageProps) {
                             awayRecent={awayRecent.map(toHistoryItem)}
                             h2hStats={h2hStats}
                         />
-                    )}
-                </div>
-
-                <div className="w-full space-y-6 lg:w-[540px] xl:w-[680px]">
-                    {displayPredMatch && (
-                        <PredictionExplanation
-                            homeTeam={displayHomeTeam}
-                            awayTeam={displayAwayTeam}
-                            analysis={analysis}
-                        />
-                    )}
-                    {displayPredMatch && <MatchPredictionSidebar />}
-                    <CompactLeagueTable
-                        standings={leagueStandings}
-                        homeTeamId={match.home_team_id}
-                        awayTeamId={match.away_team_id}
-                        leagueSlug={competition.slug}
-                        season={match.season || date || match.date}
-                        playoffMatches={leaguePlayoffMatches}
-                        regularTeamIds={leagueTableContext?.regularTeamIds}
-                        currentMatchId={match.event_id}
-                        t={t}
-                    />
-                    {analysis && (analysis.goals || analysis.corners || analysis.cards || analysis.form) && (
-                        <div className="rounded-2xl bg-white p-4 dark:bg-gray-900/50 sm:p-6">
-                            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">{t("pre_match_analysis")}</h3>
-                            <div className="space-y-3 text-sm">
-                                {analysis.goals?.btts_pct != null && (
-                                    <div className="flex justify-between gap-3">
-                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("btts_probability")}</span>
-                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.goals.btts_pct.toFixed(0)}%</span>
-                                    </div>
-                                )}
-                                {analysis.goals?.over_2_5_pct != null && (
-                                    <div className="flex justify-between gap-3">
-                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("over_25")}</span>
-                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.goals.over_2_5_pct.toFixed(0)}%</span>
-                                    </div>
-                                )}
-                                {analysis.corners?.expected_total != null && (
-                                    <div className="flex justify-between gap-3">
-                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("expected_corners")}</span>
-                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.corners.expected_total.toFixed(1)}</span>
-                                    </div>
-                                )}
-                                {analysis.cards?.expected_total != null && (
-                                    <div className="flex justify-between gap-3">
-                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("expected_cards")}</span>
-                                        <span className="shrink-0 font-semibold text-gray-900 dark:text-white">{analysis.cards.expected_total.toFixed(1)}</span>
-                                    </div>
-                                )}
-                                {analysis.form?.home && (
-                                    <div className="flex items-start justify-between gap-3">
-                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("home_form")}</span>
-                                        <div className="flex shrink-0 gap-1">
-                                            {analysis.form.home.split("").map((c, i) => (
-                                                <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                                                    c === "W" ? "bg-emerald-600" : c === "D" ? "bg-gray-600" : "bg-red-600"
-                                                }`}>{c}</span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                {analysis.form?.away && (
-                                    <div className="flex items-start justify-between gap-3">
-                                        <span className="min-w-0 text-gray-500 dark:text-gray-400">{t("away_form")}</span>
-                                        <div className="flex shrink-0 gap-1">
-                                            {analysis.form.away.split("").map((c, i) => (
-                                                <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                                                    c === "W" ? "bg-emerald-600" : c === "D" ? "bg-gray-600" : "bg-red-600"
-                                                }`}>{c}</span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
+                    ) : undefined
+                }
+            />
 
             {isWorldCupMatch && worldCupFormat && (
                 <div className="mt-6">
@@ -900,8 +900,6 @@ export default async function Match({ params, searchParams }: PageProps) {
                     />
                 </div>
             )}
-
-            {displayPredMatch && <MatchPredictions />}
         </>
     );
 
