@@ -134,7 +134,99 @@ class MatchLineupNormalizationTests(unittest.TestCase):
         with patch("predict_today.time.sleep"):
             predict_today._refresh_match_details(scraper, {}, 99, final=True)
 
-        self.assertEqual(scraper.calls, ["lineups", "statistics", "incidents"])
+        self.assertEqual(scraper.calls, ["lineups", "incidents", "statistics"])
+
+    def test_finished_match_details_resume_across_limited_runs(self):
+        class FakeScraper:
+            api_budget_exhausted = False
+
+            def __init__(self):
+                self.calls = []
+
+            def get_match_lineups(self, _event_id):
+                self.calls.append("lineups")
+                return {
+                    "confirmed": True,
+                    "home": {"players": [{"player": {"id": 1, "name": "Home Player"}}]},
+                    "away": {"players": [{"player": {"id": 2, "name": "Away Player"}}]},
+                }
+
+            def get_match_incidents(self, _event_id):
+                self.calls.append("incidents")
+                return []
+
+            def get_match_statistics(self, _event_id):
+                self.calls.append("statistics")
+                return []
+
+        scraper = FakeScraper()
+        match = {}
+
+        with patch("predict_today.time.sleep"):
+            predict_today._refresh_match_details(
+                scraper,
+                match,
+                99,
+                final=True,
+                max_requests=1,
+            )
+            predict_today._refresh_match_details(
+                scraper,
+                match,
+                99,
+                final=True,
+                max_requests=1,
+            )
+            predict_today._refresh_match_details(
+                scraper,
+                match,
+                99,
+                final=True,
+                max_requests=1,
+            )
+
+        self.assertEqual(scraper.calls, ["lineups", "incidents", "statistics"])
+        self.assertTrue(match["match_lineups_checked"])
+        self.assertTrue(match["match_events_collected"])
+        self.assertTrue(match["match_statistics_checked"])
+
+    def test_budget_exhaustion_does_not_mark_missing_details_as_checked(self):
+        class FakeScraper:
+            api_budget_exhausted = False
+
+            def __init__(self):
+                self.calls = []
+
+            def get_match_lineups(self, _event_id):
+                self.calls.append("lineups")
+                self.api_budget_exhausted = True
+                return None
+
+            def get_match_incidents(self, _event_id):
+                self.calls.append("incidents")
+                return []
+
+            def get_match_statistics(self, _event_id):
+                self.calls.append("statistics")
+                return []
+
+        scraper = FakeScraper()
+        match = {}
+
+        with patch("predict_today.time.sleep"):
+            changed = predict_today._refresh_match_details(
+                scraper,
+                match,
+                99,
+                final=True,
+                max_requests=1,
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(scraper.calls, ["lineups"])
+        self.assertNotIn("match_lineups_checked", match)
+        self.assertNotIn("match_events_collected", match)
+        self.assertNotIn("match_statistics_checked", match)
 
     def test_finished_match_only_fetches_missing_lineups(self):
         class FakeScraper:
@@ -227,6 +319,15 @@ class MatchLineupSidecarTests(unittest.TestCase):
                 self.assertEqual(
                     sidecar["matches"]["16316950"]["home"]["formation"],
                     "4-2-3-1",
+                )
+                self.assertEqual(
+                    sidecar["summary"],
+                    {
+                        "matches_with_lineups": 1,
+                        "official_player_of_the_match": 1,
+                        "top_rated_player": 0,
+                        "top_rated_fallback": 0,
+                    },
                 )
 
                 loaded = predict_today.load_existing_report(report["date"])

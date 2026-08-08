@@ -212,6 +212,9 @@ class PredictionInputContractTests(unittest.TestCase):
         self.assertTrue(_match_requires_result_refresh(match, "league"))
 
         match["match_lineups_checked"] = True
+        self.assertTrue(_match_requires_result_refresh(match, "league"))
+
+        match["match_statistics_checked"] = True
         self.assertFalse(_match_requires_result_refresh(match, "league"))
 
     def test_finished_match_without_event_id_does_not_loop_forever(self):

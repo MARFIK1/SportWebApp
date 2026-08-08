@@ -41,5 +41,11 @@ export interface MatchLineupsArtifact {
     schema_version: 1;
     date: string;
     updated_at: string;
+    summary?: {
+        matches_with_lineups: number;
+        official_player_of_the_match: number;
+        top_rated_player: number;
+        top_rated_fallback: number;
+    };
     matches: Record<string, MatchLineupSnapshot>;
 }

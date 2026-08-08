@@ -11,6 +11,7 @@ The project is designed as an end-to-end system, not a one-off notebook: data ca
 - shows draw-watch flags when a draw is close to the top prediction
 - explains individual match predictions with key signals, probability maps and model votes
 - compares `without odds` and `with odds` prediction variants
+- provides a match center with event timeline, lineups, formations, market settlement, statistics and history
 - displays live model accuracy, Brier score, confidence buckets and league splits
 - exposes a protected `/admin` panel for operational status and deeper diagnostics
 - deploys a trimmed `.data` snapshot instead of the full research dataset
@@ -29,7 +30,7 @@ The project is designed as an end-to-end system, not a one-off notebook: data ca
 | Route | Purpose |
 | --- | --- |
 | `/` | daily match list, date picker, league sections, favorites, empty state for dates without tracked matches |
-| `/match/[id]` | match detail page with teams, score/status, prediction explanation, radar, prediction triangle, H2H, model table and league table context |
+| `/match/[id]` | match center with score/status, event timeline, lineups and formations, prediction analysis, market settlement, statistics, H2H and league table context |
 | `/league/[slug]` | league standings and competition view |
 | `/predictions` | public model dashboard and prediction analytics |
 | `/admin` | protected operational panel with automation status and admin-only diagnostics |
@@ -72,6 +73,22 @@ The app also predicts secondary markets:
 - cards 3.5+
 
 Every generated report includes a `prediction_quality` summary for each model variant. It records selected-feature coverage, defaulted or invalid inputs, and runtime feature-drift warnings. Feature drift becomes available after training and promoting an artifact that contains Backend v2.1 feature profiles; older artifacts remain compatible and report drift status as unavailable.
+
+## Match Center And Post-Match Data
+
+The match page separates the match workflow into focused views:
+
+- `Overview` combines the event timeline, league table and prediction summary
+- `Match lineups` shows confirmed or provisional starting elevens, formations, benches and available player ratings
+- `Analysis` contains the matchup radar, probability triangle, post-match verdict and market settlement
+- `Match statistics` compares recorded team statistics after the match
+- `History` presents head-to-head results and model-level predictions
+
+The timeline can include goals, cards, substitutions, VAR decisions, period boundaries and added time. Finished predictions are settled against recorded values for 1X2, BTTS, goal totals, corners and cards when the required result data is available.
+
+Lineup data keeps two player distinctions explicit. `Player of the match` is shown only when the source payload marks a player officially. When no official marker is available, the app shows `Top-rated player` as a rating-based fallback and does not present that player as the official award winner.
+
+Daily reports keep the main match payload compact and store larger detail collections in `match_events.json` and `match_lineups.json` sidecars. Finished-match enrichment is resumable: lineups, incidents and statistics have separate completion flags. By default, one missing detail endpoint is requested per finished event in each Python run, allowing later daily runs to continue incomplete matches without repeatedly downloading data already collected.
 
 ## Data Pipeline
 
@@ -190,6 +207,8 @@ git config diff.ipynb.textconv ".venv/Scripts/python.exe -m nbstripout -t"
 | `ADMIN_ACCESS_TOKEN` | alternative admin secret |
 | `SOFASCORE_DATA_DIR` | overrides frontend data directory |
 | `SOFASCORE_REPORTS_DIR` | overrides frontend reports directory |
+| `SOFASCORE_MAX_API_REQUESTS` | caps Sofascore API requests in one Python process |
+| `SOFASCORE_FINISHED_DETAIL_REQUESTS_PER_EVENT` | limits missing detail requests per finished event and run; defaults to `1` |
 | `PREBUILD_REPORT_DAYS_PAST` | controls past report window copied into `.data` |
 | `PREBUILD_REPORT_DAYS_FUTURE` | controls future report window copied into `.data` |
 | `PREBUILD_COPY_ALL_REPORTS` | copies all reports when set to `1` |

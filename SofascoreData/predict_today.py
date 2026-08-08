@@ -112,6 +112,13 @@ try:
     TEAM_HISTORY_ENRICH_DELAY = max(0.0, float(os.environ.get('SOFASCORE_TEAM_HISTORY_ENRICH_DELAY', '0.3')))
 except ValueError:
     TEAM_HISTORY_ENRICH_DELAY = 0.3
+try:
+    FINISHED_DETAIL_REQUESTS_PER_EVENT = max(
+        1,
+        int(os.environ.get('SOFASCORE_FINISHED_DETAIL_REQUESTS_PER_EVENT', '1')),
+    )
+except ValueError:
+    FINISHED_DETAIL_REQUESTS_PER_EVENT = 1
 TEAM_HISTORY_MODEL_STAT_KEYS = (
     'home_xg', 'away_xg',
     'home_expectedgoals', 'away_expectedgoals',
@@ -619,42 +626,53 @@ def _refresh_match_details(
     event_id,
     cache: Optional[Dict] = None,
     final: bool = False,
+    max_requests: Optional[int] = None,
 ) -> bool:
     cache_key = str(event_id)
     cached = cache.setdefault(cache_key, {}) if cache is not None else {}
     changed = False
+    requests_made = int(cached.get('_requests_made', 0))
+
+    def fetch_detail(cache_key: str, getter):
+        nonlocal requests_made
+        if cache_key in cached:
+            return True, cached[cache_key]
+        if max_requests is not None and requests_made >= max_requests:
+            return False, None
+        if getattr(scraper, 'api_budget_exhausted', False):
+            return False, None
+
+        payload = getter(event_id)
+        requests_made += 1
+        cached['_requests_made'] = requests_made
+        time.sleep(0.3)
+        if payload is None and getattr(scraper, 'api_budget_exhausted', False):
+            return False, None
+        cached[cache_key] = payload
+        return True, payload
 
     if not match.get('match_lineups_checked'):
-        if 'lineups' in cached:
-            lineups = cached['lineups']
-        else:
-            get_match_lineups = getattr(scraper, 'get_match_lineups', None)
-            lineups = get_match_lineups(event_id) if callable(get_match_lineups) else None
-            time.sleep(0.3)
-            cached['lineups'] = lineups
-        changed = _apply_match_lineups(match, lineups, final=final) or changed
-
-    stats = None
-    should_fetch_statistics = not final or not match.get('match_statistics_checked')
-    if should_fetch_statistics:
-        if 'statistics' in cached:
-            stats = cached['statistics']
-        else:
-            stats = scraper.get_match_statistics(event_id)
-            time.sleep(0.3)
-            cached['statistics'] = stats
+        get_match_lineups = getattr(scraper, 'get_match_lineups', None)
+        if callable(get_match_lineups):
+            fetched, lineups = fetch_detail('lineups', get_match_lineups)
+            if fetched:
+                changed = _apply_match_lineups(match, lineups, final=final) or changed
 
     incidents = None
     should_fetch_incidents = not final or not match.get('match_events_collected')
     if should_fetch_incidents:
-        if 'incidents' in cached:
-            incidents = cached['incidents']
-        else:
-            incidents = scraper.get_match_incidents(event_id)
-            time.sleep(0.3)
-            cached['incidents'] = incidents
+        incidents_fetched, incidents = fetch_detail('incidents', scraper.get_match_incidents)
+        if incidents_fetched and incidents is not None:
+            changed = _apply_match_incidents(match, incidents) or changed
 
-    if stats is not None and final and not match.get('match_statistics_checked'):
+    stats = None
+    should_fetch_statistics = not final or not match.get('match_statistics_checked')
+    if should_fetch_statistics:
+        stats_fetched, stats = fetch_detail('statistics', scraper.get_match_statistics)
+    else:
+        stats_fetched = False
+
+    if stats_fetched and stats is not None and final and not match.get('match_statistics_checked'):
         match['match_statistics_checked'] = True
         changed = True
     if stats:
@@ -664,10 +682,21 @@ def _refresh_match_details(
         match.update(stat_data)
         changed = changed or any(before_stats.get(key) != value for key, value in stat_data.items())
 
-    if incidents is not None:
-        changed = _apply_match_incidents(match, incidents) or changed
-
     return changed
+
+
+def _missing_final_match_details(match: Dict):
+    if match.get('event_id') in (None, ''):
+        return ()
+
+    missing = []
+    if not match.get('match_lineups_checked'):
+        missing.append('lineups')
+    if not match.get('match_events_collected'):
+        missing.append('events')
+    if not match.get('match_statistics_checked'):
+        missing.append('statistics')
+    return tuple(missing)
 
 
 def _refresh_score_details_if_needed(scraper, match: Dict, api_match: Dict, api_status: str) -> bool:
@@ -1739,7 +1768,11 @@ def _update_results_from_scheduled_events(
 
     updated_count = 0
     matched_count = 0
-    details_pending_count = 0
+    pending_detail_events = {
+        'lineups': set(),
+        'events': set(),
+        'statistics': set(),
+    }
     team_history_updates = []
     match_details_cache = {}
     modified_competitions = set()
@@ -1783,8 +1816,7 @@ def _update_results_from_scheduled_events(
                         api_status == 'finished' and
                         (
                             previous_status != 'finished' or
-                            not match.get('match_events_collected') or
-                            not match.get('match_lineups_checked')
+                            bool(_missing_final_match_details(match))
                         )
                     )
                 )
@@ -1800,18 +1832,21 @@ def _update_results_from_scheduled_events(
                             event_id,
                             match_details_cache,
                             final=api_status == 'finished',
+                            max_requests=(
+                                FINISHED_DETAIL_REQUESTS_PER_EVENT
+                                if api_status == 'finished'
+                                else None
+                            ),
                         ) or modified
                     except Exception as exc:
                         print(f"    [WARN] Failed to fetch match details: {exc}")
                 if (
                     api_status == 'finished' and
                     event_id and
-                    (
-                        not match.get('match_events_collected') or
-                        not match.get('match_lineups_checked')
-                    )
+                    _missing_final_match_details(match)
                 ):
-                    details_pending_count += 1
+                    for detail_kind in _missing_final_match_details(match):
+                        pending_detail_events[detail_kind].add(str(event_id))
                 has_score = _apply_api_score_fields(match, api_match)
                 _refresh_score_details_if_needed(scraper, match, api_match, api_status)
 
@@ -1854,8 +1889,18 @@ def _update_results_from_scheduled_events(
         print(f"[OK] Synced {synced_history} team history cache entries from finished international matches")
 
     print(f"[OK] Matched {matched_count}, updated {updated_count} matches from scheduled events")
+    pending_event_ids = set().union(*pending_detail_events.values())
+    details_pending_count = len(pending_event_ids)
     if details_pending_count:
-        print(f"[WARN] Match details still pending for {details_pending_count} matches")
+        pending_summary = ', '.join(
+            f"{kind}: {len(event_ids)}"
+            for kind, event_ids in pending_detail_events.items()
+            if event_ids
+        )
+        print(
+            f"[WARN] Match details still pending for {details_pending_count} matches "
+            f"({pending_summary})"
+        )
     _print_sofascore_budget_exhausted(scraper)
 
     return {
@@ -1885,12 +1930,18 @@ def _match_requires_result_refresh(match: Dict, comp_type: str) -> bool:
         match.get('event_id') not in (None, '') and
         not match.get('match_lineups_checked')
     )
+    needs_statistics_backfill = (
+        status == 'finished' and
+        match.get('event_id') not in (None, '') and
+        not match.get('match_statistics_checked')
+    )
     return (
         status in ('inprogress', 'upcoming', 'notstarted') or
         not has_score or
         needs_score_refresh or
         needs_event_backfill or
-        needs_lineup_backfill
+        needs_lineup_backfill or
+        needs_statistics_backfill
     )
 
 
@@ -2214,8 +2265,7 @@ def update_match_results(target_date: str):
                                     api_status == 'finished' and
                                     (
                                         previous_status != 'finished' or
-                                        not match.get('match_events_collected') or
-                                        not match.get('match_lineups_checked')
+                                        bool(_missing_final_match_details(match))
                                     )
                                 )
                             )
@@ -2227,6 +2277,11 @@ def update_match_results(target_date: str):
                                         event_id,
                                         match_details_cache,
                                         final=api_status == 'finished',
+                                        max_requests=(
+                                            FINISHED_DETAIL_REQUESTS_PER_EVENT
+                                            if api_status == 'finished'
+                                            else None
+                                        ),
                                     ) or modified
                                 except Exception as exc:
                                     print(f"    [WARN] Failed to fetch match details: {exc}")
@@ -4317,10 +4372,32 @@ def _build_match_lineups_artifact(report: Dict, target_date: str) -> Dict:
             snapshot['away_team'] = match.get('away_team') or snapshot.get('away_team')
             snapshots[key] = snapshot
 
+    official_count = sum(
+        1 for snapshot in snapshots.values()
+        if isinstance(snapshot.get('player_of_the_match'), dict)
+    )
+    top_rated_count = sum(
+        1 for snapshot in snapshots.values()
+        if isinstance(snapshot.get('top_rated_player'), dict)
+    )
+    fallback_count = sum(
+        1 for snapshot in snapshots.values()
+        if (
+            not isinstance(snapshot.get('player_of_the_match'), dict) and
+            isinstance(snapshot.get('top_rated_player'), dict)
+        )
+    )
+
     return {
         'schema_version': MATCH_LINEUPS_SCHEMA_VERSION,
         'date': target_date,
         'updated_at': updated_at,
+        'summary': {
+            'matches_with_lineups': len(snapshots),
+            'official_player_of_the_match': official_count,
+            'top_rated_player': top_rated_count,
+            'top_rated_fallback': fallback_count,
+        },
         'matches': snapshots,
     }
 
