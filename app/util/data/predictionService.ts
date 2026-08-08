@@ -593,21 +593,14 @@ function isLineupSide(value: unknown): value is MatchLineupSide {
     return Array.isArray(side.starters) && Array.isArray(side.substitutes);
 }
 
-export const loadMatchLineupSnapshot = cache((
-    date: string,
-    eventId: number | string,
-): MatchLineupSnapshot | null => {
-    const safeDate = safeReportDate(date);
-    if (!safeDate || String(eventId).trim() === "") return null;
+export interface LineupPlayerProfile {
+    player: MatchLineupPlayer;
+    teamName: string;
+    reportDate: string;
+    eventId: number | string;
+}
 
-    const artifactPath = newestMatchEventsFile(
-        reportDirs().map((dir) => path.join(dir, safeDate, "match_lineups.json")),
-    );
-    if (!artifactPath) return null;
-
-    const artifact = readJson<MatchLineupsArtifact>(artifactPath);
-    if (artifact?.schema_version !== 1 || !artifact.matches || typeof artifact.matches !== "object") return null;
-    const snapshot = artifact.matches[String(eventId)];
+function normalizeMatchLineupSnapshot(snapshot: MatchLineupSnapshot | undefined): MatchLineupSnapshot | null {
     if (!snapshot || !isLineupSide(snapshot.home) || !isLineupSide(snapshot.away)) return null;
 
     const topRatedPlayer = isTopRatedPlayer(snapshot.top_rated_player)
@@ -616,6 +609,7 @@ export const loadMatchLineupSnapshot = cache((
     const playerOfTheMatch = isPlayerOfTheMatch(snapshot.player_of_the_match)
         ? snapshot.player_of_the_match
         : undefined;
+
     return {
         ...snapshot,
         confirmed: Boolean(snapshot.confirmed),
@@ -632,6 +626,54 @@ export const loadMatchLineupSnapshot = cache((
         player_of_the_match: playerOfTheMatch,
         top_rated_player: topRatedPlayer,
     };
+}
+
+export const findPlayerInLineupReports = cache((playerId: number): LineupPlayerProfile | null => {
+    if (!Number.isInteger(playerId) || playerId <= 0) return null;
+
+    for (const reportDate of collectReportDates().reverse()) {
+        const artifactPath = newestMatchEventsFile(
+            reportDirs().map((dir) => path.join(dir, reportDate, "match_lineups.json")),
+        );
+        if (!artifactPath) continue;
+
+        const artifact = readJson<MatchLineupsArtifact>(artifactPath);
+        if (artifact?.schema_version !== 1 || !artifact.matches || typeof artifact.matches !== "object") continue;
+
+        for (const rawSnapshot of Object.values(artifact.matches)) {
+            const snapshot = normalizeMatchLineupSnapshot(rawSnapshot);
+            if (!snapshot) continue;
+
+            for (const [side, teamName] of [
+                [snapshot.home, snapshot.home_team],
+                [snapshot.away, snapshot.away_team],
+            ] as const) {
+                const player = [...side.starters, ...side.substitutes].find((candidate) => candidate.id === playerId);
+                if (player) {
+                    return { player, teamName: teamName ?? "", reportDate, eventId: snapshot.event_id };
+                }
+            }
+        }
+    }
+
+    return null;
+});
+
+export const loadMatchLineupSnapshot = cache((
+    date: string,
+    eventId: number | string,
+): MatchLineupSnapshot | null => {
+    const safeDate = safeReportDate(date);
+    if (!safeDate || String(eventId).trim() === "") return null;
+
+    const artifactPath = newestMatchEventsFile(
+        reportDirs().map((dir) => path.join(dir, safeDate, "match_lineups.json")),
+    );
+    if (!artifactPath) return null;
+
+    const artifact = readJson<MatchLineupsArtifact>(artifactPath);
+    if (artifact?.schema_version !== 1 || !artifact.matches || typeof artifact.matches !== "object") return null;
+    return normalizeMatchLineupSnapshot(artifact.matches[String(eventId)]);
 });
 
 export const loadPredictionReport = cache((date: string): PredictionReport | null => {

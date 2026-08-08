@@ -282,7 +282,11 @@ export default function CompactLeagueTable({
                                     <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-black ${positionStyle(row, zones, teamZones)}`}>
                                         {row.position}
                                     </span>
-                                    <div className="flex min-w-0 items-center gap-2">
+                                    <Link
+                                        href={`/team/${row.teamId}`}
+                                        prefetch={false}
+                                        className="group flex min-w-0 items-center gap-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                                    >
                                         <TeamLogo
                                             teamId={row.teamId}
                                             alt={row.teamName}
@@ -290,7 +294,7 @@ export default function CompactLeagueTable({
                                             className="h-5 w-5 shrink-0 object-contain"
                                         />
                                         <div className="min-w-0">
-                                            <div className="truncate font-bold text-gray-900 dark:text-white">
+                                            <div className="truncate font-bold text-gray-900 transition-colors group-hover:text-emerald-600 dark:text-white dark:group-hover:text-emerald-300">
                                                 {row.teamName}
                                             </div>
                                             {(isHome || isAway) && (
@@ -299,7 +303,7 @@ export default function CompactLeagueTable({
                                                 </div>
                                             )}
                                         </div>
-                                    </div>
+                                    </Link>
                                     <span className="text-center font-semibold text-gray-700 dark:text-gray-200">{row.played}</span>
                                     <span className="text-center font-semibold text-gray-700 dark:text-gray-200">{row.won}</span>
                                     <span className="text-center font-semibold text-gray-700 dark:text-gray-200">{row.drawn}</span>

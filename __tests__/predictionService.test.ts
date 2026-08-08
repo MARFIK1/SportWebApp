@@ -4,6 +4,7 @@ import {
     aggregateAccuracy,
     computeAccuracyOverTime,
     computeConsensusAccuracy,
+    findPlayerInLineupReports,
     computeResultTypeAccuracy,
     getMatchPrediction,
     loadMatchEventSnapshot,
@@ -489,6 +490,51 @@ describe("match lineup snapshots", () => {
         }));
 
         expect(loadMatchLineupSnapshot("2026-07-28", 99)?.top_rated_player).toBeUndefined();
+    });
+
+    it("finds a player in the newest lineup report", () => {
+        mockedFs.readdirSync.mockReturnValue(["2026-07-27", "2026-07-28"] as never);
+        mockedFs.readFileSync.mockImplementation((filePath: unknown) => {
+            const reportDate = String(filePath).includes("2026-07-28") ? "2026-07-28" : "2026-07-27";
+            return JSON.stringify({
+                schema_version: 1,
+                matches: {
+                    "123": {
+                        event_id: 123,
+                        status: "finished",
+                        home_team: reportDate === "2026-07-28" ? "Current Team" : "Previous Team",
+                        away_team: "Away Team",
+                        updated_at: reportDate,
+                        confirmed: true,
+                        home: {
+                            starters: [{
+                                id: 55,
+                                name: "Current Player",
+                                short_name: "C. Player",
+                                position: "D",
+                                jersey_number: "5",
+                            }],
+                            substitutes: [],
+                        },
+                        away: {
+                            starters: [{ id: 77, name: "Away Player", position: "F" }],
+                            substitutes: [],
+                        },
+                    },
+                },
+            });
+        });
+
+        expect(findPlayerInLineupReports(55)).toEqual({
+            player: expect.objectContaining({
+                id: 55,
+                name: "Current Player",
+                position: "D",
+            }),
+            teamName: "Current Team",
+            reportDate: "2026-07-28",
+            eventId: 123,
+        });
     });
 });
 

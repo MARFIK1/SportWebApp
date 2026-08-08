@@ -2,7 +2,8 @@ import Image from "next/image";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getAllCompetitions } from "@/app/util/league/leagueRegistry";
-import { findPlayerInCompetitions, loadAllSeasons } from "@/app/util/data/dataService";
+import { buildTeamIdMap, findPlayerInCompetitions, loadAllSeasons, type PlayerInfo } from "@/app/util/data/dataService";
+import { findPlayerInLineupReports } from "@/app/util/data/predictionService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
@@ -31,11 +32,33 @@ function calculateAge(dateOfBirth: string): number {
     return age;
 }
 
+function resolvePlayer(playerId: number) {
+    const competitions = getAllCompetitions();
+    const catalogResult = findPlayerInCompetitions(playerId, competitions);
+    if (catalogResult) return { player: catalogResult.player, competitions };
+
+    const lineupResult = findPlayerInLineupReports(playerId);
+    if (!lineupResult) return null;
+
+    const player: PlayerInfo = {
+        id: playerId,
+        name: lineupResult.player.name,
+        short_name: lineupResult.player.short_name ?? lineupResult.player.name,
+        position: lineupResult.player.position ?? "",
+        jersey_number: lineupResult.player.jersey_number ?? "",
+        date_of_birth: "",
+        height: 0,
+        country: "",
+        team: lineupResult.teamName,
+    };
+    return { player, competitions };
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
     const resolvedParams = await params;
     const playerId = parseInt(resolvedParams.id, 10);
     if (!Number.isFinite(playerId)) return { title: "Player" };
-    const result = findPlayerInCompetitions(playerId, getAllCompetitions());
+    const result = resolvePlayer(playerId);
     if (!result) return { title: "Player" };
     const { player } = result;
     return {
@@ -47,8 +70,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function PlayerPage({ params }: PageProps) {
     const resolvedParams = await params;
     const playerId = parseInt(resolvedParams.id, 10);
-    const competitions = getAllCompetitions();
-    const result = Number.isFinite(playerId) ? findPlayerInCompetitions(playerId, competitions) : null;
+    const result = Number.isFinite(playerId) ? resolvePlayer(playerId) : null;
 
     const t = await getServerT();
 
@@ -60,12 +82,12 @@ export default async function PlayerPage({ params }: PageProps) {
         );
     }
 
-    const { player } = result;
+    const { player, competitions } = result;
     const age = player.date_of_birth ? calculateAge(player.date_of_birth) : null;
 
-    let teamId: number | null = null;
+    let teamId: number | null = buildTeamIdMap(competitions).get(player.team) ?? null;
 
-    for (const comp of competitions) {
+    for (const comp of teamId ? [] : competitions) {
         const matches = loadAllSeasons(comp);
         for (const m of matches) {
             if (m.home_team === player.team) { teamId = m.home_team_id; break; }
@@ -116,9 +138,11 @@ export default async function PlayerPage({ params }: PageProps) {
                     <div className="flex-1 text-center sm:text-left">
                         <h1 className="text-3xl font-bold mb-2">{player.name}</h1>
                         <div className="flex flex-wrap gap-3 justify-center sm:justify-start">
-                            <span className="px-3 py-1 bg-emerald-600/30 text-emerald-400 rounded-full text-sm font-semibold">
-                                {POSITION_KEYS[player.position] ? t(POSITION_KEYS[player.position]) : player.position}
-                            </span>
+                            {player.position && (
+                                <span className="px-3 py-1 bg-emerald-600/30 text-emerald-400 rounded-full text-sm font-semibold">
+                                    {POSITION_KEYS[player.position] ? t(POSITION_KEYS[player.position]) : player.position}
+                                </span>
+                            )}
                             {player.jersey_number && (
                                 <span className="px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-full text-sm">
                                     #{player.jersey_number}
@@ -160,12 +184,14 @@ export default async function PlayerPage({ params }: PageProps) {
                             <div className="text-2xl font-bold text-blue-400">{player.height} cm</div>
                         </div>
                     )}
-                    <div className="text-center p-3">
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t("position")}</div>
-                        <div className="text-2xl font-bold text-yellow-400">
-                            {POSITION_KEYS[player.position] ? t(POSITION_KEYS[player.position]) : player.position}
+                    {player.position && (
+                        <div className="text-center p-3">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t("position")}</div>
+                            <div className="text-2xl font-bold text-yellow-400">
+                                {POSITION_KEYS[player.position] ? t(POSITION_KEYS[player.position]) : player.position}
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </div>
             </div>
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { CheckBadgeIcon, StarIcon, UserGroupIcon } from "@heroicons/react/24/outline";
 import PlayerAvatar from "@/app/components/common/PlayerAvatar";
 import TeamLogo from "@/app/components/common/TeamLogo";
@@ -20,6 +21,10 @@ interface TeamDetails {
     id: number;
 }
 
+function hasProfileId(id: number | undefined): id is number {
+    return Number.isInteger(id) && (id ?? 0) > 0;
+}
+
 function PlayerMarker({
     player,
     highlighted,
@@ -29,10 +34,9 @@ function PlayerMarker({
 }) {
     const label = lineupPlayerLabel(player);
     const jersey = player.jersey_number || "-";
-
-    return (
-        <div className="flex min-w-0 max-w-[88px] flex-1 flex-col items-center" title={player.name}>
-            <span className="relative">
+    const content = (
+        <>
+            <span className="relative transition-transform group-hover:scale-105">
                 <PlayerAvatar
                     playerId={player.id}
                     name={player.name}
@@ -48,7 +52,7 @@ function PlayerMarker({
                     </span>
                 )}
             </span>
-            <span className="mt-1 w-full truncate text-center text-[10px] font-bold text-white">
+            <span className="mt-1 w-full truncate text-center text-[10px] font-bold text-white transition-colors group-hover:text-emerald-300">
                 {label}
             </span>
             {player.rating != null && (
@@ -58,6 +62,21 @@ function PlayerMarker({
                     {player.rating.toFixed(1)}
                 </span>
             )}
+        </>
+    );
+    const className = "group flex min-w-0 max-w-[88px] flex-1 flex-col items-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300";
+
+    if (hasProfileId(player.id)) {
+        return (
+            <Link href={`/player/${player.id}`} prefetch={false} className={className} title={player.name}>
+                {content}
+            </Link>
+        );
+    }
+
+    return (
+        <div className={className} title={player.name}>
+            {content}
         </div>
     );
 }
@@ -77,17 +96,21 @@ function FormationPitch({
     return (
         <div className="mx-auto w-full min-w-0 max-w-[520px]">
             <div className="mb-3 flex min-h-9 items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
+                <Link
+                    href={`/team/${team.id}`}
+                    prefetch={false}
+                    className="group flex min-w-0 items-center gap-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+                >
                     <TeamLogo
                         teamId={team.id}
                         alt={team.name}
                         size={28}
                         className="h-7 w-7 shrink-0 object-contain"
                     />
-                    <span className="truncate text-sm font-bold text-gray-100" title={team.name}>
+                    <span className="truncate text-sm font-bold text-gray-100 transition-colors group-hover:text-emerald-300" title={team.name}>
                         {team.name}
                     </span>
-                </div>
+                </Link>
                 <span className="shrink-0 rounded border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] font-bold uppercase text-emerald-300">
                     {t("formation")} {lineup.formation || "-"}
                 </span>
@@ -134,16 +157,22 @@ function SubstituteList({
 
     return (
         <div className="min-w-0">
-            <div className="flex items-center gap-2 border-b border-gray-800 pb-2">
-                <TeamLogo
-                    teamId={team.id}
-                    alt={team.name}
-                    size={22}
-                    className="h-[22px] w-[22px] shrink-0 object-contain"
-                />
-                <h3 className="truncate text-xs font-bold uppercase text-gray-400">
-                    {team.name} {"\u2022"} {t("substitutes")}
-                </h3>
+            <div className="border-b border-gray-800 pb-2">
+                <Link
+                    href={`/team/${team.id}`}
+                    prefetch={false}
+                    className="group flex w-fit max-w-full items-center gap-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+                >
+                    <TeamLogo
+                        teamId={team.id}
+                        alt={team.name}
+                        size={22}
+                        className="h-[22px] w-[22px] shrink-0 object-contain"
+                    />
+                    <h3 className="truncate text-xs font-bold uppercase text-gray-400 transition-colors group-hover:text-emerald-300">
+                        {team.name} {"\u2022"} {t("substitutes")}
+                    </h3>
+                </Link>
             </div>
             <ul className="mt-2 grid gap-x-5 sm:grid-cols-2">
                 {lineup.substitutes.map((player, index) => (
@@ -154,9 +183,18 @@ function SubstituteList({
                         <span className="w-6 shrink-0 text-center font-bold tabular-nums text-gray-500">
                             {player.jersey_number || "-"}
                         </span>
-                        <span className="min-w-0 flex-1 truncate font-semibold text-gray-200" title={player.name}>
-                            {player.name}
-                        </span>
+                        {hasProfileId(player.id) ? (
+                            <Link
+                                href={`/player/${player.id}`}
+                                prefetch={false}
+                                className="min-w-0 flex-1 truncate rounded font-semibold text-gray-200 transition-colors hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+                                title={player.name}
+                            >
+                                {player.name}
+                            </Link>
+                        ) : (
+                            <span className="min-w-0 flex-1 truncate font-semibold text-gray-200" title={player.name}>{player.name}</span>
+                        )}
                         {player.rating != null && (
                             <span className="shrink-0 font-bold tabular-nums text-emerald-300">
                                 {player.rating.toFixed(1)}
@@ -184,6 +222,24 @@ export default function MatchLineups({
     const featuredPlayerLabel = snapshot.player_of_the_match ? "player_of_the_match" : "top_rated_player";
     const hasSubstitutes = snapshot.home.substitutes.length > 0 || snapshot.away.substitutes.length > 0;
 
+    const featuredPlayerIdentity = featuredPlayer ? (
+        <>
+            <PlayerAvatar
+                playerId={featuredPlayer.id}
+                name={featuredPlayer.name}
+                fallbackText={featuredPlayer.jersey_number}
+                size={40}
+                className="border-2 border-amber-300/70 transition-transform group-hover:scale-105"
+                fallbackClassName="bg-gray-950 text-amber-200"
+            />
+            <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase text-amber-300">{t(featuredPlayerLabel)}</p>
+                <p className="truncate text-sm font-bold text-gray-100 transition-colors group-hover:text-amber-200">
+                    {featuredPlayer.name} <span className="font-medium text-gray-500">{"\u2022"} {featuredPlayerTeam}</span>
+                </p>
+            </div>
+        </>
+    ) : null;
     return (
         <section className="mb-6 overflow-hidden rounded-2xl border border-gray-800 bg-white dark:bg-gray-900/50">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-4 sm:px-6">
@@ -210,20 +266,20 @@ export default function MatchLineups({
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 sm:px-6">
                     <div className="flex min-w-0 items-center gap-3">
                         <StarIcon aria-hidden="true" className="h-5 w-5 shrink-0 text-amber-300" />
-                        <PlayerAvatar
-                            playerId={featuredPlayer.id}
-                            name={featuredPlayer.name}
-                            fallbackText={featuredPlayer.jersey_number}
-                            size={40}
-                            className="border-2 border-amber-300/70"
-                            fallbackClassName="bg-gray-950 text-amber-200"
-                        />
-                        <div className="min-w-0">
-                            <p className="text-[10px] font-bold uppercase text-amber-300">{t(featuredPlayerLabel)}</p>
-                            <p className="truncate text-sm font-bold text-gray-100">
-                                {featuredPlayer.name} <span className="font-medium text-gray-500">{"\u2022"} {featuredPlayerTeam}</span>
-                            </p>
-                        </div>
+                        {hasProfileId(featuredPlayer.id) ? (
+                            <Link
+                                href={`/player/${featuredPlayer.id}`}
+                                prefetch={false}
+                                className="group flex min-w-0 items-center gap-3 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                                title={featuredPlayer.name}
+                            >
+                                {featuredPlayerIdentity}
+                            </Link>
+                        ) : (
+                            <div className="group flex min-w-0 items-center gap-3" title={featuredPlayer.name}>
+                                {featuredPlayerIdentity}
+                            </div>
+                        )}
                     </div>
                     {featuredPlayer.rating != null && (
                         <span className="rounded bg-amber-300 px-2 py-1 text-sm font-black tabular-nums text-gray-950">
