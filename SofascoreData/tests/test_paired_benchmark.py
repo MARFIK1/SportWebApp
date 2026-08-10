@@ -5,6 +5,7 @@ import pandas as pd
 
 from sofascore.predictor import _classification_calibration_bins
 from sofascore.paired_benchmark import build_common_odds_sample
+from train_models import _build_paired_training_sample
 
 
 class PairedBenchmarkTests(unittest.TestCase):
@@ -40,6 +41,27 @@ class PairedBenchmarkTests(unittest.TestCase):
         _, second = build_common_odds_sample(dataframe.copy())
 
         self.assertEqual(first["sample_hash"], second["sample_hash"])
+
+    def test_single_lineup_variant_can_resume_on_paired_sample(self):
+        dataframe = pd.DataFrame({
+            "event_id": [1, 2, 3],
+            "date": ["2026-01-01", "2026-01-02", "2026-01-03"],
+            "label_result_int": [0, 1, 2],
+            "confirmed_lineup_available": [1, 0, 1],
+            "odds_home_win": [2.0, 2.1, None],
+            "odds_draw": [3.0, 3.1, 3.2],
+            "odds_away_win": [4.0, 4.1, 4.2],
+        })
+
+        filtered, metadata, lineup_sample = _build_paired_training_sample(
+            dataframe,
+            "with_odds_lineup",
+        )
+
+        self.assertEqual(filtered["event_id"].tolist(), [1])
+        self.assertEqual(lineup_sample["rows"], 2)
+        self.assertEqual(metadata["rows"], 1)
+        self.assertEqual(metadata["policy"], "confirmed_lineup_and_common_odds")
 
     def test_calibration_bins_preserve_all_test_rows(self):
         y_true = np.array([0, 1, 2, 0])

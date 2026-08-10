@@ -1,5 +1,6 @@
 import unittest
 
+import numpy as np
 import pandas as pd
 
 from sofascore.predictor import UniversalPredictor
@@ -34,6 +35,42 @@ class ReferencePredictor:
                 },
             }
         }
+
+
+class BatchReferencePredictor(ReferencePredictor):
+    def __init__(self):
+        super().__init__()
+        self.batch_calls = 0
+
+    def predict_consensus_batch(self, frame, target):
+        self.batch_calls += 1
+        if target == "total_goals":
+            return {"predictions": frame["expected_total"].to_numpy(dtype=float)}
+        return {
+            "predictions": np.asarray([0, 2], dtype=int),
+            "probabilities": np.asarray([
+                [0.8, 0.1, 0.1],
+                [0.1, 0.1, 0.8],
+            ]),
+        }
+
+    def predict_match_all_models(self, features, target):
+        raise AssertionError("row inference should not run when batch inference succeeds")
+
+
+class SignalClassifier:
+    classes_ = np.asarray([0, 1, 2])
+
+    def predict_proba(self, frame):
+        signal = np.asarray(frame["home_signal"], dtype=float)
+        return np.column_stack([
+            0.2 + 0.4 * signal,
+            np.full(len(signal), 0.2),
+            0.6 - 0.4 * signal,
+        ])
+
+    def predict(self, frame):
+        return np.argmax(self.predict_proba(frame), axis=1)
 
 
 class ProductionBenchmarkTests(unittest.TestCase):
@@ -93,6 +130,60 @@ class ProductionBenchmarkTests(unittest.TestCase):
         self.assertTrue(benchmark["comparable"])
         self.assertEqual(benchmark["metrics"]["mae"], 0.0)
         self.assertEqual(benchmark["rows_evaluated"], 2)
+
+    def test_reference_benchmark_prefers_batch_inference(self):
+        reference = BatchReferencePredictor()
+        labels = pd.Series([0, 2], index=self.frame.index)
+        self.predictor.training_stats["result"] = {}
+
+        self.predictor._attach_reference_benchmark(
+            reference,
+            "result",
+            self.frame,
+            self.frame.index,
+            labels,
+        )
+
+        benchmark = self.predictor.training_stats["result"]["production_benchmark"]
+        self.assertEqual(reference.batch_calls, 1)
+        self.assertEqual(benchmark["inference_mode"], "batch")
+        self.assertTrue(benchmark["comparable"])
+        self.assertEqual(benchmark["metrics"]["accuracy"], 1.0)
+
+    def test_batch_consensus_matches_single_row_consensus(self):
+        predictor = UniversalPredictor(".")
+        predictor.trained = True
+        predictor.models = {
+            "result": {
+                "Signal A": {"model": SignalClassifier(), "scaled": False},
+                "Signal B": {"model": SignalClassifier(), "scaled": False},
+            }
+        }
+        predictor.feature_columns_by_target = {"result": ["home_signal"]}
+        predictor.feature_columns = ["home_signal"]
+        predictor.training_stats = {"result": {}}
+        frame = pd.DataFrame([
+            {"home_signal": 1.0},
+            {"home_signal": 0.0},
+        ])
+
+        row_predictions = [
+            predictor.predict_match_all_models(row.to_dict(), "result")["consensus"]
+            for _, row in frame.iterrows()
+        ]
+        batch = predictor.predict_consensus_batch(frame, "result")
+
+        expected_labels = [0 if row["prediction"] == "HOME" else 2 for row in row_predictions]
+        expected_probabilities = np.asarray([
+            [
+                row["avg_probabilities"]["HOME"],
+                row["avg_probabilities"]["DRAW"],
+                row["avg_probabilities"]["AWAY"],
+            ]
+            for row in row_predictions
+        ]) / 100.0
+        np.testing.assert_array_equal(batch["predictions"], expected_labels)
+        np.testing.assert_allclose(batch["probabilities"], expected_probabilities)
 
 
 if __name__ == "__main__":

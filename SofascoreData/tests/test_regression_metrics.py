@@ -1,6 +1,8 @@
 import unittest
 
 import numpy as np
+import pandas as pd
+from sklearn.dummy import DummyRegressor
 from sklearn.preprocessing import StandardScaler
 
 from sofascore.predictor import (
@@ -66,6 +68,44 @@ class RegressionMetricTests(unittest.TestCase):
         self.assertEqual(predictions["consensus"]["model"], "Best")
         self.assertEqual(predictions["consensus"]["strategy"], "best_temporal_mae")
         self.assertEqual(predictions["consensus"]["input_quality"]["status"], "complete")
+
+    def test_regression_training_stores_model_without_prediction_input_metadata(self):
+        predictor = UniversalPredictor(".")
+        predictor._build_regression_configs = lambda: {
+            "Dummy": {
+                "model": DummyRegressor(strategy="median"),
+                "scaled": False,
+            }
+        }
+        predictor.feature_sets_by_target = {"total_goals": "lineup_available"}
+
+        X_train = pd.DataFrame({"feature": [0.0, 1.0, 2.0, 3.0]})
+        X_test = pd.DataFrame({"feature": [4.0, 5.0]}, index=[4, 5])
+        X = pd.concat([X_train, X_test])
+
+        results = predictor._train_regression_models(
+            "total_goals",
+            {},
+            X_train,
+            X_test,
+            X_train,
+            X_test,
+            np.array([0.0, 1.0, 2.0, 3.0]),
+            np.array([4.0, 5.0]),
+            ["feature"],
+            StandardScaler(),
+            X,
+            None,
+            pd.DataFrame(),
+            "global_temporal",
+            None,
+        )
+
+        self.assertIn("Dummy", results)
+        self.assertEqual(
+            predictor.models["total_goals"]["Dummy"]["task"],
+            "regression",
+        )
 
 
 if __name__ == "__main__":

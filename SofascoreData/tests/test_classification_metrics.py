@@ -102,6 +102,21 @@ class ClassificationMetricTests(unittest.TestCase):
         self.assertIn("macro_f1", metrics)
         self.assertEqual(metrics["per_class_recall"]["1"], 0.0)
 
+    def test_classification_metrics_normalize_probability_rows(self):
+        metrics = _classification_eval_metrics(
+            np.array([0, 1]),
+            np.array([0, 1]),
+            np.array([
+                [0.600001, 0.300001, 0.100001],
+                [0.200001, 0.700001, 0.100001],
+            ]),
+            class_labels=[0, 1, 2],
+        )
+
+        self.assertIsNotNone(metrics["log_loss"])
+        self.assertIsNotNone(metrics["brier_score"])
+        self.assertIsNotNone(metrics["ece"])
+
 
 if __name__ == "__main__":
     unittest.main()
