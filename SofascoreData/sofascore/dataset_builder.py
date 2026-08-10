@@ -3,7 +3,7 @@ import math
 from typing import Dict, Iterable, List, Optional, Sequence
 
 
-DATASET_BUILDER_VERSION = 3
+DATASET_BUILDER_VERSION = 4
 PENDING_STATUSES = frozenset({"upcoming", "notstarted", "postponed", "canceled"})
 
 

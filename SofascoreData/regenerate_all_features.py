@@ -88,6 +88,21 @@ def load_all_league_player_stats(data_dir=None):
     return index
 
 
+def build_player_stats_index(player_stats, league_name=None):
+    index = {}
+    for source_record in player_stats or []:
+        record = dict(source_record)
+        if league_name and not record.get('_league'):
+            record['_league'] = league_name
+        player_id = record.get('player_id')
+        if player_id in (None, ''):
+            continue
+        index.setdefault(player_id, []).append(record)
+    for records in index.values():
+        records.sort(key=lambda item: item.get('date', ''), reverse=True)
+    return index
+
+
 def load_lineups(base_path):
     """Load lineups from competition directory, indexed by event_id."""
     lineups_path = os.path.join(base_path, 'lineups')
@@ -225,6 +240,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
 
     history_matches, raw_duplicates = deduplicate_matches(history_matches)
     player_stats = None
+    effective_club_stats_index = club_stats_index
     generator = None
     lineups_data = None
     all_samples = []
@@ -271,7 +287,12 @@ def regenerate_competition_features(comp_type, country, comp_name,
             generator = create_generator()
             player_stats = load_player_stats(base_path)
             has_player_stats = has_player_stats or bool(player_stats)
-        if comp_type in ('european', 'international') and lineups_data is None:
+            if effective_club_stats_index is None:
+                effective_club_stats_index = build_player_stats_index(
+                    player_stats,
+                    comp_name,
+                )
+        if lineups_data is None:
             lineups_data = load_lineups(base_path)
 
         result = generate_season_features(
@@ -280,7 +301,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
             generator=generator,
             season=season,
             lineups=lineups_data,
-            club_stats_index=club_stats_index,
+            club_stats_index=effective_club_stats_index,
             history_matches=history_matches,
             elo_matches=history_matches,
         )
