@@ -121,20 +121,27 @@ python scrape_all.py
 python regenerate_all_features.py --force
 python train_models.py --audit-only
 python train_models.py --variant without_odds --targets result
+python train_models.py --variant lineup_both --targets all --paired-common-sample --save-models
 python predict_today.py 2026-05-15 --update
 python predict_today.py 2026-05-15 --scrape
 ```
 
-`train_models.py` writes Backend v2.1 experiments under `data/models/experiments/` and never overwrites production artifacts. By default, every candidate is evaluated against the active production artifact on the same temporal holdout. A missing active artifact is a hard failure; `--skip-production-benchmark` exists only for an initial bootstrap. With `--save-models`, candidate files remain inside the experiment directory. Run the dataset audit after feature regeneration; training is blocked when cached feature files contain legacy or mixed builder versions. Use `--variant both --targets all --save-models` only for a deliberate full training run. The notebooks remain available for exploratory analysis and charts.
+`train_models.py` writes Backend v2 experiments under `data/models/experiments/` and never overwrites production artifacts. By default, every candidate is evaluated against the active production artifact on the same temporal holdout. A missing active artifact is a hard failure; `--skip-production-benchmark` exists only for an initial bootstrap. With `--save-models`, candidate files remain inside the experiment directory. Run the dataset audit after feature regeneration; training is blocked when cached feature files contain legacy or mixed builder versions.
+
+Backend v2.2 adds the optional `without_odds_lineup` and `with_odds_lineup` variants. They use the `lineup_available` and `lineup_with_odds` feature sets and train only on matches with confirmed, complete starting elevens for both teams. `--variant lineup_both --paired-common-sample` evaluates both lineup variants on the same chronological sample with complete positive opening 1X2 odds. Post-match ratings and awards are excluded from these pre-match features to prevent leakage.
+
+Lineup-aware artifacts are promoted per target. A target is copied into the optional artifact only when it passes the production acceptance gate on the same holdout; rejected targets continue using the active baseline model. At inference time, the lineup artifact is used only when the current match has confirmed complete lineups. Otherwise prediction falls back to the regular `without_odds` or `with_odds` artifact.
 
 Promote each prediction variant separately after reviewing its acceptance report:
 
 ```bash
 python promote_models.py --variant without_odds --baseline data/models/universal_predictor.pkl --candidate data/models/experiments/<run>/without_odds/universal_predictor.pkl --output data/models/universal_predictor.pkl
 python promote_models.py --variant with_odds --baseline data/models/universal_predictor_with_odds.pkl --candidate data/models/experiments/<run>/with_odds/universal_predictor_with_odds.pkl --output data/models/universal_predictor_with_odds.pkl
+python promote_models.py --variant without_odds_lineup --baseline data/models/universal_predictor.pkl --candidate data/models/experiments/<run>/without_odds_lineup/universal_predictor_lineup.pkl --output data/models/universal_predictor_lineup.pkl
+python promote_models.py --variant with_odds_lineup --baseline data/models/universal_predictor_with_odds.pkl --candidate data/models/experiments/<run>/with_odds_lineup/universal_predictor_with_odds_lineup.pkl --output data/models/universal_predictor_with_odds_lineup.pkl
 ```
 
-Promotion stores an immutable artifact under `data/models/releases/`, atomically switches `active_<variant>.json`, and refreshes the legacy fixed filename for compatibility. Inference resolves the active pointer first. Prediction reports carry the artifact contract used for each variant; prebuild rejects mixed reports and unfinished reports produced by an older active model. Run `npm run quality` before publishing code changes.
+Promotion stores an immutable artifact under `data/models/releases/`, atomically switches `active_<variant>.json`, and refreshes the fixed compatibility filename. The lineup variants use `active_without_odds_lineup.json` and `active_with_odds_lineup.json`. Inference resolves the active pointer first. Prediction reports carry the artifact contract used for each variant; prebuild rejects mixed reports and unfinished reports produced by an older active model. Run `npm run quality` before publishing code changes.
 
 ## Model Diagnostics
 

@@ -24,6 +24,8 @@ FLOAT_COMPARISON_EPSILON = 1e-12
 DEPLOYABLE_FEATURE_SETS_BY_VARIANT = {
     "without_odds": {"pre_match_safe"},
     "with_odds": {"odds_available"},
+    "without_odds_lineup": {"lineup_available"},
+    "with_odds_lineup": {"lineup_with_odds"},
 }
 
 

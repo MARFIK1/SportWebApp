@@ -46,9 +46,10 @@ from sofascore.decision_policy import (
     apply_decision_policy,
     fit_binary_decision_policy,
     fit_result_decision_policy,
+    normalize_probabilities,
     weighted_average_probabilities,
 )
-from sofascore.lstm_model import LSTMPredictor, HAS_TORCH
+from sofascore.lstm_model import LSTMPredictor, HAS_TORCH, SEQ_LEN
 from sofascore.model_release import (
     MODEL_ARTIFACT_SCHEMA_VERSION,
     artifact_contract_from_manifest,
@@ -295,6 +296,21 @@ def _prepare_prediction_frame(
     return pd.DataFrame([values], columns=feature_columns), quality
 
 
+def _prepare_prediction_matrix(
+    frame: pd.DataFrame,
+    feature_columns: List[str],
+) -> pd.DataFrame:
+    """Build the same numeric model input as single-row prediction, in bulk."""
+    values = {}
+    for column in feature_columns:
+        if column in frame.columns:
+            series = pd.to_numeric(frame[column], errors='coerce')
+            values[column] = series.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        else:
+            values[column] = pd.Series(0.0, index=frame.index)
+    return pd.DataFrame(values, index=frame.index, columns=feature_columns)
+
+
 def _date_range_summary(dates) -> Dict:
     if dates is None:
         return {}
@@ -425,6 +441,11 @@ def _classification_eval_metrics(y_true, y_pred, proba, class_labels: List[int])
         metrics['per_class_recall'][str(cls)] = round(float(cm[idx, idx] / denom), 4) if denom else 0.0
 
     if proba is None or len(y_true) == 0:
+        return metrics
+
+    try:
+        proba = normalize_probabilities(proba)
+    except (TypeError, ValueError):
         return metrics
 
     try:
@@ -702,6 +723,7 @@ META_COLUMNS = {
     'home_team_id', 'away_team_id',
     'comp_type', 'country', 'competition', 'league',
     'home_score', 'away_score', 'home_score_ht', 'away_score_ht', 'status',
+    'confirmed_lineup_available',
 }
 
 LABEL_COLUMNS = {
@@ -710,6 +732,17 @@ LABEL_COLUMNS = {
     'label_total_corners', 'label_corners_over_8_5', 'label_corners_over_10_5',
     'label_total_cards', 'label_cards_over_3_5', 'label_cards_over_4_5',
 }
+
+LINEUP_CONTEXT_FEATURE_COLUMNS = [
+    'home_squad_avg_rating', 'away_squad_avg_rating',
+    'home_squad_avg_xg', 'away_squad_avg_xg',
+    'home_squad_avg_xa', 'away_squad_avg_xa',
+    'home_squad_top5_rating', 'away_squad_top5_rating',
+    'home_squad_gk_rating', 'away_squad_gk_rating',
+    'home_squad_minutes_pct', 'away_squad_minutes_pct',
+    'home_squad_top5_league_pct', 'away_squad_top5_league_pct',
+    'squad_rating_diff', 'squad_xg_diff', 'squad_top5_rating_diff',
+]
 
 
 FEATURE_COLUMNS = [
@@ -779,6 +812,7 @@ FEATURE_COLUMNS = [
     'home_wform_goals_against', 'away_wform_goals_against',
     'home_wform_xg_diff', 'away_wform_xg_diff', 'wform_xg_diff',
     'home_wform_clean_sheets', 'away_wform_clean_sheets',
+    *LINEUP_CONTEXT_FEATURE_COLUMNS,
     'odds_home_win', 'odds_draw', 'odds_away_win',
     'odds_home_prob', 'odds_draw_prob', 'odds_away_prob',
     'odds_overround',
@@ -808,15 +842,21 @@ def _is_live_safe_feature(column: str) -> bool:
 
 
 PRE_MATCH_SAFE_FEATURE_COLUMNS = [c for c in FEATURE_COLUMNS if _is_live_safe_feature(c)]
-LINEUP_AVAILABLE_FEATURE_COLUMNS = [c for c in FEATURE_COLUMNS if not _is_odds_feature(c)]
 ODDS_AVAILABLE_FEATURE_COLUMNS = PRE_MATCH_SAFE_FEATURE_COLUMNS + [
     c for c in FEATURE_COLUMNS if _is_odds_feature(c)
 ]
+LINEUP_AVAILABLE_FEATURE_COLUMNS = (
+    PRE_MATCH_SAFE_FEATURE_COLUMNS + LINEUP_CONTEXT_FEATURE_COLUMNS
+)
+LINEUP_WITH_ODDS_FEATURE_COLUMNS = (
+    ODDS_AVAILABLE_FEATURE_COLUMNS + LINEUP_CONTEXT_FEATURE_COLUMNS
+)
 
 FEATURE_SETS = {
     'pre_match_safe': PRE_MATCH_SAFE_FEATURE_COLUMNS,
     'lineup_available': LINEUP_AVAILABLE_FEATURE_COLUMNS,
     'odds_available': ODDS_AVAILABLE_FEATURE_COLUMNS,
+    'lineup_with_odds': LINEUP_WITH_ODDS_FEATURE_COLUMNS,
     'all_reference': FEATURE_COLUMNS,
 }
 
@@ -1008,6 +1048,214 @@ class UniversalPredictor:
             Path(self.artifact_path) if self.artifact_path else None,
         )
 
+    @staticmethod
+    def _predict_lstm_probability_batch(
+        model,
+        source_df: pd.DataFrame,
+        num_classes: int,
+    ) -> np.ndarray:
+        probabilities = np.full(
+            (len(source_df), num_classes),
+            1.0 / num_classes,
+            dtype=float,
+        )
+        if not getattr(model, '_fitted', False):
+            return probabilities
+
+        valid_positions = []
+        home_sequences = []
+        away_sequences = []
+        records = source_df.to_dict(orient='records')
+        for position, features in enumerate(records):
+            home_team = features.get('home_team', features.get('_home_team', ''))
+            away_team = features.get('away_team', features.get('_away_team', ''))
+            match_date = features.get('date', features.get('_date', 'z'))
+            home_history = [
+                item for item in model.team_history.get(home_team, [])
+                if item[0] < match_date
+            ]
+            away_history = [
+                item for item in model.team_history.get(away_team, [])
+                if item[0] < match_date
+            ]
+            sequence_length = getattr(model, 'seq_len', SEQ_LEN)
+            if (
+                len(home_history) < sequence_length
+                or len(away_history) < sequence_length
+            ):
+                continue
+            valid_positions.append(position)
+            home_sequences.append([
+                home_history[-(sequence_length - offset)][1]
+                for offset in range(sequence_length)
+            ])
+            away_sequences.append([
+                away_history[-(sequence_length - offset)][1]
+                for offset in range(sequence_length)
+            ])
+
+        if not valid_positions:
+            return probabilities
+
+        home_batch = np.asarray(home_sequences, dtype=np.float32)
+        away_batch = np.asarray(away_sequences, dtype=np.float32)
+        home_batch = (home_batch - model._home_mean) / model._home_std
+        away_batch = (away_batch - model._away_mean) / model._away_std
+        probabilities[valid_positions] = model._predict_from_seqs(
+            home_batch,
+            away_batch,
+        )
+        return probabilities
+
+    def predict_consensus_batch(
+        self,
+        source_df: pd.DataFrame,
+        target: str,
+    ) -> Dict[str, np.ndarray]:
+        """Evaluate the deployed consensus for many rows without per-row model calls."""
+        if not self.trained:
+            raise ValueError("Models not trained. Call train_all_models() first.")
+
+        target_models = self.models.get(target, {})
+        if not target_models:
+            raise ValueError(f"No models available for target '{target}'")
+
+        config = TARGET_CONFIGS[target]
+        feature_columns = self.feature_columns_by_target.get(
+            target,
+            self.feature_columns,
+        )
+        scaler = self.scalers.get(target, self.scaler)
+        model_frame = _prepare_prediction_matrix(source_df, feature_columns)
+
+        if config.get('task') == 'regression':
+            model_predictions = {}
+            for name, model_data in target_models.items():
+                model = model_data['model']
+                X_pred = (
+                    scaler.transform(model_frame)
+                    if model_data.get('scaled')
+                    else model_frame
+                )
+                values = _nonnegative_count_predictions(model.predict(X_pred))
+                model_predictions[name] = np.round(values.astype(float), 2)
+
+            selection = self.training_stats.get(target, {}).get('selection', {})
+            selected_model = selection.get('best_model')
+            selected = model_predictions.get(selected_model)
+            if selected is None:
+                selected = np.round(
+                    np.mean(list(model_predictions.values()), axis=0),
+                    2,
+                )
+            return {'predictions': np.asarray(selected, dtype=float)}
+
+        class_names = config['class_names']
+        class_labels = list(class_names)
+        prediction_by_model = {}
+        probability_by_model = {}
+
+        for name, model_data in target_models.items():
+            model = model_data['model']
+            if (
+                model_data.get('type') == 'lstm'
+                and hasattr(model, '_predict_from_seqs')
+            ):
+                probabilities = self._predict_lstm_probability_batch(
+                    model,
+                    source_df,
+                    len(class_labels),
+                )
+                predictions = np.asarray(class_labels)[np.argmax(probabilities, axis=1)]
+            else:
+                X_pred = (
+                    scaler.transform(model_frame)
+                    if model_data.get('scaled')
+                    else model_frame
+                )
+                calibrated_model = model_data.get('calibrated_model')
+                prediction_model = calibrated_model if calibrated_model is not None else model
+                probabilities = _align_predict_proba(
+                    prediction_model,
+                    X_pred,
+                    class_labels,
+                )
+                decision_policy = model_data.get('decision_policy')
+                if probabilities is not None and decision_policy:
+                    predictions = apply_decision_policy(
+                        probabilities,
+                        decision_policy,
+                        class_labels,
+                    )
+                else:
+                    predictions = prediction_model.predict(X_pred)
+
+            prediction_by_model[name] = np.asarray(predictions, dtype=int)
+            if probabilities is not None:
+                probability_by_model[name] = np.round(
+                    np.asarray(probabilities, dtype=float) * 100.0,
+                    1,
+                )
+
+        consensus_weights = self._get_consensus_weights(target)
+        weighted_probabilities = []
+        weighted_values = []
+        if consensus_weights:
+            for model_name, weight in consensus_weights.items():
+                probabilities = probability_by_model.get(model_name)
+                if probabilities is None:
+                    continue
+                weighted_probabilities.append(probabilities)
+                weighted_values.append(float(weight))
+
+        if weighted_probabilities and sum(weighted_values) > 0:
+            average_probabilities = np.round(
+                sum(
+                    probabilities * weight
+                    for probabilities, weight in zip(
+                        weighted_probabilities,
+                        weighted_values,
+                    )
+                ) / sum(weighted_values),
+                1,
+            )
+        elif probability_by_model:
+            average_probabilities = np.round(
+                np.mean(list(probability_by_model.values()), axis=0),
+                1,
+            )
+        else:
+            average_probabilities = None
+
+        if average_probabilities is not None:
+            consensus_policy = self.decision_policies.get(target)
+            if consensus_policy:
+                consensus_predictions = apply_decision_policy(
+                    average_probabilities,
+                    consensus_policy,
+                    class_labels,
+                )
+            else:
+                consensus_predictions = np.asarray(class_labels)[
+                    np.argmax(average_probabilities, axis=1)
+                ]
+        else:
+            model_votes = np.column_stack(list(prediction_by_model.values()))
+            consensus_predictions = np.asarray([
+                max(
+                    class_labels,
+                    key=lambda label: list(row).count(label),
+                )
+                for row in model_votes
+            ])
+
+        result = {
+            'predictions': np.asarray(consensus_predictions, dtype=int),
+        }
+        if average_probabilities is not None:
+            result['probabilities'] = average_probabilities / 100.0
+        return result
+
     def _attach_reference_benchmark(
         self,
         reference_predictor,
@@ -1049,37 +1297,65 @@ class UniversalPredictor:
             name: label for label, name in config.get('class_names', {}).items()
         }
 
-        for index in holdout_index:
+        batch_completed = False
+        batch_predict = getattr(reference_predictor, 'predict_consensus_batch', None)
+        if callable(batch_predict):
             try:
-                row = source_df.loc[index]
-                if isinstance(row, pd.DataFrame):
-                    row = row.iloc[0]
-                features = {}
-                for key, value in row.to_dict().items():
-                    try:
-                        missing = bool(pd.isna(value))
-                    except (TypeError, ValueError):
-                        missing = False
-                    features[key] = 0 if missing else value
-                predictions = reference_predictor.predict_match_all_models(features, target)
-                consensus = predictions.get('consensus', {})
-                prediction = consensus.get('prediction')
-                if is_regression:
-                    predicted_values.append(float(prediction))
-                else:
-                    predicted_label = label_by_name.get(prediction)
-                    if predicted_label is None:
-                        raise ValueError(f"unknown prediction label: {prediction}")
-                    probabilities = consensus.get('avg_probabilities', {}) or {}
-                    probability_rows.append([
-                        float(probabilities.get(config['class_names'][label], 0.0)) / 100.0
-                        for label in class_labels
-                    ])
-                    predicted_values.append(predicted_label)
-                actual_values.append(y_test.loc[index])
+                holdout_frame = source_df.loc[holdout_index]
+                batch_result = batch_predict(holdout_frame, target)
+                batch_predictions = np.asarray(batch_result['predictions'])
+                if len(batch_predictions) != len(holdout_index):
+                    raise ValueError(
+                        "batch prediction count does not match the candidate holdout"
+                    )
+                predicted_values = batch_predictions.tolist()
+                actual_values = y_test.loc[holdout_index].tolist()
+                if not is_regression:
+                    batch_probabilities = np.asarray(batch_result.get('probabilities'))
+                    expected_shape = (len(holdout_index), len(class_labels))
+                    if batch_probabilities.shape != expected_shape:
+                        raise ValueError(
+                            "batch probability shape does not match the target contract"
+                        )
+                    probability_rows = batch_probabilities.tolist()
+                benchmark['inference_mode'] = 'batch'
+                batch_completed = True
             except Exception as exc:
-                if len(benchmark['errors']) < 5:
-                    benchmark['errors'].append(f"row {index}: {exc}")
+                benchmark['batch_fallback_reason'] = str(exc)
+
+        if not batch_completed:
+            benchmark['inference_mode'] = 'row'
+            for index in holdout_index:
+                try:
+                    row = source_df.loc[index]
+                    if isinstance(row, pd.DataFrame):
+                        row = row.iloc[0]
+                    features = {}
+                    for key, value in row.to_dict().items():
+                        try:
+                            missing = bool(pd.isna(value))
+                        except (TypeError, ValueError):
+                            missing = False
+                        features[key] = 0 if missing else value
+                    predictions = reference_predictor.predict_match_all_models(features, target)
+                    consensus = predictions.get('consensus', {})
+                    prediction = consensus.get('prediction')
+                    if is_regression:
+                        predicted_values.append(float(prediction))
+                    else:
+                        predicted_label = label_by_name.get(prediction)
+                        if predicted_label is None:
+                            raise ValueError(f"unknown prediction label: {prediction}")
+                        probabilities = consensus.get('avg_probabilities', {}) or {}
+                        probability_rows.append([
+                            float(probabilities.get(config['class_names'][label], 0.0)) / 100.0
+                            for label in class_labels
+                        ])
+                        predicted_values.append(predicted_label)
+                    actual_values.append(y_test.loc[index])
+                except Exception as exc:
+                    if len(benchmark['errors']) < 5:
+                        benchmark['errors'].append(f"row {index}: {exc}")
 
         benchmark['rows_evaluated'] = len(actual_values)
         benchmark['coverage'] = round(
@@ -1254,10 +1530,14 @@ class UniversalPredictor:
         numeric_cols = df.select_dtypes(include='number').columns.tolist()
         discovered = [c for c in numeric_cols if c not in skip]
 
-        if odds_requirements:
+        configured_feature_set = os.environ.get(
+            'SOFASCORE_FEATURE_SET',
+            'pre_match_safe',
+        )
+        if odds_requirements and configured_feature_set != 'lineup_with_odds':
             feature_set_name = 'odds_available'
         else:
-            feature_set_name = os.environ.get('SOFASCORE_FEATURE_SET', 'pre_match_safe')
+            feature_set_name = configured_feature_set
 
         if feature_set_name == 'auto':
             known = [c for c in FEATURE_COLUMNS if c in discovered]
@@ -2602,7 +2882,6 @@ class UniversalPredictor:
                 'memory_mb': round(mem_delta, 1),
                 'model_size_kb': round(model_size_kb, 1),
                 'task': 'regression',
-                'input_quality': input_quality,
             }
             results[name] = mae  # MAE as primary metric
             detailed_metrics[name] = {

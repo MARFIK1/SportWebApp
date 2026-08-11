@@ -26,6 +26,33 @@ from sofascore.paired_benchmark import BASE_ODDS_REQUIREMENTS, build_common_odds
 
 ALL_TARGETS = tuple(TARGET_CONFIGS)
 DEFAULT_TARGETS = ("result",)
+VARIANT_CONFIG = {
+    "without_odds": {
+        "feature_set": "pre_match_safe",
+        "filename": "universal_predictor.pkl",
+        "odds_used": False,
+        "reference_variant": "without_odds",
+    },
+    "with_odds": {
+        "feature_set": "odds_available",
+        "filename": "universal_predictor_with_odds.pkl",
+        "odds_used": True,
+        "reference_variant": "with_odds",
+    },
+    "without_odds_lineup": {
+        "feature_set": "lineup_available",
+        "filename": "universal_predictor_lineup.pkl",
+        "odds_used": False,
+        "reference_variant": "without_odds",
+    },
+    "with_odds_lineup": {
+        "feature_set": "lineup_with_odds",
+        "filename": "universal_predictor_with_odds_lineup.pkl",
+        "odds_used": True,
+        "reference_variant": "with_odds",
+    },
+}
+LINEUP_VARIANTS = {"without_odds_lineup", "with_odds_lineup"}
 
 
 def parse_targets(value: str):
@@ -58,7 +85,7 @@ def parse_args():
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
         "--variant",
-        choices=("without_odds", "with_odds", "both"),
+        choices=(*VARIANT_CONFIG, "both", "lineup_both"),
         default="without_odds",
     )
     parser.add_argument("--targets", type=parse_targets, default=list(DEFAULT_TARGETS))
@@ -67,7 +94,8 @@ def parse_args():
     parser.add_argument(
         "--feature-set",
         choices=tuple(sorted(FEATURE_SETS)),
-        default="pre_match_safe",
+        default=None,
+        help="Override the feature set selected by the model variant.",
     )
     parser.add_argument("--allow-auto-features", action="store_true")
     parser.add_argument("--allow-legacy-features", action="store_true")
@@ -76,7 +104,7 @@ def parse_args():
     parser.add_argument(
         "--paired-common-sample",
         action="store_true",
-        help="Train both variants on identical rows with complete positive 1X2 odds.",
+        help="Train selected variants on identical rows with complete positive 1X2 odds.",
     )
     parser.add_argument(
         "--skip-production-benchmark",
@@ -94,27 +122,72 @@ def _load_manifest(path: Path):
 
 
 def _variant_names(value: str):
-    return ["without_odds", "with_odds"] if value == "both" else [value]
+    if value == "both":
+        return ["without_odds", "with_odds"]
+    if value == "lineup_both":
+        return ["without_odds_lineup", "with_odds_lineup"]
+    return [value]
 
 
 def _model_filename(variant: str) -> str:
-    if variant == "with_odds":
-        return "universal_predictor_with_odds.pkl"
-    return "universal_predictor.pkl"
+    return VARIANT_CONFIG[variant]["filename"]
 
 
 def _load_production_reference(data_dir: Path, variant: str):
+    reference_variant = VARIANT_CONFIG[variant]["reference_variant"]
     models_dir = data_dir / "models"
     artifact_path = resolve_active_artifact(
         models_dir,
-        variant,
-        _model_filename(variant),
+        reference_variant,
+        _model_filename(reference_variant),
     )
     if not artifact_path.exists():
         return None, artifact_path
     predictor = UniversalPredictor(str(data_dir))
     predictor.load_models(str(artifact_path))
     return predictor, artifact_path
+
+
+def _filter_confirmed_lineup_rows(dataframe, variant: str):
+    if variant not in LINEUP_VARIANTS:
+        return dataframe, None
+    marker = "confirmed_lineup_available"
+    if marker not in dataframe.columns:
+        raise ValueError(
+            "Feature datasets do not contain confirmed lineup availability. "
+            "Run regenerate_all_features.py --force."
+        )
+    filtered = dataframe[dataframe[marker].fillna(0).astype(float) >= 1].copy()
+    metadata = {
+        "rows_before": len(dataframe),
+        "rows": len(filtered),
+        "rows_removed": len(dataframe) - len(filtered),
+        "coverage": len(filtered) / len(dataframe) if len(dataframe) else 0.0,
+    }
+    if filtered.empty:
+        raise ValueError("No samples with complete confirmed starting lineups were found.")
+    return filtered, metadata
+
+
+def _build_paired_training_sample(dataframe, variant: str):
+    lineup_sample = None
+    if variant == "lineup_both" or variant in LINEUP_VARIANTS:
+        lineup_variant = (
+            "without_odds_lineup" if variant == "lineup_both" else variant
+        )
+        dataframe, lineup_sample = _filter_confirmed_lineup_rows(
+            dataframe,
+            lineup_variant,
+        )
+
+    dataframe, sample_metadata = build_common_odds_sample(dataframe)
+    if lineup_sample:
+        sample_metadata = {
+            **sample_metadata,
+            "policy": "confirmed_lineup_and_common_odds",
+            "lineup_sample": lineup_sample,
+        }
+    return dataframe, sample_metadata, lineup_sample
 
 
 def _dataset_summary(df, audit: dict, sample_metadata: dict):
@@ -166,7 +239,6 @@ def main():
         print("Run regenerate_all_features.py --force before Backend v2 training.")
         return 2
 
-    os.environ["SOFASCORE_FEATURE_SET"] = args.feature_set
     if args.allow_auto_features:
         os.environ["SOFASCORE_ALLOW_AUTO_FEATURES"] = "1"
     else:
@@ -187,11 +259,17 @@ def main():
         "sample_hash": None,
     }
     if args.paired_common_sample:
-        if args.variant != "both":
-            print("--paired-common-sample requires --variant both.")
-            return 2
         try:
-            dataframe, sample_metadata = build_common_odds_sample(dataframe)
+            dataframe, sample_metadata, lineup_sample = _build_paired_training_sample(
+                dataframe,
+                args.variant,
+            )
+            if lineup_sample:
+                print(
+                    "Confirmed lineup sample: "
+                    f"{lineup_sample['rows']} / {lineup_sample['rows_before']} rows "
+                    f"({lineup_sample['coverage']:.2%})"
+                )
         except ValueError as exc:
             print(f"Paired common sample failed: {exc}")
             return 3
@@ -214,7 +292,7 @@ def main():
         "variants": _variant_names(args.variant),
         "test_size": args.test_size,
         "optuna_trials": args.optuna_trials,
-        "feature_set": args.feature_set,
+        "feature_set": args.feature_set or "variant_default",
         "paired_common_sample": args.paired_common_sample,
         "production_benchmark_required": not args.skip_production_benchmark,
         "dataset": dataset_summary,
@@ -223,16 +301,42 @@ def main():
 
     odds_columns = [column for column in dataframe.columns if column.startswith("odds_")]
     for variant in _variant_names(args.variant):
+        variant_config = VARIANT_CONFIG[variant]
+        effective_feature_set = args.feature_set or variant_config["feature_set"]
+        os.environ["SOFASCORE_FEATURE_SET"] = effective_feature_set
         variant_dir = output_dir / variant
         variant_dir.mkdir(parents=True, exist_ok=True)
         predictor = UniversalPredictor(str(data_dir))
 
-        if variant == "without_odds":
-            training_frame = dataframe.drop(columns=odds_columns, errors="ignore")
-            odds_requirements = None
-        else:
-            training_frame = dataframe
+        try:
+            training_frame, lineup_sample = _filter_confirmed_lineup_rows(
+                dataframe,
+                variant,
+            )
+        except ValueError as exc:
+            print(f"Lineup sample failed for {variant}: {exc}")
+            return 3
+        if lineup_sample:
+            print(
+                f"Confirmed lineup sample ({variant}): "
+                f"{lineup_sample['rows']} / {lineup_sample['rows_before']} rows "
+                f"({lineup_sample['coverage']:.2%})"
+            )
+
+        if variant_config["odds_used"]:
             odds_requirements = {"__all__": list(BASE_ODDS_REQUIREMENTS)}
+        else:
+            training_frame = training_frame.drop(columns=odds_columns, errors="ignore")
+            odds_requirements = None
+
+        variant_sample_metadata = dict(sample_metadata)
+        if lineup_sample:
+            variant_sample_metadata["lineup"] = lineup_sample
+        variant_dataset_summary = _dataset_summary(
+            training_frame,
+            audit,
+            variant_sample_metadata,
+        )
 
         reference_predictor = None
         reference_path = data_dir / "models" / _model_filename(variant)
@@ -272,7 +376,7 @@ def main():
             predictor.training_stats,
             _load_manifest(reference_manifest_path),
             variant,
-            dataset_summary,
+            variant_dataset_summary,
         )
         comparison_paths = write_training_comparison(comparison, variant_dir)
         acceptance = build_acceptance_report(
@@ -298,7 +402,7 @@ def main():
             "training": {
                 "variant": variant,
                 "targets": sorted(predictor.training_stats),
-                "feature_set": args.feature_set,
+                "feature_set": effective_feature_set,
                 "accepted_targets": acceptance["accepted_targets"],
                 "rejected_targets": acceptance["rejected_targets"],
                 "production_reference": (
@@ -314,6 +418,8 @@ def main():
             "acceptance": acceptance_path,
             "production_artifact": str(reference_path),
             "production_manifest": str(reference_manifest_path),
+            "feature_set": effective_feature_set,
+            "dataset": variant_dataset_summary,
         }
 
         if args.save_models:

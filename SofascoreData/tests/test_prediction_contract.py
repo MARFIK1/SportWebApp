@@ -1,4 +1,7 @@
 import unittest
+from unittest.mock import patch
+
+import predict_today
 
 from predict_today import (
     _actual_fields_from_match,
@@ -10,6 +13,7 @@ from predict_today import (
     _matches_with_source_season,
     _model_release_summary,
     _match_requires_result_refresh,
+    _predict_variant_targets,
     _prediction_quality_summary,
     _raw_match_to_match_data,
     _serialize_result_prediction_data,
@@ -38,6 +42,45 @@ def match_with_artifact(artifact_id):
 
 
 class PredictionContractTests(unittest.TestCase):
+    def test_repredict_no_report_does_not_write_report(self):
+        existing_report = {
+            "date": "2026-08-02",
+            "matches": [],
+        }
+        prediction_results = [{
+            "match": {
+                "home": "Home",
+                "away": "Away",
+                "date": "2026-08-02",
+            },
+        }]
+
+        with (
+            patch("sys.argv", [
+                "predict_today.py",
+                "2026-08-02",
+                "--repredict",
+                "--no-report",
+            ]),
+            patch.object(
+                predict_today,
+                "_sync_local_finished_international_team_history",
+                return_value=0,
+            ),
+            patch.object(predict_today, "load_existing_report", return_value=existing_report),
+            patch.object(
+                predict_today,
+                "find_matches_for_date",
+                return_value=[prediction_results[0]["match"]],
+            ),
+            patch.object(predict_today, "load_models", return_value={}),
+            patch.object(predict_today, "predict_matches", return_value=prediction_results),
+            patch.object(predict_today, "save_report") as save_report,
+        ):
+            predict_today.main()
+
+        save_report.assert_not_called()
+
     def test_consistent_snapshot_uses_one_artifact_per_variant(self):
         summary = _model_release_summary([
             match_with_artifact("model-a"),
@@ -111,13 +154,32 @@ class PredictionContractTests(unittest.TestCase):
                         **artifact("model-a"),
                         "artifact": "C:/private/model.pkl",
                     },
+                    "model_context_by_target": {
+                        "result": "confirmed_lineup",
+                    },
+                    "model_artifacts_by_target": {
+                        "result": {
+                            **artifact("lineup-model", variant="without_odds_lineup"),
+                            "artifact": "C:/private/lineup-model.pkl",
+                        },
+                    },
+                    "lineup_model_used": True,
                 }
             },
         }, None)
 
-        serialized = payload["prediction_variants"]["without_odds"]["artifact"]
+        variant = payload["prediction_variants"]["without_odds"]
+        serialized = variant["artifact"]
         self.assertEqual(serialized["artifact_id"], "model-a")
         self.assertNotIn("artifact", serialized)
+        self.assertTrue(variant["lineup_model_used"])
+        self.assertEqual(
+            variant["model_context_by_target"]["result"],
+            "confirmed_lineup",
+        )
+        lineup_artifact = variant["model_artifacts_by_target"]["result"]
+        self.assertEqual(lineup_artifact["artifact_id"], "lineup-model")
+        self.assertNotIn("artifact", lineup_artifact)
 
 
 class MarketConsistencyTests(unittest.TestCase):
@@ -371,14 +433,20 @@ class PredictionInputContractTests(unittest.TestCase):
         match = {"event_id": 50}
         lineups = {
             "50": {
-                "home": {"starters": [{"id": 1}]},
-                "away": {"starters": [{"id": 2}]},
+                "confirmed": True,
+                "home": {"starters": [{"id": i} for i in range(1, 12)]},
+                "away": {"starters": [{"id": i} for i in range(12, 23)]},
             }
         }
 
         self.assertFalse(_has_confirmed_lineup_features(match, None, {"1": {}}))
         self.assertFalse(_has_confirmed_lineup_features(match, lineups, None))
         self.assertTrue(_has_confirmed_lineup_features(match, lineups, {"1": {}}))
+        lineups["50"]["confirmed"] = False
+        self.assertFalse(_has_confirmed_lineup_features(match, lineups, {"1": {}}))
+        lineups["50"]["confirmed"] = True
+        lineups["50"]["away"]["starters"].pop()
+        self.assertFalse(_has_confirmed_lineup_features(match, lineups, {"1": {}}))
         self.assertEqual(
             _get_missing_runtime_inputs(Predictor(), "result", False),
             ["confirmed_lineups"],
@@ -391,6 +459,93 @@ class PredictionInputContractTests(unittest.TestCase):
             _get_missing_runtime_inputs(Predictor(), "btts", False),
             [],
         )
+
+    def test_lineup_predictor_is_used_only_with_confirmed_context(self):
+        class Predictor:
+            def __init__(self, feature_set, prediction, fail=False):
+                self.models = {"result": {"model": object()}}
+                self.feature_sets_by_target = {"result": feature_set}
+                self.feature_columns_by_target = {"result": []}
+                self.feature_columns = []
+                self.artifact_manifest = {}
+                self.artifact_path = None
+                self.prediction = prediction
+                self.fail = fail
+                self.calls = 0
+
+            def predict_match_all_models(self, _features, _target):
+                self.calls += 1
+                if self.fail:
+                    raise RuntimeError("lineup candidate failed")
+                return {"consensus": {"prediction": self.prediction}}
+
+        base = Predictor("pre_match_safe", "HOME")
+        lineup = Predictor("lineup_available", "AWAY")
+        base.lineup_predictor = lineup
+
+        bundle = _predict_variant_targets(
+            {},
+            {"home": "A", "away": "B", "date": "2026-08-09"},
+            base,
+            "without_odds",
+            confirmed_lineup_features=True,
+        )
+
+        self.assertEqual(bundle["predictions"]["result"]["consensus"]["prediction"], "AWAY")
+        self.assertEqual(bundle["model_context_by_target"]["result"], "confirmed_lineup")
+        self.assertTrue(bundle["lineup_model_used"])
+        self.assertEqual(lineup.calls, 1)
+        self.assertEqual(base.calls, 0)
+
+        bundle = _predict_variant_targets(
+            {},
+            {"home": "A", "away": "B", "date": "2026-08-09"},
+            base,
+            "without_odds",
+            confirmed_lineup_features=False,
+        )
+
+        self.assertEqual(bundle["predictions"]["result"]["consensus"]["prediction"], "HOME")
+        self.assertEqual(bundle["model_context_by_target"]["result"], "baseline")
+        self.assertFalse(bundle["lineup_model_used"])
+        self.assertEqual(lineup.calls, 1)
+        self.assertEqual(base.calls, 1)
+
+    def test_lineup_prediction_failure_falls_back_to_backend_v2(self):
+        class Predictor:
+            def __init__(self, feature_set, fail=False):
+                self.models = {"result": {"model": object()}}
+                self.feature_sets_by_target = {"result": feature_set}
+                self.feature_columns_by_target = {"result": []}
+                self.feature_columns = []
+                self.artifact_manifest = {}
+                self.artifact_path = None
+                self.fail = fail
+                self.calls = 0
+
+            def predict_match_all_models(self, _features, _target):
+                self.calls += 1
+                if self.fail:
+                    raise RuntimeError("lineup candidate failed")
+                return {"consensus": {"prediction": "HOME"}}
+
+        base = Predictor("pre_match_safe")
+        lineup = Predictor("lineup_available", fail=True)
+        base.lineup_predictor = lineup
+
+        bundle = _predict_variant_targets(
+            {},
+            {"home": "A", "away": "B", "date": "2026-08-09"},
+            base,
+            "without_odds",
+            confirmed_lineup_features=True,
+        )
+
+        self.assertEqual(bundle["predictions"]["result"]["consensus"]["prediction"], "HOME")
+        self.assertEqual(bundle["model_context_by_target"]["result"], "baseline_fallback")
+        self.assertFalse(bundle["lineup_model_used"])
+        self.assertEqual(lineup.calls, 1)
+        self.assertEqual(base.calls, 1)
 
     def test_sofascore_event_exposes_real_season_name(self):
         event = {

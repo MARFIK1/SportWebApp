@@ -817,8 +817,15 @@ class MLFeatureGenerator:
         if not club_stats_index or not starters:
             return default
 
+        def _player_records(player_id):
+            return (
+                club_stats_index.get(player_id)
+                or club_stats_index.get(str(player_id))
+                or []
+            )
+
         def _player_recent_stats(player_id):
-            records = club_stats_index.get(player_id, [])
+            records = _player_records(player_id)
             if not before_date:
                 return records[:n_matches]
             return [r for r in records if (r.get('date') or '') < before_date][:n_matches]
@@ -865,7 +872,7 @@ class MLFeatureGenerator:
             pid = player.get('id')
             if not pid:
                 continue
-            records = club_stats_index.get(pid, [])
+            records = _player_recent_stats(pid)
             if not records:
                 continue
             total_with_league += 1
@@ -1104,25 +1111,41 @@ class MLFeatureGenerator:
         features['player_duels_won_diff'] = features.get('home_avg_duels_won_pct', 0) - features.get('away_avg_duels_won_pct', 0)
         features['starter_rating_diff'] = features.get('home_starter_avg_rating', 6.5) - features.get('away_starter_avg_rating', 6.5)
 
-        if lineups and club_stats_index:
-            event_id = match.get('event_id')
+        event_id = match.get('event_id')
+        match_lineup = None
+        if lineups:
             match_lineup = lineups.get(str(event_id)) or lineups.get(event_id)
-            if match_lineup:
-                home_starters = match_lineup.get('home', {}).get('starters', [])
-                home_subs = match_lineup.get('home', {}).get('substitutes', [])
-                home_squad = self.compute_squad_club_features(
-                    home_starters, home_subs, club_stats_index, match_date)
-                for k, v in home_squad.items():
-                    features[f'home_{k}'] = v
+        home_starters = (
+            (match_lineup.get('home') or {}).get('starters', [])
+            if isinstance(match_lineup, dict)
+            else []
+        )
+        away_starters = (
+            (match_lineup.get('away') or {}).get('starters', [])
+            if isinstance(match_lineup, dict)
+            else []
+        )
+        has_confirmed_lineup = bool(
+            club_stats_index
+            and isinstance(match_lineup, dict)
+            and match_lineup.get('confirmed', True) is not False
+            and len(home_starters) >= 11
+            and len(away_starters) >= 11
+        )
+        features['confirmed_lineup_available'] = int(has_confirmed_lineup)
 
-                away_starters = match_lineup.get('away', {}).get('starters', [])
-                away_subs = match_lineup.get('away', {}).get('substitutes', [])
-                away_squad = self.compute_squad_club_features(
-                    away_starters, away_subs, club_stats_index, match_date)
-                for k, v in away_squad.items():
-                    features[f'away_{k}'] = v
-            else:
-                self._apply_squad_defaults(features)
+        if has_confirmed_lineup:
+            home_subs = (match_lineup.get('home') or {}).get('substitutes', [])
+            home_squad = self.compute_squad_club_features(
+                home_starters, home_subs, club_stats_index, match_date)
+            for k, v in home_squad.items():
+                features[f'home_{k}'] = v
+
+            away_subs = (match_lineup.get('away') or {}).get('substitutes', [])
+            away_squad = self.compute_squad_club_features(
+                away_starters, away_subs, club_stats_index, match_date)
+            for k, v in away_squad.items():
+                features[f'away_{k}'] = v
         else:
             self._apply_squad_defaults(features)
 

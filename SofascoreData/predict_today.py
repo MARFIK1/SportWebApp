@@ -55,10 +55,14 @@ MODEL_VARIANT_CONFIG = {
     'without_odds': {
         'filename': 'universal_predictor.pkl',
         'odds_used': False,
+        'lineup_variant': 'without_odds_lineup',
+        'lineup_filename': 'universal_predictor_lineup.pkl',
     },
     'with_odds': {
         'filename': 'universal_predictor_with_odds.pkl',
         'odds_used': True,
+        'lineup_variant': 'with_odds_lineup',
+        'lineup_filename': 'universal_predictor_with_odds_lineup.pkl',
     },
 }
 DEFAULT_PREDICTION_VARIANT = 'without_odds'
@@ -213,22 +217,43 @@ def load_models(variant_names: Optional[List[str]] = None):
             variant_config['filename'],
         )
 
+        predictor = None
         if models_path.exists():
             print(f"Loading {variant_name} models from {models_path}...")
-            predictors[variant_name] = _load_predictor_artifact(UniversalPredictor, data_dir, models_path)
-            continue
-
-        if variant_name != DEFAULT_PREDICTION_VARIANT:
+            predictor = _load_predictor_artifact(UniversalPredictor, data_dir, models_path)
+        elif variant_name != DEFAULT_PREDICTION_VARIANT:
             print(f"[WARN] No saved models found for variant '{variant_name}' at {models_path}")
             continue
+        else:
+            print("No saved default models found. Training from scratch...")
+            predictor = _create_predictor(UniversalPredictor, data_dir)
+            df = predictor.load_all_leagues()
+            predictor.train_all_models(df)
 
-        print("No saved default models found. Training from scratch...")
-        predictor = _create_predictor(UniversalPredictor, data_dir)
-        df = predictor.load_all_leagues()
-        predictor.train_all_models(df)
+            models_path.parent.mkdir(exist_ok=True)
+            predictor.save_models(str(models_path))
 
-        models_path.parent.mkdir(exist_ok=True)
-        predictor.save_models(str(models_path))
+        lineup_path = resolve_active_artifact(
+            MODELS_DIR,
+            variant_config['lineup_variant'],
+            variant_config['lineup_filename'],
+        )
+        predictor.lineup_predictor = None
+        if lineup_path.exists():
+            print(
+                f"Loading optional {variant_config['lineup_variant']} models "
+                f"from {lineup_path}..."
+            )
+            predictor.lineup_predictor = _load_predictor_artifact(
+                UniversalPredictor,
+                data_dir,
+                lineup_path,
+            )
+        else:
+            print(
+                f"Optional lineup model unavailable for {variant_name}; "
+                "using the baseline model."
+            )
         predictors[variant_name] = predictor
 
     return predictors
@@ -3081,7 +3106,12 @@ def _get_missing_odds_features(features: Dict, predictor, target_name: str) -> L
     return sorted(col for col in required_odds if not _is_positive_odds(features.get(col)))
 
 
-LINEUP_DEPENDENT_FEATURE_SETS = {'lineup_available', 'all_reference', 'auto'}
+LINEUP_DEPENDENT_FEATURE_SETS = {
+    'lineup_available',
+    'lineup_with_odds',
+    'all_reference',
+    'auto',
+}
 
 
 def _has_confirmed_lineup_features(
@@ -3095,9 +3125,11 @@ def _has_confirmed_lineup_features(
     lineup = lineups.get(str(event_id)) or lineups.get(event_id)
     if not isinstance(lineup, dict):
         return False
+    if lineup.get('confirmed', True) is False:
+        return False
     for side in ('home', 'away'):
         starters = (lineup.get(side) or {}).get('starters')
-        if not isinstance(starters, list) or not starters:
+        if not isinstance(starters, list) or len(starters) < 11:
             return False
     return True
 
@@ -3111,6 +3143,185 @@ def _get_missing_runtime_inputs(
     if feature_set in LINEUP_DEPENDENT_FEATURE_SETS and not confirmed_lineup_features:
         return ['confirmed_lineups']
     return []
+
+
+def _target_uses_lineup_features(predictor, target_name: str) -> bool:
+    feature_set = getattr(predictor, 'feature_sets_by_target', {}).get(target_name)
+    return feature_set in LINEUP_DEPENDENT_FEATURE_SETS
+
+
+def _prediction_requires_lineup_context(predictor) -> bool:
+    lineup_predictor = getattr(predictor, 'lineup_predictor', None)
+    if lineup_predictor is None:
+        return False
+    return any(
+        _target_uses_lineup_features(lineup_predictor, target_name)
+        for target_name in getattr(lineup_predictor, 'models', {})
+    )
+
+
+def _competition_lineup_context(
+    match: Dict,
+    lineups_cache: Dict[str, Dict],
+    club_stats_cache: Dict[str, Dict],
+    global_stats_state: Dict[str, Optional[Dict]],
+):
+    from regenerate_all_features import (
+        build_player_stats_index,
+        load_all_league_player_stats,
+        load_lineups,
+        load_player_stats,
+    )
+    from sofascore.config import get_competition_path
+
+    comp_type = match.get('comp_type', 'league')
+    country = match.get('country', '')
+    league = match.get('league', '')
+    cache_key = f"{comp_type}/{country}/{league}"
+
+    if cache_key not in lineups_cache:
+        comp_path = get_competition_path(comp_type, country, league)
+        lineups_cache[cache_key] = load_lineups(comp_path)
+
+    match_lineups = dict(lineups_cache[cache_key])
+    inline_lineup = match.get('match_lineups')
+    event_id = match.get('event_id')
+    if isinstance(inline_lineup, dict) and event_id not in (None, ''):
+        match_lineups[str(event_id)] = inline_lineup
+
+    lineup = match_lineups.get(str(event_id)) or match_lineups.get(event_id)
+    if not isinstance(lineup, dict):
+        return match_lineups, None
+
+    if cache_key not in club_stats_cache:
+        comp_path = get_competition_path(comp_type, country, league)
+        local_stats = load_player_stats(comp_path)
+        club_stats_cache[cache_key] = build_player_stats_index(
+            local_stats,
+            league_name=league,
+        )
+
+    club_stats_index = club_stats_cache[cache_key]
+    if not club_stats_index:
+        if global_stats_state.get('value') is None:
+            print("Loading global club player stats for squad features...")
+            global_stats_state['value'] = load_all_league_player_stats(str(DATA_DIR))
+            print(f"Loaded stats for {len(global_stats_state['value'])} players")
+        club_stats_index = global_stats_state['value']
+
+    return match_lineups, club_stats_index
+
+
+def _predict_variant_targets(
+    features: Dict,
+    match: Dict,
+    predictor,
+    variant_name: str,
+    confirmed_lineup_features: bool,
+) -> Dict:
+    variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
+    lineup_predictor = getattr(predictor, 'lineup_predictor', None)
+    all_target_preds = {}
+    model_context_by_target = {}
+    model_artifacts_by_target = {}
+    missing_odds_by_target = {}
+    missing_runtime_inputs_by_target = {}
+    skipped_targets = []
+
+    for target_name in predictor.models.keys():
+        candidates = []
+        if (
+            confirmed_lineup_features
+            and lineup_predictor is not None
+            and target_name in getattr(lineup_predictor, 'models', {})
+            and _target_uses_lineup_features(lineup_predictor, target_name)
+        ):
+            candidates.append((lineup_predictor, 'confirmed_lineup'))
+        candidates.append((predictor, 'baseline'))
+
+        attempted_lineup = False
+        target_missing_odds = []
+        target_missing_runtime_inputs = []
+        prediction = None
+        selected_context = None
+        selected_predictor = None
+
+        for candidate_predictor, candidate_context in candidates:
+            if candidate_context == 'confirmed_lineup':
+                attempted_lineup = True
+
+            missing_runtime_inputs = _get_missing_runtime_inputs(
+                candidate_predictor,
+                target_name,
+                confirmed_lineup_features,
+            )
+            if missing_runtime_inputs:
+                target_missing_runtime_inputs = missing_runtime_inputs
+                continue
+
+            if variant_uses_odds:
+                missing_odds = _get_missing_odds_features(
+                    features,
+                    candidate_predictor,
+                    target_name,
+                )
+                if missing_odds:
+                    target_missing_odds = missing_odds
+                    continue
+
+            target_features = dict(features)
+            target_features['home_team'] = features.get('home_team', match.get('home', ''))
+            target_features['away_team'] = features.get('away_team', match.get('away', ''))
+            target_features['date'] = features.get('date', match.get('date', ''))
+
+            try:
+                prediction = candidate_predictor.predict_match_all_models(
+                    target_features,
+                    target_name,
+                )
+                if not prediction:
+                    raise ValueError('prediction bundle is empty')
+                selected_predictor = candidate_predictor
+                selected_context = (
+                    'baseline_fallback'
+                    if candidate_context == 'baseline' and attempted_lineup
+                    else candidate_context
+                )
+                break
+            except Exception as exc:
+                safe_print(
+                    f"[WARN] {variant_name}/{target_name} "
+                    f"{candidate_context} prediction failed: {exc}"
+                )
+
+        if prediction is None:
+            if target_missing_runtime_inputs:
+                missing_runtime_inputs_by_target[target_name] = target_missing_runtime_inputs
+            if target_missing_odds:
+                missing_odds_by_target[target_name] = target_missing_odds
+            skipped_targets.append(target_name)
+            continue
+
+        all_target_preds[target_name] = prediction
+        model_context_by_target[target_name] = selected_context
+        selected_artifact = _compact_artifact_contract(
+            predictor_artifact_contract(selected_predictor)
+        )
+        if selected_artifact:
+            model_artifacts_by_target[target_name] = selected_artifact
+
+    return {
+        'predictions': all_target_preds,
+        'model_context_by_target': model_context_by_target,
+        'model_artifacts_by_target': model_artifacts_by_target,
+        'lineup_model_used': any(
+            context == 'confirmed_lineup'
+            for context in model_context_by_target.values()
+        ),
+        'missing_odds_by_target': missing_odds_by_target,
+        'missing_runtime_inputs_by_target': missing_runtime_inputs_by_target,
+        'skipped_targets': skipped_targets,
+    }
 
 
 def _agreement_strength(consensus: Dict) -> float:
@@ -3469,6 +3680,18 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
     return payload
 
 
+def _serialize_variant_runtime_metadata(source: Dict, destination: Dict) -> None:
+    if source.get('model_context_by_target'):
+        destination['model_context_by_target'] = dict(source['model_context_by_target'])
+    if source.get('model_artifacts_by_target'):
+        destination['model_artifacts_by_target'] = {
+            target_name: compact
+            for target_name, artifact in source['model_artifacts_by_target'].items()
+            if (compact := _compact_artifact_contract(artifact or {}))
+        }
+    destination['lineup_model_used'] = bool(source.get('lineup_model_used'))
+
+
 def _serialize_result_prediction_data(result: Dict, actual_result: Optional[str]) -> Dict:
     default_variant = result.get('default_prediction_variant', DEFAULT_PREDICTION_VARIANT)
     payload = _serialize_prediction_bundle(
@@ -3489,6 +3712,7 @@ def _serialize_result_prediction_data(result: Dict, actual_result: Optional[str]
         artifact = _compact_artifact_contract(variant_data.get('artifact') or {})
         if artifact:
             serialized_variant['artifact'] = artifact
+        _serialize_variant_runtime_metadata(variant_data, serialized_variant)
         if variant_data.get('source_odds'):
             serialized_variant['source_odds'] = dict(variant_data['source_odds'])
         if variant_data.get('missing_odds_by_target'):
@@ -3561,16 +3785,11 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
     artifact_contract = _compact_artifact_contract(predictor_artifact_contract(predictor))
     historical_cache = {}
     lineups_cache = {}
+    club_stats_cache = {}
+    global_stats_state = {'value': None}
     team_history_cache = {}
-    club_stats_index = None
     variant_by_key = {}
-
-    has_intl = any(m.get('comp_type') in ('european', 'international') for m in matches)
-    if has_intl:
-        from regenerate_all_features import load_all_league_player_stats, load_lineups
-        print("Loading club player stats for squad features...")
-        club_stats_index = load_all_league_player_stats(str(DATA_DIR))
-        print(f"Loaded stats for {len(club_stats_index)} players")
+    needs_lineup_context = _prediction_requires_lineup_context(predictor)
 
     total = len(matches)
     for i, match in enumerate(matches, 1):
@@ -3584,15 +3803,22 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
             )
 
         match_lineups = None
-        if comp_type in ('european', 'international') and club_stats_index:
-            if cache_key not in lineups_cache:
-                from regenerate_all_features import load_lineups
-                from sofascore.config import get_competition_path
-                comp_path = get_competition_path(comp_type, match['country'], match['league'])
-                lineups_cache[cache_key] = load_lineups(comp_path)
-            match_lineups = lineups_cache[cache_key]
+        club_stats_index = None
+        if needs_lineup_context:
+            match_lineups, club_stats_index = _competition_lineup_context(
+                match,
+                lineups_cache,
+                club_stats_cache,
+                global_stats_state,
+            )
 
-        if _should_compute_fresh_features(match):
+        confirmed_lineup_features = _has_confirmed_lineup_features(
+            match,
+            match_lineups,
+            club_stats_index,
+        )
+
+        if _should_compute_fresh_features(match) or confirmed_lineup_features:
             team_history = _team_history_for_match(
                 match,
                 historical_cache[cache_key],
@@ -3616,44 +3842,14 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
             print("[SKIP] No features")
             continue
 
-        confirmed_lineup_features = _has_confirmed_lineup_features(
+        target_bundle = _predict_variant_targets(
+            features,
             match,
-            match_lineups,
-            club_stats_index,
+            predictor,
+            variant_name,
+            confirmed_lineup_features,
         )
-        all_target_preds = {}
-        missing_odds_by_target = {}
-        missing_runtime_inputs_by_target = {}
-        skipped_targets = []
-
-        for target_name in predictor.models.keys():
-            missing_runtime_inputs = _get_missing_runtime_inputs(
-                predictor,
-                target_name,
-                confirmed_lineup_features,
-            )
-            if missing_runtime_inputs:
-                missing_runtime_inputs_by_target[target_name] = missing_runtime_inputs
-                skipped_targets.append(target_name)
-                continue
-
-            if variant_uses_odds:
-                missing_odds = _get_missing_odds_features(features, predictor, target_name)
-                if missing_odds:
-                    missing_odds_by_target[target_name] = missing_odds
-                    skipped_targets.append(target_name)
-                    continue
-
-            target_features = dict(features)
-            target_features['home_team'] = features.get('home_team', match.get('home', ''))
-            target_features['away_team'] = features.get('away_team', match.get('away', ''))
-            target_features['date'] = features.get('date', match.get('date', ''))
-
-            try:
-                all_target_preds[target_name] = predictor.predict_match_all_models(target_features, target_name)
-            except Exception as exc:
-                skipped_targets.append(target_name)
-                safe_print(f"[WARN] {variant_name}/{target_name} prediction failed: {exc}")
+        all_target_preds = target_bundle['predictions']
 
         if 'result' not in all_target_preds:
             print("[SKIP] Result prediction unavailable")
@@ -3663,12 +3859,16 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
         variant_payload['odds_used'] = variant_uses_odds
         if artifact_contract:
             variant_payload['artifact'] = artifact_contract
-        if missing_odds_by_target:
-            variant_payload['missing_odds_by_target'] = missing_odds_by_target
-        if missing_runtime_inputs_by_target:
-            variant_payload['missing_runtime_inputs_by_target'] = missing_runtime_inputs_by_target
-        if skipped_targets:
-            variant_payload['skipped_targets'] = skipped_targets
+        for metadata_key in (
+            'model_context_by_target',
+            'model_artifacts_by_target',
+            'missing_odds_by_target',
+            'missing_runtime_inputs_by_target',
+            'skipped_targets',
+        ):
+            if target_bundle.get(metadata_key):
+                variant_payload[metadata_key] = target_bundle[metadata_key]
+        variant_payload['lineup_model_used'] = target_bundle['lineup_model_used']
 
         for key in _source_match_keys(match):
             variant_by_key.setdefault(key, variant_payload)
@@ -3731,6 +3931,7 @@ def refresh_report_odds_variants(
         artifact = _compact_artifact_contract(variant_payload.get('artifact') or {})
         if artifact:
             serialized_variant['artifact'] = artifact
+        _serialize_variant_runtime_metadata(variant_payload, serialized_variant)
         serialized_variant['source_odds'] = _source_match_odds_snapshot(source_match)
         if variant_payload.get('missing_odds_by_target'):
             serialized_variant['missing_odds_by_target'] = {
@@ -3851,15 +4052,13 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
 
     historical_cache = {}
     lineups_cache = {}
+    club_stats_cache = {}
+    global_stats_state = {'value': None}
     team_history_cache = {}
-    club_stats_index = None
-
-    has_intl = any(m.get('comp_type') in ('european', 'international') for m in matches)
-    if has_intl:
-        from regenerate_all_features import load_all_league_player_stats, load_lineups
-        print("  Loading club player stats for squad features...")
-        club_stats_index = load_all_league_player_stats(str(DATA_DIR))
-        print(f"  Loaded stats for {len(club_stats_index)} players")
+    needs_lineup_context = any(
+        _prediction_requires_lineup_context(predictor)
+        for predictor in predictors.values()
+    )
 
     for i, match in enumerate(matches, 1):
         safe_print(f"  [{i}/{total}] {match.get('home', '?')} vs {match.get('away', '?')}...")
@@ -3872,13 +4071,14 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
             )
 
         match_lineups = None
-        if comp_type in ('european', 'international') and club_stats_index:
-            if cache_key not in lineups_cache:
-                from regenerate_all_features import load_lineups
-                from sofascore.config import get_competition_path
-                comp_path = get_competition_path(comp_type, match['country'], match['league'])
-                lineups_cache[cache_key] = load_lineups(comp_path)
-            match_lineups = lineups_cache[cache_key]
+        club_stats_index = None
+        if needs_lineup_context:
+            match_lineups, club_stats_index = _competition_lineup_context(
+                match,
+                lineups_cache,
+                club_stats_cache,
+                global_stats_state,
+            )
 
         team_history = _team_history_for_match(
             match,
@@ -3891,7 +4091,13 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
             team_history,
         )
 
-        if _should_compute_fresh_features(match):
+        confirmed_lineup_features = _has_confirmed_lineup_features(
+            match,
+            match_lineups,
+            club_stats_index,
+        )
+
+        if _should_compute_fresh_features(match) or confirmed_lineup_features:
             features = compute_features_for_upcoming(
                 match, historical_cache[cache_key],
                 lineups=match_lineups, club_stats_index=club_stats_index,
@@ -3903,46 +4109,17 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
             print(f"    [SKIP] No features")
             continue
         
-        confirmed_lineup_features = _has_confirmed_lineup_features(
-            match,
-            match_lineups,
-            club_stats_index,
-        )
         prediction_variants = {}
         for variant_name, predictor in predictors.items():
             variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
-            all_target_preds = {}
-            missing_odds_by_target = {}
-            missing_runtime_inputs_by_target = {}
-            skipped_targets = []
-
-            for target_name in predictor.models.keys():
-                missing_runtime_inputs = _get_missing_runtime_inputs(
-                    predictor,
-                    target_name,
-                    confirmed_lineup_features,
-                )
-                if missing_runtime_inputs:
-                    missing_runtime_inputs_by_target[target_name] = missing_runtime_inputs
-                    skipped_targets.append(target_name)
-                    continue
-
-                if variant_uses_odds:
-                    missing_odds = _get_missing_odds_features(features, predictor, target_name)
-                    if missing_odds:
-                        missing_odds_by_target[target_name] = missing_odds
-                        skipped_targets.append(target_name)
-                        continue
-
-                target_features = dict(features)
-                target_features['home_team'] = features.get('home_team', match.get('home', ''))
-                target_features['away_team'] = features.get('away_team', match.get('away', ''))
-                target_features['date'] = features.get('date', match.get('date', ''))
-                try:
-                    all_target_preds[target_name] = predictor.predict_match_all_models(target_features, target_name)
-                except Exception as exc:
-                    skipped_targets.append(target_name)
-                    safe_print(f"    [WARN] {variant_name}/{target_name} prediction failed: {exc}")
+            target_bundle = _predict_variant_targets(
+                features,
+                match,
+                predictor,
+                variant_name,
+                confirmed_lineup_features,
+            )
+            all_target_preds = target_bundle['predictions']
 
             if 'result' not in all_target_preds:
                 continue
@@ -3954,12 +4131,16 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
                 variant_payload['artifact'] = artifact
             if variant_uses_odds:
                 variant_payload['source_odds'] = _source_match_odds_snapshot(match)
-            if missing_odds_by_target:
-                variant_payload['missing_odds_by_target'] = missing_odds_by_target
-            if missing_runtime_inputs_by_target:
-                variant_payload['missing_runtime_inputs_by_target'] = missing_runtime_inputs_by_target
-            if skipped_targets:
-                variant_payload['skipped_targets'] = skipped_targets
+            for metadata_key in (
+                'model_context_by_target',
+                'model_artifacts_by_target',
+                'missing_odds_by_target',
+                'missing_runtime_inputs_by_target',
+                'skipped_targets',
+            ):
+                if target_bundle.get(metadata_key):
+                    variant_payload[metadata_key] = target_bundle[metadata_key]
+            variant_payload['lineup_model_used'] = target_bundle['lineup_model_used']
             prediction_variants[variant_name] = variant_payload
 
         if not prediction_variants:
@@ -5194,6 +5375,9 @@ def main():
 
         _drop_excluded_daily_report_entries(existing_report)
         _refresh_report_summary_counts(existing_report)
+        if args.no_report:
+            print("Re-prediction completed; report not saved (--no-report).")
+            return
         report_path = save_report(existing_report, target_date)
         print(f"Report updated: {report_path}")
         return
