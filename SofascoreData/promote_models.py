@@ -20,7 +20,7 @@ from sofascore.predictor import TARGET_CONFIGS, UniversalPredictor
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Build and activate a versioned Backend v2.1 model release.",
+        description="Build and activate a versioned Backend v2 model release.",
     )
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, action="append", required=True)
@@ -28,7 +28,12 @@ def parse_args():
     parser.add_argument("--report", type=Path)
     parser.add_argument(
         "--variant",
-        choices=("without_odds", "with_odds"),
+        choices=(
+            "without_odds",
+            "with_odds",
+            "without_odds_lineup",
+            "with_odds_lineup",
+        ),
         required=True,
     )
     parser.add_argument("--require-target", action="append", default=[])

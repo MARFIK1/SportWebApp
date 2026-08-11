@@ -4,6 +4,11 @@ from typing import Dict, Iterable, Mapping, Tuple
 from sofascore.model_acceptance import build_acceptance_report
 from sofascore.model_release import predictor_artifact_contract
 
+BASELINE_VARIANT_BY_VARIANT = {
+    "without_odds_lineup": "without_odds",
+    "with_odds_lineup": "with_odds",
+}
+
 
 def _declared_variant(candidate) -> str | None:
     metadata = getattr(candidate, "artifact_metadata", {}) or {}
@@ -35,9 +40,11 @@ def merge_accepted_candidates(
     require_production_benchmark: bool = True,
 ) -> tuple[object, Dict]:
     baseline_variant = _declared_variant(baseline)
-    if baseline_variant and baseline_variant != variant:
+    allowed_baseline_variant = BASELINE_VARIANT_BY_VARIANT.get(variant, variant)
+    if baseline_variant and baseline_variant not in {variant, allowed_baseline_variant}:
         raise ValueError(
-            f"baseline variant mismatch: expected {variant}, got {baseline_variant}"
+            "baseline variant mismatch: expected "
+            f"{variant} or {allowed_baseline_variant}, got {baseline_variant}"
         )
 
     baseline_contract = predictor_artifact_contract(baseline)
@@ -102,6 +109,9 @@ def merge_accepted_candidates(
         "decisions": dict(sorted(decisions.items())),
     }
     metadata = dict(getattr(baseline, "artifact_metadata", {}) or {})
+    training = dict(metadata.get("training", {}) or {})
+    training["variant"] = variant
+    metadata["training"] = training
     metadata["promotion"] = promotion
     baseline.artifact_metadata = metadata
     return baseline, promotion

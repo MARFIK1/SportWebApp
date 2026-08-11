@@ -195,6 +195,36 @@ class ModelPromotionTests(unittest.TestCase):
                 require_production_benchmark=False,
             )
 
+    def test_lineup_variant_can_extend_matching_backend_v2_baseline(self):
+        baseline = predictor("result", {}, "legacy")
+        baseline.artifact_metadata = {"training": {"variant": "without_odds"}}
+        stats = accepted_classification_stats()
+        stats["feature_set"] = "lineup_available"
+        candidate = predictor("result", stats, "lineup-result")
+        candidate.feature_sets_by_target["result"] = "lineup_available"
+        candidate.artifact_metadata = {
+            "training": {"variant": "without_odds_lineup"}
+        }
+
+        promoted, report = merge_accepted_candidates(
+            baseline,
+            [("lineup.pkl", candidate)],
+            {"result": "multiclass"},
+            "without_odds_lineup",
+            require_production_benchmark=False,
+        )
+
+        self.assertEqual(report["accepted_targets"], ["result"])
+        self.assertEqual(promoted.models["result"], candidate.models["result"])
+        self.assertEqual(
+            promoted.feature_sets_by_target["result"],
+            "lineup_available",
+        )
+        self.assertEqual(
+            promoted.artifact_metadata["training"]["variant"],
+            "without_odds_lineup",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
