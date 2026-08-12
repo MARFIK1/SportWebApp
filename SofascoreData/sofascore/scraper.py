@@ -9,6 +9,7 @@ import random
 from pathlib import Path
 
 from selenium import webdriver
+from selenium.common.exceptions import SessionNotCreatedException
 
 
 USER_AGENTS = [
@@ -67,33 +68,22 @@ def _api_request_headers():
     return headers
 
 
-def create_stealth_driver(headless=False):
-    """Creates Chrome WebDriver with anti-detection measures. Returns (driver, user_agent)."""
-    env_headless = _truthy_env('SOFASCORE_HEADLESS')
-    ci_without_display = os.environ.get('CI', '').lower() == 'true' and not os.environ.get('DISPLAY')
-    headless = headless or env_headless or ci_without_display
-
+def _build_chrome_options(headless, user_agent, profile_dir=None, profile_name=None):
     options = webdriver.ChromeOptions()
 
-    profile_dir = os.environ.get('SOFASCORE_CHROME_USER_DATA_DIR')
-    if profile_dir is None:
-        profile_dir = str(Path(__file__).resolve().parents[1] / '.chrome-profile')
-    if profile_dir.strip().lower() not in ('', '0', 'false', 'off', 'none'):
+    chrome_binary = os.environ.get('SOFASCORE_CHROME_BINARY', '').strip()
+    if chrome_binary:
+        options.binary_location = chrome_binary
+
+    if profile_dir:
         Path(profile_dir).mkdir(parents=True, exist_ok=True)
         options.add_argument(f'--user-data-dir={profile_dir}')
 
-    profile_name = os.environ.get('SOFASCORE_CHROME_PROFILE_DIRECTORY')
     if profile_name:
         options.add_argument(f'--profile-directory={profile_name}')
 
-    user_agent = os.environ.get('SOFASCORE_USER_AGENT')
-    if user_agent:
+    if user_agent != 'browser-default':
         options.add_argument(f'--user-agent={user_agent}')
-    elif _truthy_env('SOFASCORE_RANDOM_USER_AGENT'):
-        user_agent = random.choice(USER_AGENTS)
-        options.add_argument(f'--user-agent={user_agent}')
-    else:
-        user_agent = 'browser-default'
 
     width, height = random.choice(VIEWPORTS)
     options.add_argument(f'--window-size={width},{height}')
@@ -115,11 +105,50 @@ def create_stealth_driver(headless=False):
 
     options.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
     options.add_experimental_option('useAutomationExtension', False)
-    
     options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-    
-    driver = webdriver.Chrome(options=options)
-    
+
+    return options
+
+
+def create_stealth_driver(headless=False):
+    """Creates Chrome WebDriver with anti-detection measures. Returns (driver, user_agent)."""
+    env_headless = _truthy_env('SOFASCORE_HEADLESS')
+    ci_without_display = os.environ.get('CI', '').lower() == 'true' and not os.environ.get('DISPLAY')
+    headless = headless or env_headless or ci_without_display
+
+    profile_dir = os.environ.get('SOFASCORE_CHROME_USER_DATA_DIR')
+    if profile_dir is None:
+        profile_dir = str(Path(__file__).resolve().parents[1] / '.chrome-profile')
+    if profile_dir.strip().lower() in ('', '0', 'false', 'off', 'none'):
+        profile_dir = None
+    profile_name = os.environ.get('SOFASCORE_CHROME_PROFILE_DIRECTORY')
+
+    user_agent = os.environ.get('SOFASCORE_USER_AGENT')
+    if not user_agent and _truthy_env('SOFASCORE_RANDOM_USER_AGENT'):
+        user_agent = random.choice(USER_AGENTS)
+    if not user_agent:
+        user_agent = 'browser-default'
+
+    attempts = _int_env('SOFASCORE_DRIVER_START_ATTEMPTS', 2)
+    retry_delay = _float_env('SOFASCORE_DRIVER_RETRY_DELAY', 1.5)
+    driver = None
+    for attempt in range(attempts):
+        use_configured_profile = attempt == 0
+        options = _build_chrome_options(
+            headless,
+            user_agent,
+            profile_dir=profile_dir if use_configured_profile else None,
+            profile_name=profile_name if use_configured_profile else None,
+        )
+        try:
+            driver = webdriver.Chrome(options=options)
+            break
+        except SessionNotCreatedException:
+            if attempt + 1 >= attempts:
+                raise
+            print('[SOFASCORE] Chrome failed to start; retrying with an isolated temporary profile.')
+            time.sleep(retry_delay)
+
     driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
         'source': '''
             Object.defineProperty(navigator, 'webdriver', {
