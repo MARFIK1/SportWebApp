@@ -39,6 +39,7 @@ def extract_match_data(match):
 
     data = {
         'event_id': match.get('id'),
+        'start_timestamp': match.get('startTimestamp'),
         'status': status_type if status_type else None,
         'date': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%Y-%m-%d'),
         'time': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%H:%M'),

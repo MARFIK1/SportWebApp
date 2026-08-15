@@ -19,6 +19,7 @@ from predict_today import (
     _serialize_result_prediction_data,
     _split_target_predictions,
     compute_features_for_upcoming,
+    refresh_report_lineup_predictions,
 )
 from sofascore.utils import extract_match_data
 
@@ -559,8 +560,209 @@ class PredictionInputContractTests(unittest.TestCase):
             "awayScore": {},
         }
 
-        self.assertEqual(extract_match_data(event)["season"], "World Cup 2026")
+        extracted = extract_match_data(event)
+        self.assertEqual(extracted["season"], "World Cup 2026")
+        self.assertEqual(extracted["start_timestamp"], 1784332800)
 
+
+class LineupRefreshContractTests(unittest.TestCase):
+    @staticmethod
+    def _lineup(starters_per_side=11):
+        starters = [
+            {'player': {'id': player_id}}
+            for player_id in range(starters_per_side)
+        ]
+        return {
+            'confirmed': True,
+            'home': {'starters': starters},
+            'away': {'starters': starters},
+        }
+
+    @staticmethod
+    def _prediction_result(source_match):
+        consensus = {
+            'prediction': 'HOME',
+            'agreement': '1/1',
+            'agreement_pct': 100,
+            'avg_probabilities': {'HOME': 60, 'DRAW': 20, 'AWAY': 20},
+        }
+        return {
+            'match': source_match,
+            'default_prediction_variant': 'without_odds',
+            'predictions': {'consensus': consensus},
+            'market_predictions': {},
+            'prediction_variants': {
+                'without_odds': {
+                    'predictions': {'consensus': consensus},
+                    'market_predictions': {},
+                    'odds_used': False,
+                    'model_context_by_target': {'result': 'confirmed_lineup'},
+                    'lineup_model_used': True,
+                },
+            },
+        }
+
+    def test_refresh_updates_only_future_upcoming_match(self):
+        sentinel = {'sentinel': True}
+        report = {
+            'matches': [
+                {'event_id': 1, 'status': 'upcoming'},
+                {'event_id': 2, 'status': 'inprogress', 'predictions': sentinel},
+                {'event_id': 3, 'status': 'finished', 'predictions': sentinel},
+                {'event_id': 4, 'status': 'upcoming', 'predictions': sentinel},
+            ],
+        }
+        source_matches = [
+            {
+                'event_id': 1,
+                'status': 'upcoming',
+                'start_timestamp': 1100,
+                'home': 'A',
+                'away': 'B',
+                'match_lineups': self._lineup(),
+            },
+            {
+                'event_id': 2,
+                'status': 'inprogress',
+                'start_timestamp': 900,
+                'home': 'A',
+                'away': 'B',
+                'match_lineups': self._lineup(),
+            },
+            {
+                'event_id': 3,
+                'status': 'finished',
+                'start_timestamp': 800,
+                'home': 'A',
+                'away': 'B',
+                'match_lineups': self._lineup(),
+            },
+            {
+                'event_id': 4,
+                'status': 'upcoming',
+                'start_timestamp': 999,
+                'home': 'A',
+                'away': 'B',
+                'match_lineups': self._lineup(),
+            },
+        ]
+
+        with patch.object(
+            predict_today,
+            'predict_matches',
+            return_value=[self._prediction_result(source_matches[0])],
+        ) as predict_matches:
+            updated = refresh_report_lineup_predictions(
+                report,
+                source_matches,
+                {},
+                now_timestamp=1000,
+            )
+
+        self.assertEqual(updated, 1)
+        predict_matches.assert_called_once()
+        refreshed_variant = report['matches'][0]['prediction_variants']['without_odds']
+        self.assertTrue(refreshed_variant['lineup_model_used'])
+        self.assertEqual(
+            refreshed_variant['model_context_by_target']['result'],
+            'confirmed_lineup',
+        )
+        self.assertIs(report['matches'][1]['predictions'], sentinel)
+        self.assertIs(report['matches'][2]['predictions'], sentinel)
+        self.assertIs(report['matches'][3]['predictions'], sentinel)
+
+    def test_refresh_is_idempotent_after_lineup_model_was_used(self):
+        report = {
+            'matches': [{
+                'event_id': 1,
+                'status': 'upcoming',
+                'prediction_variants': {
+                    'without_odds': {
+                        'model_context_by_target': {'result': 'confirmed_lineup'},
+                        'lineup_model_used': True,
+                    },
+                },
+            }],
+        }
+        source_matches = [{
+            'event_id': 1,
+            'status': 'upcoming',
+            'start_timestamp': 1100,
+            'home': 'A',
+            'away': 'B',
+            'match_lineups': self._lineup(),
+        }]
+
+        with patch.object(predict_today, 'predict_matches') as predict_matches:
+            updated = refresh_report_lineup_predictions(
+                report,
+                source_matches,
+                {},
+                now_timestamp=1000,
+            )
+
+        self.assertEqual(updated, 0)
+        predict_matches.assert_not_called()
+
+    def test_refresh_requires_complete_confirmed_elevens(self):
+        report = {'matches': [{'event_id': 1, 'status': 'upcoming'}]}
+        source_matches = [{
+            'event_id': 1,
+            'status': 'upcoming',
+            'start_timestamp': 1100,
+            'home': 'A',
+            'away': 'B',
+            'match_lineups': self._lineup(starters_per_side=10),
+        }]
+
+        with patch.object(predict_today, 'predict_matches') as predict_matches:
+            updated = refresh_report_lineup_predictions(
+                report,
+                source_matches,
+                {},
+                now_timestamp=1000,
+            )
+
+        self.assertEqual(updated, 0)
+        predict_matches.assert_not_called()
+
+    def test_refresh_keeps_existing_prediction_when_lineup_models_fall_back(self):
+        previous_predictions = {'sentinel': True}
+        report = {
+            'matches': [{
+                'event_id': 1,
+                'status': 'upcoming',
+                'predictions': previous_predictions,
+            }],
+        }
+        source_match = {
+            'event_id': 1,
+            'status': 'upcoming',
+            'start_timestamp': 1100,
+            'home': 'A',
+            'away': 'B',
+            'match_lineups': self._lineup(),
+        }
+        result = self._prediction_result(source_match)
+        result['prediction_variants']['without_odds'].update({
+            'model_context_by_target': {'result': 'baseline_fallback'},
+            'lineup_model_used': False,
+        })
+
+        with patch.object(
+            predict_today,
+            'predict_matches',
+            return_value=[result],
+        ):
+            updated = refresh_report_lineup_predictions(
+                report,
+                [source_match],
+                {},
+                now_timestamp=1000,
+            )
+
+        self.assertEqual(updated, 0)
+        self.assertIs(report['matches'][0]['predictions'], previous_predictions)
 
 if __name__ == "__main__":
     unittest.main()

@@ -676,6 +676,14 @@ def _should_refresh_prematch_lineups(
     return 0 <= seconds_until_kickoff <= PREMATCH_LINEUP_WINDOW_MINUTES * 60
 
 
+def _sync_match_start_timestamp(match: Dict, api_match: Dict) -> bool:
+    start_timestamp = api_match.get('startTimestamp')
+    if start_timestamp in (None, '') or match.get('start_timestamp') == start_timestamp:
+        return False
+    match['start_timestamp'] = start_timestamp
+    return True
+
+
 def _refresh_match_details(
     scraper,
     match: Dict,
@@ -874,7 +882,7 @@ def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
 
     if winner.get('features') is None and loser.get('features') is not None:
         winner['features'] = loser['features']
-    for key in ('total_cards', 'total_corners', 'referee_name', 'start_time', 'date', 'season'):
+    for key in ('total_cards', 'total_corners', 'referee_name', 'start_time', 'start_timestamp', 'date', 'season'):
         if winner.get(key) in (None, '') and loser.get(key) not in (None, ''):
             winner[key] = loser[key]
     _copy_positive_odds(winner, loser, overwrite=False)
@@ -936,6 +944,7 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
         'status': status,
         'date': match.get('date', ''),
         'start_time': match.get('time', ''),
+        'start_timestamp': match.get('start_timestamp', match.get('startTimestamp')),
         'season': _usable_source_season(match.get('season')) or _usable_source_season(source_season),
         'features': None,
         'total_cards': total_cards,
@@ -1866,6 +1875,7 @@ def _update_results_from_scheduled_events(
                 event_id = api_match.get('id') or match.get('event_id')
                 if event_id and not match.get('event_id'):
                     match['event_id'] = event_id
+                modified = _sync_match_start_timestamp(match, api_match) or modified
                 prematch_lineup_refresh = _should_refresh_prematch_lineups(
                     match,
                     api_match,
@@ -2325,6 +2335,7 @@ def update_match_results(target_date: str):
                             event_id = api_m.get('id') or match.get('event_id')
                             if event_id and not match.get('event_id'):
                                 match['event_id'] = event_id
+                            modified = _sync_match_start_timestamp(match, api_m) or modified
                             prematch_lineup_refresh = _should_refresh_prematch_lineups(
                                 match,
                                 api_m,
@@ -3165,6 +3176,16 @@ LINEUP_DEPENDENT_FEATURE_SETS = {
 }
 
 
+def _is_complete_confirmed_lineup(lineup: Optional[Dict]) -> bool:
+    if not isinstance(lineup, dict) or lineup.get('confirmed', True) is False:
+        return False
+    for side in ('home', 'away'):
+        starters = (lineup.get(side) or {}).get('starters')
+        if not isinstance(starters, list) or len(starters) < 11:
+            return False
+    return True
+
+
 def _has_confirmed_lineup_features(
     match: Dict,
     lineups: Optional[Dict],
@@ -3174,15 +3195,7 @@ def _has_confirmed_lineup_features(
         return False
     event_id = match.get('event_id')
     lineup = lineups.get(str(event_id)) or lineups.get(event_id)
-    if not isinstance(lineup, dict):
-        return False
-    if lineup.get('confirmed', True) is False:
-        return False
-    for side in ('home', 'away'):
-        starters = (lineup.get(side) or {}).get('starters')
-        if not isinstance(starters, list) or len(starters) < 11:
-            return False
-    return True
+    return _is_complete_confirmed_lineup(lineup)
 
 
 def _get_missing_runtime_inputs(
@@ -3786,6 +3799,41 @@ def _serialize_result_prediction_data(result: Dict, actual_result: Optional[str]
     return payload
 
 
+def _apply_prediction_result_to_report_match(match_entry: Dict, result: Dict) -> None:
+    source_match = result['match']
+    if source_match.get('event_id') and not match_entry.get('event_id'):
+        match_entry['event_id'] = source_match.get('event_id')
+    source_season = _usable_source_season(source_match.get('season'))
+    if source_season:
+        match_entry['season'] = source_season
+    if source_match.get('start_timestamp') not in (None, ''):
+        match_entry['start_timestamp'] = source_match.get('start_timestamp')
+    if isinstance(source_match.get('match_lineups'), dict):
+        match_entry['match_lineups'] = copy.deepcopy(source_match['match_lineups'])
+        match_entry['match_lineups_collected'] = bool(
+            source_match.get('match_lineups_collected')
+        )
+        match_entry['match_lineups_checked'] = bool(
+            source_match.get('match_lineups_checked')
+        )
+
+    match_entry['odds_availability'] = _source_match_odds_availability(source_match)
+    serialized = _serialize_result_prediction_data(result, match_entry.get('actual_result'))
+    match_entry['predictions'] = serialized['predictions']
+    match_entry['consensus'] = serialized['consensus']
+    match_entry['default_prediction_variant'] = serialized.get(
+        'default_prediction_variant',
+        DEFAULT_PREDICTION_VARIANT,
+    )
+    for key in ('market_predictions', 'prediction_variants'):
+        if key in serialized:
+            match_entry[key] = serialized[key]
+        else:
+            match_entry.pop(key, None)
+    if match_entry.get('actual_result'):
+        _mark_match_prediction_correctness(match_entry, match_entry['actual_result'])
+
+
 def _mark_match_prediction_correctness(match_entry: Dict, actual_result: str):
     for pred_data in match_entry.get('predictions', {}).values():
         if isinstance(pred_data, dict) and pred_data.get('prediction'):
@@ -4095,6 +4143,116 @@ def refresh_loaded_report_odds_variants(
         predictor,
         refresh_existing=refresh_existing,
     )
+
+
+def _source_match_kickoff_timestamp(match: Dict) -> Optional[float]:
+    for key in ('start_timestamp', 'startTimestamp'):
+        value = match.get(key)
+        try:
+            timestamp = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(timestamp) and timestamp > 0:
+            return timestamp
+
+    match_date = str(match.get('date') or '')[:10]
+    start_time = str(match.get('start_time') or match.get('time') or '')[:5]
+    if not match_date or not start_time:
+        return None
+    try:
+        return datetime.strptime(
+            f'{match_date} {start_time}',
+            '%Y-%m-%d %H:%M',
+        ).timestamp()
+    except ValueError:
+        return None
+
+
+def _source_match_is_before_kickoff(
+    match: Dict,
+    now_timestamp: Optional[float] = None,
+) -> bool:
+    kickoff_timestamp = _source_match_kickoff_timestamp(match)
+    try:
+        current_timestamp = time.time() if now_timestamp is None else float(now_timestamp)
+    except (TypeError, ValueError):
+        return False
+    return (
+        kickoff_timestamp is not None and
+        math.isfinite(current_timestamp) and
+        kickoff_timestamp > current_timestamp
+    )
+
+
+def _prediction_payload_uses_confirmed_lineup(payload: Dict) -> bool:
+    for variant in (payload.get('prediction_variants') or {}).values():
+        if not isinstance(variant, dict):
+            continue
+        model_contexts = variant.get('model_context_by_target') or {}
+        if (
+            variant.get('lineup_model_used') and
+            any(context == 'confirmed_lineup' for context in model_contexts.values())
+        ):
+            return True
+    return False
+
+
+def refresh_report_lineup_predictions(
+    report: Dict,
+    source_matches: List[Dict],
+    predictors: Dict[str, object],
+    now_timestamp: Optional[float] = None,
+) -> int:
+    source_by_key = {}
+    for source_match in source_matches:
+        for key in _source_match_keys(source_match):
+            source_by_key.setdefault(key, source_match)
+
+    eligible = []
+    for match_entry in report.get('matches', []):
+        if match_entry.get('status') not in {'upcoming', 'notstarted'}:
+            continue
+        if _prediction_payload_uses_confirmed_lineup(match_entry):
+            continue
+
+        source_match = _find_by_keys(source_by_key, _report_match_keys(match_entry))
+        if not source_match:
+            continue
+        if source_match.get('status') not in {'upcoming', 'notstarted'}:
+            continue
+        if not _source_match_is_before_kickoff(source_match, now_timestamp):
+            continue
+        if not _is_complete_confirmed_lineup(source_match.get('match_lineups')):
+            continue
+        eligible.append((match_entry, source_match))
+
+    if not eligible:
+        print('No eligible upcoming matches with complete confirmed lineups.')
+        return 0
+
+    print(f'Refreshing lineup-aware predictions for {len(eligible)} match(es)...')
+    prediction_results = predict_matches(
+        [source_match for _, source_match in eligible],
+        predictors,
+    )
+    results_by_key = {}
+    for result in prediction_results:
+        for key in _source_match_keys(result['match']):
+            results_by_key.setdefault(key, result)
+
+    updated = 0
+    for match_entry, source_match in eligible:
+        result = _find_by_keys(results_by_key, _source_match_keys(source_match))
+        if not result or not _prediction_payload_uses_confirmed_lineup(result):
+            continue
+        _apply_prediction_result_to_report_match(match_entry, result)
+        updated += 1
+
+    if updated:
+        report['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        _refresh_report_model_release(report)
+    print(f'Lineup-aware predictions refreshed: {updated}/{len(eligible)}')
+    return updated
 
 
 def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
@@ -4752,7 +4910,10 @@ def _source_match_keys(m: Dict) -> List[str]:
     event_key = _event_match_key(m.get('event_id'))
     if event_key:
         keys.append(event_key)
-    keys.append(_name_match_key(m['home'], m['away']))
+    home = m.get('home')
+    away = m.get('away')
+    if home and away:
+        keys.append(_name_match_key(home, away))
     return keys
 
 
@@ -4761,7 +4922,10 @@ def _report_match_keys(m: Dict) -> List[str]:
     event_key = _event_match_key(m.get('event_id'))
     if event_key:
         keys.append(event_key)
-    keys.append(_name_match_key(m['home_team'], m['away_team']))
+    home = m.get('home_team')
+    away = m.get('away_team')
+    if home and away:
+        keys.append(_name_match_key(home, away))
     return keys
 
 
@@ -4927,6 +5091,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'home_team': m['home'],
             'away_team': m['away'],
             'start_time': m.get('start_time', ''),
+            'start_timestamp': m.get('start_timestamp'),
             'status': match_status,
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
@@ -5342,6 +5507,8 @@ def main():
                         help='Re-run predictions on existing report (no scraping)')
     parser.add_argument('--refresh-odds', action='store_true',
                         help='Add or refresh with-odds prediction variants on an existing report')
+    parser.add_argument('--refresh-lineups', action='store_true',
+                        help='Fetch confirmed pre-match lineups and refresh eligible upcoming predictions')
     parser.add_argument('--enrich-team-history-stats', action='store_true',
                         help='Fetch detailed stats for recent national-team history matches')
     parser.add_argument('--team-history-stat-limit', type=int, default=None,
@@ -5371,6 +5538,37 @@ def main():
         print(f"Team history stat enrichment enabled (limit: {TEAM_HISTORY_ENRICH_LIMIT} matches/team)")
         print()
     
+    if args.refresh_lineups:
+        existing_report = load_existing_report(target_date)
+        if not existing_report:
+            print(f'No existing report for {target_date}.')
+            return
+
+        update_state = update_match_results(target_date)
+        source_matches = find_matches_for_date(target_date)
+        predictors = load_models()
+        refreshed = refresh_report_lineup_predictions(
+            existing_report,
+            source_matches,
+            predictors,
+        )
+        if refreshed:
+            if args.no_report:
+                print('Lineup refresh completed; report not saved (--no-report).')
+                return
+            report_path = save_report(existing_report, target_date)
+            print(f'Report updated: {report_path}')
+            return
+
+        if not update_state.get('source_ok'):
+            print(
+                'Lineup refresh did not confirm saved matches from Sofascore; '
+                'the existing report was left unchanged.'
+            )
+            sys.exit(1)
+        print('Existing report was left unchanged.')
+        return
+
     if args.repredict:
         synced_history = _sync_local_finished_international_team_history(DATA_DIR)
         if synced_history:
@@ -5402,27 +5600,8 @@ def main():
             r = _find_by_keys(results_by_key, _report_match_keys(match_entry))
             if not r:
                 continue
-            m = r['match']
-            if m.get('event_id') and not match_entry.get('event_id'):
-                match_entry['event_id'] = m.get('event_id')
-            source_season = _usable_source_season(m.get('season'))
-            if source_season:
-                match_entry['season'] = source_season
-            match_entry['odds_availability'] = _source_match_odds_availability(m)
-            serialized_predictions = _serialize_result_prediction_data(r, match_entry.get('actual_result'))
-            match_entry['predictions'] = serialized_predictions['predictions']
-            match_entry['consensus'] = serialized_predictions['consensus']
-            match_entry['default_prediction_variant'] = serialized_predictions.get('default_prediction_variant', DEFAULT_PREDICTION_VARIANT)
-            if 'market_predictions' in serialized_predictions:
-                match_entry['market_predictions'] = serialized_predictions['market_predictions']
-            elif 'market_predictions' in match_entry:
-                del match_entry['market_predictions']
-            if 'prediction_variants' in serialized_predictions:
-                match_entry['prediction_variants'] = serialized_predictions['prediction_variants']
-            elif 'prediction_variants' in match_entry:
-                del match_entry['prediction_variants']
-            if match_entry.get('actual_result'):
-                _mark_match_prediction_correctness(match_entry, match_entry['actual_result'])
+            _apply_prediction_result_to_report_match(match_entry, r)
+
 
         _drop_excluded_daily_report_entries(existing_report)
         _refresh_report_summary_counts(existing_report)
