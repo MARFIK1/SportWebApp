@@ -123,6 +123,13 @@ try:
     )
 except ValueError:
     FINISHED_DETAIL_REQUESTS_PER_EVENT = 1
+try:
+    PREMATCH_LINEUP_WINDOW_MINUTES = max(
+        1,
+        int(os.environ.get('SOFASCORE_PREMATCH_LINEUP_WINDOW_MINUTES', '75')),
+    )
+except ValueError:
+    PREMATCH_LINEUP_WINDOW_MINUTES = 75
 TEAM_HISTORY_MODEL_STAT_KEYS = (
     'home_xg', 'away_xg',
     'home_expectedgoals', 'away_expectedgoals',
@@ -643,6 +650,30 @@ def _apply_match_lineups(match: Dict, payload, final: bool = False) -> bool:
         match.get('match_lineups_checked'),
     )
     return before != after
+
+
+def _should_refresh_prematch_lineups(
+    match: Dict,
+    api_match: Dict,
+    api_status: str,
+    now_timestamp: Optional[float] = None,
+) -> bool:
+    if api_status not in {'notstarted', 'upcoming'}:
+        return False
+    if match.get('match_lineups_checked'):
+        return False
+
+    try:
+        kickoff_timestamp = float(api_match.get('startTimestamp'))
+        current_timestamp = time.time() if now_timestamp is None else float(now_timestamp)
+    except (TypeError, ValueError):
+        return False
+
+    if not math.isfinite(kickoff_timestamp) or not math.isfinite(current_timestamp):
+        return False
+
+    seconds_until_kickoff = kickoff_timestamp - current_timestamp
+    return 0 <= seconds_until_kickoff <= PREMATCH_LINEUP_WINDOW_MINUTES * 60
 
 
 def _refresh_match_details(
@@ -1835,7 +1866,13 @@ def _update_results_from_scheduled_events(
                 event_id = api_match.get('id') or match.get('event_id')
                 if event_id and not match.get('event_id'):
                     match['event_id'] = event_id
+                prematch_lineup_refresh = _should_refresh_prematch_lineups(
+                    match,
+                    api_match,
+                    api_status,
+                )
                 should_refresh_details = (
+                    prematch_lineup_refresh or
                     api_status == 'inprogress' or
                     (
                         api_status == 'finished' and
@@ -1858,9 +1895,13 @@ def _update_results_from_scheduled_events(
                             match_details_cache,
                             final=api_status == 'finished',
                             max_requests=(
-                                FINISHED_DETAIL_REQUESTS_PER_EVENT
-                                if api_status == 'finished'
-                                else None
+                                1
+                                if prematch_lineup_refresh
+                                else (
+                                    FINISHED_DETAIL_REQUESTS_PER_EVENT
+                                    if api_status == 'finished'
+                                    else None
+                                )
                             ),
                         ) or modified
                     except Exception as exc:
@@ -2284,7 +2325,13 @@ def update_match_results(target_date: str):
                             event_id = api_m.get('id') or match.get('event_id')
                             if event_id and not match.get('event_id'):
                                 match['event_id'] = event_id
+                            prematch_lineup_refresh = _should_refresh_prematch_lineups(
+                                match,
+                                api_m,
+                                api_status,
+                            )
                             should_refresh_details = (
+                                prematch_lineup_refresh or
                                 api_status == 'inprogress' or
                                 (
                                     api_status == 'finished' and
@@ -2303,9 +2350,13 @@ def update_match_results(target_date: str):
                                         match_details_cache,
                                         final=api_status == 'finished',
                                         max_requests=(
-                                            FINISHED_DETAIL_REQUESTS_PER_EVENT
-                                            if api_status == 'finished'
-                                            else None
+                                            1
+                                            if prematch_lineup_refresh
+                                            else (
+                                                FINISHED_DETAIL_REQUESTS_PER_EVENT
+                                                if api_status == 'finished'
+                                                else None
+                                            )
                                         ),
                                     ) or modified
                                 except Exception as exc:

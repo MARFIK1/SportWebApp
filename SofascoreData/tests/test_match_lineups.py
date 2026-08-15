@@ -109,6 +109,93 @@ class MatchLineupNormalizationTests(unittest.TestCase):
         self.assertTrue(match["match_lineups_collected"])
         self.assertNotIn("match_lineups_checked", match)
 
+    def test_prematch_lineup_refresh_uses_bounded_kickoff_window(self):
+        now_timestamp = 1_800_000_000
+        window_seconds = predict_today.PREMATCH_LINEUP_WINDOW_MINUTES * 60
+        match = {}
+
+        cases = [
+            ("window_start", now_timestamp + window_seconds, "notstarted", True),
+            ("inside_window", now_timestamp + 30 * 60, "notstarted", True),
+            ("kickoff", now_timestamp, "notstarted", True),
+            ("too_early", now_timestamp + window_seconds + 1, "notstarted", False),
+            ("after_kickoff", now_timestamp - 1, "notstarted", False),
+            ("live", now_timestamp + 30 * 60, "inprogress", False),
+            ("finished", now_timestamp + 30 * 60, "finished", False),
+        ]
+
+        for name, kickoff_timestamp, status, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    predict_today._should_refresh_prematch_lineups(
+                        match,
+                        {"startTimestamp": kickoff_timestamp},
+                        status,
+                        now_timestamp=now_timestamp,
+                    ),
+                    expected,
+                )
+
+    def test_prematch_lineup_refresh_skips_checked_or_invalid_matches(self):
+        now_timestamp = 1_800_000_000
+        api_match = {"startTimestamp": now_timestamp + 30 * 60}
+
+        self.assertFalse(
+            predict_today._should_refresh_prematch_lineups(
+                {"match_lineups_checked": True},
+                api_match,
+                "notstarted",
+                now_timestamp=now_timestamp,
+            )
+        )
+        self.assertFalse(
+            predict_today._should_refresh_prematch_lineups(
+                {},
+                {"startTimestamp": "invalid"},
+                "notstarted",
+                now_timestamp=now_timestamp,
+            )
+        )
+
+    def test_prematch_detail_limit_fetches_only_lineups(self):
+        class FakeScraper:
+            api_budget_exhausted = False
+
+            def __init__(self):
+                self.calls = []
+
+            def get_match_lineups(self, _event_id):
+                self.calls.append("lineups")
+                return {
+                    "confirmed": True,
+                    "home": {"players": [{"player": {"id": 1, "name": "Home Player"}}]},
+                    "away": {"players": [{"player": {"id": 2, "name": "Away Player"}}]},
+                }
+
+            def get_match_incidents(self, _event_id):
+                self.calls.append("incidents")
+                return []
+
+            def get_match_statistics(self, _event_id):
+                self.calls.append("statistics")
+                return []
+
+        scraper = FakeScraper()
+        match = {}
+
+        with patch("predict_today.time.sleep"):
+            changed = predict_today._refresh_match_details(
+                scraper,
+                match,
+                99,
+                final=False,
+                max_requests=1,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(scraper.calls, ["lineups"])
+        self.assertTrue(match["match_lineups_checked"])
+
     def test_finished_match_prioritizes_lineups_before_other_details(self):
         class FakeScraper:
             def __init__(self):
