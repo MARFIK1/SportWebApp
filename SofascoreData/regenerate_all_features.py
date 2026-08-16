@@ -20,17 +20,6 @@ from pathlib import Path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def get_current_season() -> str:
-    """Get current season string (e.g., '25_26' for 2025/2026)."""
-    now = datetime.now()
-    year = now.year % 100
-    month = now.month
-    if month >= 8:
-        return f"{year:02d}_{year+1:02d}"
-    else:
-        return f"{year-1:02d}_{year:02d}"
-
-
 sys.path.insert(0, SCRIPT_DIR)
 from sofascore.data_layout import competition_features_path
 from sofascore.dataset_builder import (
@@ -164,6 +153,46 @@ def get_season_files(base_path):
     return sorted(files, key=lambda x: x[1])
 
 
+def _parse_match_date(value):
+    if value in (None, ''):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value).date()
+        return datetime.fromisoformat(str(value).strip().replace('Z', '+00:00')).date()
+    except (OSError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def select_current_seasons(season_files, raw_matches_by_file):
+    """Select the season whose available matches have the latest date."""
+    latest_by_season = {}
+    loaded_seasons = []
+    for raw_file, season in season_files:
+        if raw_file not in raw_matches_by_file:
+            continue
+        loaded_seasons.append(season)
+        dates = [
+            parsed
+            for match in raw_matches_by_file[raw_file]
+            if (parsed := _parse_match_date(match.get('date'))) is not None
+        ]
+        if dates:
+            latest_by_season[season] = max(
+                max(dates),
+                latest_by_season.get(season, min(dates)),
+            )
+
+    if latest_by_season:
+        latest_date = max(latest_by_season.values())
+        return {
+            season
+            for season, season_date in latest_by_season.items()
+            if season_date == latest_date
+        }
+    return {loaded_seasons[-1]} if loaded_seasons else set()
+
+
 def is_season_stale(raw_path, features_path, raw_file, comp_name, season):
     raw_file_path = os.path.join(raw_path, raw_file)
     feat_file_path = os.path.join(features_path, f'features_{comp_name}_{season}.json')
@@ -213,18 +242,6 @@ def regenerate_competition_features(comp_type, country, comp_name,
     if not all_season_files:
         return None
 
-    selected_seasons = {season for _, season in all_season_files}
-    if current_only:
-        current_season = get_current_season()
-        current_year = str(datetime.now().year)
-        selected_seasons = {
-            season
-            for _, season in all_season_files
-            if season in (current_season, current_year)
-        }
-        if not selected_seasons:
-            return None
-
     raw_matches_by_file = {}
     history_matches = []
     for raw_file, _ in all_season_files:
@@ -237,6 +254,15 @@ def regenerate_competition_features(comp_type, country, comp_name,
             continue
         raw_matches_by_file[raw_file] = matches
         history_matches.extend(matches)
+
+    selected_seasons = {season for _, season in all_season_files}
+    if current_only:
+        selected_seasons = select_current_seasons(
+            all_season_files,
+            raw_matches_by_file,
+        )
+        if not selected_seasons:
+            return None
 
     history_matches, raw_duplicates = deduplicate_matches(history_matches)
     player_stats = None
@@ -423,13 +449,12 @@ Examples:
     )
     args = parser.parse_args()
 
-    current_season = get_current_season()
     t_start = time.time()
 
     if args.force:
         mode = "FORCE (everything from scratch)"
     elif args.current:
-        mode = f"CURRENT SEASON ONLY ({current_season})"
+        mode = "CURRENT SEASON ONLY (latest raw match date)"
     else:
         mode = "INCREMENTAL (only changed seasons)"
 

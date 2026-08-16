@@ -28,6 +28,39 @@ from .utils import (
 )
 
 
+def resolve_seasons_to_scrape(scraper, tournament_id, configured_seasons, num_seasons):
+    """Merge API seasons with configured fallbacks, keeping the newest API entries first."""
+    configured = list((configured_seasons or {}).items())
+    try:
+        api_seasons = scraper.get_seasons(tournament_id) or []
+    except Exception as exc:
+        print(f"[WARN] Failed to refresh seasons from API: {exc}")
+        api_seasons = []
+
+    candidates = [
+        (season.get('name'), season.get('id'))
+        for season in api_seasons
+        if season.get('name') and season.get('id') is not None
+    ]
+    candidates.extend(configured)
+
+    seasons = []
+    seen_ids = set()
+    seen_names = set()
+    for name, season_id in candidates:
+        normalized_name = str(name).strip()
+        normalized_id = str(season_id)
+        if normalized_id in seen_ids or normalized_name.casefold() in seen_names:
+            continue
+        seasons.append((name, season_id))
+        seen_ids.add(normalized_id)
+        seen_names.add(normalized_name.casefold())
+        if len(seasons) >= num_seasons:
+            break
+
+    return seasons, bool(api_seasons)
+
+
 def _extract_upcoming_basic(match):
     """Extract minimal data for upcoming/notstarted matches."""
     from datetime import datetime as dt
@@ -347,15 +380,20 @@ def scrape_competition(scraper, comp_type, country, league, seasons_to_scrape=No
     tournament_id = comp['tournament_id']
     
     if seasons_to_scrape is None:
-        if comp['seasons']:
-            seasons_to_scrape = list(comp['seasons'].items())[:num_seasons]
-            print(f"[CONFIG] Using {len(seasons_to_scrape)} of {len(comp['seasons'])} seasons from configuration")
-        else:
-            seasons_api = scraper.get_seasons(tournament_id)
-            seasons_to_scrape = [(s['name'], s['id']) for s in seasons_api[:num_seasons]]
-            print(f"[API] Fetched {len(seasons_to_scrape)} seasons from API:")
-            for name, sid in seasons_to_scrape:
-                print(f"   - {name} (ID: {sid})")
+        seasons_to_scrape, api_available = resolve_seasons_to_scrape(
+            scraper,
+            tournament_id,
+            comp.get('seasons'),
+            num_seasons,
+        )
+        source = 'API + config fallback' if api_available else 'configuration fallback'
+        print(f"[SEASONS] Using {len(seasons_to_scrape)} season(s) from {source}:")
+        for name, sid in seasons_to_scrape:
+            print(f"   - {name} (ID: {sid})")
+
+    if not seasons_to_scrape:
+        print(f"[ERROR] No seasons available for tournament {tournament_id}")
+        return None
     
     dm = FootballDataManager(BASE_DIR, comp_type, country, league)
     fg = MLFeatureGenerator(dm)
