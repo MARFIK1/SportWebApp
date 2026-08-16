@@ -4875,19 +4875,47 @@ def get_report_path(target_date: str, status: str = None) -> Path:
     return date_dir / f"predictions_unfinished.json"
 
 
+def _quarantine_corrupt_report(path: Path):
+    quarantine_path = path.with_name(
+        f"{path.name}.corrupt-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    )
+    try:
+        os.replace(path, quarantine_path)
+        safe_print(f"[WARN] Moved corrupt report file to {quarantine_path.name}")
+    except OSError:
+        pass
+
+
+def _load_report_file(path: Path) -> Optional[Dict]:
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            report = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        safe_print(f"[WARN] Could not load report file {path}: {exc}")
+        _quarantine_corrupt_report(path)
+        return None
+
+    if not isinstance(report, dict):
+        safe_print(f"[WARN] Report file {path} does not contain a report object.")
+        _quarantine_corrupt_report(path)
+        return None
+    return report
+
+
 def load_existing_report(target_date: str) -> Optional[Dict]:
     target_date = validate_target_date(target_date)
     date_dir = REPORTS_DIR / target_date
     for status in ['finished', 'unfinished']:
-        path = date_dir / f"predictions_{status}.json"
-        if path.exists():
-            with open(path, 'r', encoding='utf-8') as f:
-                report = json.load(f)
-            return _attach_match_lineups(_attach_match_events(report, target_date), target_date)
-        old_path = REPORTS_DIR / f"predictions_{target_date}_{status}.json"
-        if old_path.exists():
-            with open(old_path, 'r', encoding='utf-8') as f:
-                report = json.load(f)
+        candidates = [
+            date_dir / f"predictions_{status}.json",
+            REPORTS_DIR / f"predictions_{target_date}_{status}.json",
+        ]
+        for path in candidates:
+            if not path.exists():
+                continue
+            report = _load_report_file(path)
+            if report is None:
+                continue
             return _attach_match_lineups(_attach_match_events(report, target_date), target_date)
     return None
 
