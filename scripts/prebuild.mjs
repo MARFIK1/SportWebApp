@@ -274,8 +274,14 @@ function isBuildOrDeployLog(raw) {
     return /==> Build production bundle|Creating an optimized production build|==> Deploy to Vercel|staging copy for Vercel|done\. production:/i.test(raw);
 }
 
+const PARTIAL_RUN_PATTERN = /failed with exit code \d+, continuing|Build\/deploy will continue with existing reports/i;
+const NOOP_SUCCESS_PATTERN = /did not change; build and deployment are not needed|skipping lineup refresh|deployment skipped by configuration/i;
+
 function logStatus(raw) {
-    if (/finished successfully/i.test(raw)) return "success";
+    if (/finished successfully/i.test(raw)) {
+        return PARTIAL_RUN_PATTERN.test(raw) ? "partial" : "success";
+    }
+    if (NOOP_SUCCESS_PATTERN.test(raw)) return "success";
     if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
     if (isBuildOrDeployLog(raw)) return "success";
     return "unknown";
@@ -287,6 +293,19 @@ function isCompleteLog(raw) {
 
 function logSummary(raw, status) {
     const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+    if (status === "partial") {
+        const partial = lines.find((line) => PARTIAL_RUN_PATTERN.test(line));
+        if (partial) return partial.slice(0, 240);
+    }
+
+    if (status === "success") {
+        const successLine = lines.find((line) => /finished successfully/i.test(line));
+        if (successLine) return successLine.slice(0, 240);
+        const noop = lines.find((line) => NOOP_SUCCESS_PATTERN.test(line));
+        if (noop) return noop.slice(0, 240);
+    }
+
     const failure = lines.find((line) => /failed with exit code|TerminatingError|not found|DEV_NOT_READY|error=/i.test(line));
     if (failure) return failure.slice(0, 240);
 
@@ -361,6 +380,7 @@ function writeOperationalStatus(logDir, outAdminDir) {
         source_logs: logDir,
         daily: newestLogEntry(logDir, "local-daily-refresh-", "daily"),
         weekly: newestLogEntry(logDir, "local-weekly-training-", "weekly"),
+        lineup: newestLogEntry(logDir, "local-lineup-refresh-", "lineup"),
     };
 
     writeJsonFile(path.join(outAdminDir, "operational_status.json"), status);

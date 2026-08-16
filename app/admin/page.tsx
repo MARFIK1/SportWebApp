@@ -6,7 +6,7 @@ import {
     isAdminConfigured,
     isLocalAdminBypass,
 } from "../util/admin/adminAuth";
-import { listAllReportDates, loadModelDiagnostics, loadOperationalStatus } from "../util/data/predictionService";
+import { listAllReportDates, loadLineupUsage, loadModelDiagnostics, loadOperationalStatus } from "../util/data/predictionService";
 import { loginAdmin, logoutAdmin } from "./actions";
 import SystemStatusPanel from "./SystemStatusPanel";
 
@@ -114,6 +114,7 @@ export default async function AdminPage({ searchParams }: PageProps) {
     const reportDates = listAllReportDates();
     const diagnostics = loadModelDiagnostics();
     const operationalStatus = loadOperationalStatus();
+    const lineupUsage = loadLineupUsage();
 
     return (
         <>
@@ -122,6 +123,7 @@ export default async function AdminPage({ searchParams }: PageProps) {
                 status={operationalStatus}
                 reportDates={reportDates}
                 diagnostics={diagnostics}
+                lineupUsage={lineupUsage}
             />
             <PredictionsDashboard
                 searchParams={params}

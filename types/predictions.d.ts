@@ -91,6 +91,8 @@ export interface ModelReleaseSnapshot {
 
 export type PredictionVariantKey = "without_odds" | "with_odds";
 
+export type PredictionModelContext = "baseline" | "confirmed_lineup" | "baseline_fallback";
+
 export interface PredictionVariant {
     predictions: Record<string, ModelPrediction>;
     consensus: ConsensusPrediction;
@@ -110,6 +112,9 @@ export interface PredictionVariant {
     artifact?: ModelArtifactContract;
     odds_used: boolean;
     source_odds?: Record<string, number>;
+    model_context_by_target?: Record<string, PredictionModelContext | string>;
+    model_artifacts_by_target?: Record<string, ModelArtifactContract>;
+    lineup_model_used?: boolean;
     missing_odds_by_target?: Record<string, string[]>;
     missing_runtime_inputs_by_target?: Record<string, string[]>;
     skipped_targets?: string[];

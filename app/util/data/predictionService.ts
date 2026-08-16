@@ -149,13 +149,15 @@ export interface ModelDiagnosticsArtifact {
     csv_exports?: string;
 }
 
+export type OperationalLogStatus = "success" | "partial" | "failed" | "unknown";
+
 export interface OperationalLogEntry {
-    kind: "daily" | "weekly";
+    kind: "daily" | "weekly" | "lineup";
     file_name: string;
     started_at: string | null;
     last_modified: string;
     size_bytes: number;
-    status: "success" | "failed" | "unknown";
+    status: OperationalLogStatus;
     summary: string;
     tail: string[];
 }
@@ -165,6 +167,7 @@ export interface OperationalStatusArtifact {
     source_logs: string;
     daily: OperationalLogEntry | null;
     weekly: OperationalLogEntry | null;
+    lineup?: OperationalLogEntry | null;
 }
 
 const LOG_TIME_ZONE = process.env.REPORT_TIME_ZONE || "Europe/Warsaw";
@@ -342,8 +345,14 @@ function isBuildOrDeployLog(raw: string): boolean {
     return /==> Build production bundle|Creating an optimized production build|==> Deploy to Vercel|staging copy for Vercel|done\. production:/i.test(raw);
 }
 
-function classifyLog(raw: string): OperationalLogEntry["status"] {
-    if (/finished successfully/i.test(raw)) return "success";
+const PARTIAL_RUN_PATTERN = /failed with exit code \d+, continuing|Build\/deploy will continue with existing reports/i;
+const NOOP_SUCCESS_PATTERN = /did not change; build and deployment are not needed|skipping lineup refresh|deployment skipped by configuration/i;
+
+export function classifyOperationalLog(raw: string): OperationalLogStatus {
+    if (/finished successfully/i.test(raw)) {
+        return PARTIAL_RUN_PATTERN.test(raw) ? "partial" : "success";
+    }
+    if (NOOP_SUCCESS_PATTERN.test(raw)) return "success";
     if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
     if (isBuildOrDeployLog(raw)) return "success";
     return "unknown";
@@ -353,8 +362,21 @@ function isCompleteLog(raw: string): boolean {
     return /Windows PowerShell transcript end|finished successfully|failed with exit code|TerminatingError/i.test(raw);
 }
 
-function summarizeLog(raw: string, status: OperationalLogEntry["status"]): string {
+export function summarizeOperationalLog(raw: string, status: OperationalLogStatus): string {
     const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+    if (status === "partial") {
+        const partial = lines.find((line) => PARTIAL_RUN_PATTERN.test(line));
+        if (partial) return partial.slice(0, 240);
+    }
+
+    if (status === "success") {
+        const successLine = lines.find((line) => /finished successfully/i.test(line));
+        if (successLine) return successLine.slice(0, 240);
+        const noop = lines.find((line) => NOOP_SUCCESS_PATTERN.test(line));
+        if (noop) return noop.slice(0, 240);
+    }
+
     const failure = lines.find((line) => /failed with exit code|TerminatingError|not found|DEV_NOT_READY|error=/i.test(line));
     if (failure) return failure.slice(0, 240);
 
@@ -427,7 +449,7 @@ function newestLogEntry(logDir: string, prefix: string, kind: OperationalLogEntr
     if (!latest) return null;
 
     try {
-        const status = classifyLog(raw);
+        const status = classifyOperationalLog(raw);
         return {
             kind,
             file_name: latest.fileName,
@@ -435,7 +457,7 @@ function newestLogEntry(logDir: string, prefix: string, kind: OperationalLogEntr
             last_modified: latest.mtime.toISOString(),
             size_bytes: latest.size,
             status,
-            summary: summarizeLog(raw, status),
+            summary: summarizeOperationalLog(raw, status),
             tail: raw.split(/\r?\n/).slice(-40),
         };
     } catch {
@@ -447,13 +469,15 @@ function loadOperationalStatusFromLogs(logDir: string): OperationalStatusArtifac
     if (!fs.existsSync(logDir)) return null;
     const daily = newestLogEntry(logDir, "local-daily-refresh-", "daily");
     const weekly = newestLogEntry(logDir, "local-weekly-training-", "weekly");
-    if (!daily && !weekly) return null;
+    const lineup = newestLogEntry(logDir, "local-lineup-refresh-", "lineup");
+    if (!daily && !weekly && !lineup) return null;
 
     return {
         generated_at: new Date().toISOString(),
         source_logs: logDir,
         daily,
         weekly,
+        lineup,
     };
 }
 
@@ -659,12 +683,9 @@ export const findPlayerInLineupReports = cache((playerId: number): LineupPlayerP
     return null;
 });
 
-export const loadMatchLineupSnapshot = cache((
-    date: string,
-    eventId: number | string,
-): MatchLineupSnapshot | null => {
+function readMatchLineupsArtifact(date: string): MatchLineupsArtifact | null {
     const safeDate = safeReportDate(date);
-    if (!safeDate || String(eventId).trim() === "") return null;
+    if (!safeDate) return null;
 
     const artifactPath = newestMatchEventsFile(
         reportDirs().map((dir) => path.join(dir, safeDate, "match_lineups.json")),
@@ -673,7 +694,107 @@ export const loadMatchLineupSnapshot = cache((
 
     const artifact = readJson<MatchLineupsArtifact>(artifactPath);
     if (artifact?.schema_version !== 1 || !artifact.matches || typeof artifact.matches !== "object") return null;
+    return artifact;
+}
+
+export const loadMatchLineupSnapshot = cache((
+    date: string,
+    eventId: number | string,
+): MatchLineupSnapshot | null => {
+    if (String(eventId).trim() === "") return null;
+
+    const artifact = readMatchLineupsArtifact(date);
+    if (!artifact) return null;
     return normalizeMatchLineupSnapshot(artifact.matches[String(eventId)]);
+});
+
+export interface LineupTargetContextCounts {
+    confirmed_lineup: number;
+    baseline: number;
+    baseline_fallback: number;
+    other: number;
+}
+
+export interface LineupUsageDateSummary {
+    date: string;
+    total_matches: number;
+    lineup_model_matches: number;
+    target_contexts: LineupTargetContextCounts;
+    lineups_collected: number;
+    confirmed_lineups: number;
+}
+
+export interface LineupUsageSummary {
+    dates: LineupUsageDateSummary[];
+    totals: Omit<LineupUsageDateSummary, "date">;
+}
+
+function emptyLineupUsageCounters(): Omit<LineupUsageDateSummary, "date"> {
+    return {
+        total_matches: 0,
+        lineup_model_matches: 0,
+        target_contexts: { confirmed_lineup: 0, baseline: 0, baseline_fallback: 0, other: 0 },
+        lineups_collected: 0,
+        confirmed_lineups: 0,
+    };
+}
+
+export function summarizeLineupUsage(
+    rows: Array<{ date: string; report: PredictionReport | null; lineups: MatchLineupsArtifact | null }>,
+): LineupUsageSummary {
+    const totals = emptyLineupUsageCounters();
+    const dates: LineupUsageDateSummary[] = [];
+
+    for (const { date, report, lineups } of rows) {
+        const counters = emptyLineupUsageCounters();
+
+        for (const match of report?.matches ?? []) {
+            counters.total_matches += 1;
+            let lineupModelUsed = false;
+
+            for (const variant of Object.values(match.prediction_variants ?? {})) {
+                if (!variant) continue;
+                if (variant.lineup_model_used) lineupModelUsed = true;
+
+                for (const context of Object.values(variant.model_context_by_target ?? {})) {
+                    if (context === "confirmed_lineup") counters.target_contexts.confirmed_lineup += 1;
+                    else if (context === "baseline") counters.target_contexts.baseline += 1;
+                    else if (context === "baseline_fallback") counters.target_contexts.baseline_fallback += 1;
+                    else counters.target_contexts.other += 1;
+                }
+            }
+
+            if (lineupModelUsed) counters.lineup_model_matches += 1;
+        }
+
+        for (const snapshot of Object.values(lineups?.matches ?? {})) {
+            if (!snapshot || typeof snapshot !== "object") continue;
+            counters.lineups_collected += 1;
+            if (snapshot.confirmed) counters.confirmed_lineups += 1;
+        }
+
+        totals.total_matches += counters.total_matches;
+        totals.lineup_model_matches += counters.lineup_model_matches;
+        totals.lineups_collected += counters.lineups_collected;
+        totals.confirmed_lineups += counters.confirmed_lineups;
+        totals.target_contexts.confirmed_lineup += counters.target_contexts.confirmed_lineup;
+        totals.target_contexts.baseline += counters.target_contexts.baseline;
+        totals.target_contexts.baseline_fallback += counters.target_contexts.baseline_fallback;
+        totals.target_contexts.other += counters.target_contexts.other;
+
+        dates.push({ date, ...counters });
+    }
+
+    return { dates, totals };
+}
+
+export const loadLineupUsage = cache((limit: number = 7): LineupUsageSummary => {
+    const dates = listAllReportDates().slice(-Math.max(1, limit));
+    return summarizeLineupUsage(dates.map((date) => ({
+        date,
+        report: loadPredictionReport(date),
+        lineups: readMatchLineupsArtifact(date),
+    })));
 });
 
 export const loadPredictionReport = cache((date: string): PredictionReport | null => {
@@ -760,6 +881,7 @@ export const loadOperationalStatus = cache((): OperationalStatusArtifact | null 
         source_logs: artifacts.map((artifact) => artifact.source_logs).filter(Boolean).join(" | "),
         daily: newestOperationalLog(artifacts.map((artifact) => artifact.daily)),
         weekly: newestOperationalLog(artifacts.map((artifact) => artifact.weekly)),
+        lineup: newestOperationalLog(artifacts.map((artifact) => artifact.lineup)),
     };
 });
 
