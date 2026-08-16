@@ -3980,8 +3980,10 @@ def refresh_report_odds_variants(
     source_matches: List[Dict],
     predictor,
     refresh_existing: bool = False,
+    now_timestamp: Optional[float] = None,
 ) -> int:
     variant_name = 'with_odds'
+    report_date = report.get('date', '')
     source_by_key = {}
     for source_match in source_matches:
         for key in _source_match_keys(source_match):
@@ -3992,6 +3994,9 @@ def refresh_report_odds_variants(
         variants = match_entry.get('prediction_variants') or {}
         source_match = _find_by_keys(source_by_key, _report_match_keys(match_entry))
         if not source_match or not _source_match_has_base_odds(source_match):
+            continue
+
+        if _report_match_prediction_locked(match_entry, source_match, report_date, now_timestamp):
             continue
 
         source_odds = _source_match_odds_snapshot(source_match)
@@ -4102,7 +4107,9 @@ def _report_has_refreshable_odds_variants(
     report: Dict,
     source_matches: List[Dict],
     refresh_existing: bool = False,
+    now_timestamp: Optional[float] = None,
 ) -> bool:
+    report_date = report.get('date', '')
     source_by_key = {}
     for source_match in source_matches:
         for key in _source_match_keys(source_match):
@@ -4111,6 +4118,9 @@ def _report_has_refreshable_odds_variants(
     for match_entry in report.get('matches', []):
         source_match = _find_by_keys(source_by_key, _report_match_keys(match_entry))
         if not source_match or not _source_match_has_base_odds(source_match):
+            continue
+
+        if _report_match_prediction_locked(match_entry, source_match, report_date, now_timestamp):
             continue
 
         existing_variant = (match_entry.get('prediction_variants') or {}).get('with_odds')
@@ -4127,8 +4137,14 @@ def refresh_loaded_report_odds_variants(
     report: Dict,
     source_matches: List[Dict],
     refresh_existing: bool = False,
+    now_timestamp: Optional[float] = None,
 ) -> int:
-    if not _report_has_refreshable_odds_variants(report, source_matches, refresh_existing=refresh_existing):
+    if not _report_has_refreshable_odds_variants(
+        report,
+        source_matches,
+        refresh_existing=refresh_existing,
+        now_timestamp=now_timestamp,
+    ):
         return 0
 
     predictors = load_models(['with_odds'])
@@ -4142,6 +4158,7 @@ def refresh_loaded_report_odds_variants(
         source_matches,
         predictor,
         refresh_existing=refresh_existing,
+        now_timestamp=now_timestamp,
     )
 
 
@@ -4182,6 +4199,41 @@ def _source_match_is_before_kickoff(
         math.isfinite(current_timestamp) and
         kickoff_timestamp > current_timestamp
     )
+
+
+PREDICTION_LOCKED_STATUSES = {'inprogress', 'finished', 'unknown'}
+
+
+def _kickoff_has_passed(match: Dict, now_timestamp: Optional[float] = None) -> bool:
+    kickoff_timestamp = _source_match_kickoff_timestamp(match)
+    if kickoff_timestamp is None:
+        return False
+    try:
+        current_timestamp = time.time() if now_timestamp is None else float(now_timestamp)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(current_timestamp) and kickoff_timestamp <= current_timestamp
+
+
+def _report_match_prediction_locked(
+    match_entry: Dict,
+    source_match: Optional[Dict],
+    report_date: str,
+    now_timestamp: Optional[float] = None,
+) -> bool:
+    if match_entry.get('status') in PREDICTION_LOCKED_STATUSES:
+        return True
+    if source_match and source_match.get('status') in PREDICTION_LOCKED_STATUSES:
+        return True
+
+    entry_probe = {
+        'date': report_date,
+        'start_time': match_entry.get('start_time'),
+        'start_timestamp': match_entry.get('start_timestamp'),
+    }
+    if _kickoff_has_passed(entry_probe, now_timestamp):
+        return True
+    return source_match is not None and _kickoff_has_passed(source_match, now_timestamp)
 
 
 def _prediction_payload_uses_confirmed_lineup(payload: Dict) -> bool:
@@ -5151,7 +5203,11 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
     return report
 
 
-def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
+def update_report_with_results(
+    report: Dict,
+    new_results: List[Dict],
+    now_timestamp: Optional[float] = None,
+) -> Dict:
     new_by_key = {}
     for r in new_results:
         m = r['match']
@@ -5170,6 +5226,13 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             continue
         m = r['match']
         updated_new_keys.update(_source_match_keys(m))
+
+        prediction_locked = _report_match_prediction_locked(
+            match,
+            m,
+            report.get('date', ''),
+            now_timestamp,
+        )
 
         if m.get('event_id') and not match.get('event_id'):
             match['event_id'] = m.get('event_id')
@@ -5197,6 +5260,9 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             _mark_match_prediction_correctness(match, actual_result)
         elif new_status in ['postponed', 'inprogress'] and match['status'] == 'upcoming':
             match['status'] = new_status
+
+        if prediction_locked:
+            continue
 
         serialized_predictions = _serialize_result_prediction_data(r, match.get('actual_result'))
         match['predictions'] = serialized_predictions['predictions']
@@ -5233,6 +5299,8 @@ def update_report_with_results(report: Dict, new_results: List[Dict]) -> Dict:
             'season': _usable_source_season(m.get('season')),
             'home_team': m['home'],
             'away_team': m['away'],
+            'start_time': m.get('start_time', ''),
+            'start_timestamp': m.get('start_timestamp'),
             'status': m.get('status', 'finished' if is_finished else 'upcoming'),
             'actual_cards': m.get('total_cards'),
             'actual_corners': m.get('total_corners'),
