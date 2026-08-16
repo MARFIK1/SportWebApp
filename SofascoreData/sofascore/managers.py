@@ -42,7 +42,7 @@ class FootballDataManager:
     def _season_slug(self, season_name):
         """E.g. 'UEFA Champions League 21/22' -> 'champions_league_21_22'"""
         import re
-        year_match = re.search(r'(\d{2})/(\d{2})', season_name)
+        year_match = re.search(r'(?:\d{2})?(\d{2})/(?:\d{2})?(\d{2})', season_name)
         if year_match:
             return f"{self.league}_{year_match.group(1)}_{year_match.group(2)}"
         # Fallback for edge cases (no year found)
@@ -232,7 +232,7 @@ class PlayerDataManager:
     
     def _season_slug(self, season_name):
         import re
-        year_match = re.search(r'(\d{2})/(\d{2})', season_name)
+        year_match = re.search(r'(?:\d{2})?(\d{2})/(?:\d{2})?(\d{2})', season_name)
         if year_match:
             return f"{self.dm.league}_{year_match.group(1)}_{year_match.group(2)}"
         return season_name.replace('/', '_').replace(' ', '_').lower()
