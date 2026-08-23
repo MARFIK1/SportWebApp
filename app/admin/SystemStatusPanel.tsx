@@ -3,6 +3,7 @@ import type {
     ModelDiagnosticsArtifact,
     OperationalLogEntry,
     OperationalStatusArtifact,
+    ReportFreshnessSummary,
 } from "../util/data/predictionService";
 
 interface SystemStatusPanelProps {
@@ -10,6 +11,7 @@ interface SystemStatusPanelProps {
     reportDates: string[];
     diagnostics: ModelDiagnosticsArtifact | null;
     lineupUsage: LineupUsageSummary | null;
+    reportFreshness: ReportFreshnessSummary;
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -38,6 +40,47 @@ function statusClass(status: OperationalLogEntry["status"] | undefined): string 
     return "border-amber-400/30 bg-amber-400/10 text-amber-300";
 }
 
+function freshnessLabel(status: ReportFreshnessSummary["status"]): string {
+    if (status === "current") return "CURRENT";
+    if (status === "lagging") return "INCOMPLETE";
+    if (status === "stale") return "STALE";
+    return "MISSING";
+}
+
+function freshnessClass(status: ReportFreshnessSummary["status"]): string {
+    if (status === "current") return "border-emerald-400/30 bg-emerald-400/10 text-emerald-500 dark:text-emerald-300";
+    if (status === "lagging") return "border-amber-400/30 bg-amber-400/10 text-amber-600 dark:text-amber-300";
+    return "border-rose-400/30 bg-rose-400/10 text-rose-600 dark:text-rose-300";
+}
+
+function ReportFreshnessAlert({ freshness }: { freshness: ReportFreshnessSummary }) {
+    if (freshness.status === "current") return null;
+
+    const title = freshness.status === "lagging"
+        ? "Prediction horizon incomplete"
+        : freshness.status === "stale"
+            ? "Prediction reports are stale"
+            : "Prediction reports are missing";
+    const detail = freshness.latestReportDate
+        ? `Latest report: ${freshness.latestReportDate}. Expected coverage through ${freshness.expectedThrough}.`
+        : `No valid report was found. Expected coverage through ${freshness.expectedThrough}.`;
+    const missingDays = freshness.daysShortOfExpected;
+
+    return (
+        <div className={`mb-4 border-l-2 px-3 py-3 ${freshnessClass(freshness.status)}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-black uppercase tracking-[0.16em]">{title}</span>
+                {missingDays !== null && missingDays > 0 ? (
+                    <span className="text-xs font-bold">
+                        {missingDays} {missingDays === 1 ? "day" : "days"} short
+                    </span>
+                ) : null}
+            </div>
+            <p className="mt-1 text-sm opacity-90">{detail}</p>
+        </div>
+    );
+}
+
 function LogCard({ title, log }: { title: string; log: OperationalLogEntry | null | undefined }) {
     return (
         <div className="min-w-0 rounded-2xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-800 dark:bg-black/20">
@@ -63,6 +106,18 @@ function LogCard({ title, log }: { title: string; log: OperationalLogEntry | nul
             </div>
 
             <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">{log?.summary ?? "No automation log was captured yet."}</p>
+
+            {log?.sofascore_access?.status === "blocked" ? (
+                <div className="mt-3 border-l-2 border-rose-400 bg-rose-400/10 px-3 py-2.5 text-rose-700 dark:text-rose-300">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-black uppercase tracking-[0.16em]">Sofascore access blocked</span>
+                        <span className="text-xs font-bold">
+                            {log.sofascore_access.code} {log.sofascore_access.reason}
+                        </span>
+                    </div>
+                    <div className="mt-1 break-all font-mono text-xs opacity-80">{log.sofascore_access.endpoint}</div>
+                </div>
+            ) : null}
 
             {log?.tail?.length ? (
                 <details className="mt-3">
@@ -161,7 +216,13 @@ function LineupUsagePanel({ lineupUsage }: { lineupUsage: LineupUsageSummary | n
     );
 }
 
-export default function SystemStatusPanel({ status, reportDates, diagnostics, lineupUsage }: SystemStatusPanelProps) {
+export default function SystemStatusPanel({
+    status,
+    reportDates,
+    diagnostics,
+    lineupUsage,
+    reportFreshness,
+}: SystemStatusPanelProps) {
     const latestReportDate = reportDates[reportDates.length - 1] ?? "-";
     const firstReportDate = reportDates[0] ?? "-";
 
@@ -178,11 +239,21 @@ export default function SystemStatusPanel({ status, reportDates, diagnostics, li
                     </p>
                 </div>
 
+                <ReportFreshnessAlert freshness={reportFreshness} />
+
                 <div className="mb-4 grid gap-3 md:grid-cols-3">
                     <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-800 dark:bg-black/20">
-                        <div className="text-xs font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">Reports</div>
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="text-xs font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">Reports</div>
+                            <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${freshnessClass(reportFreshness.status)}`}>
+                                {freshnessLabel(reportFreshness.status)}
+                            </span>
+                        </div>
                         <div className="mt-2 text-3xl font-black text-gray-900 dark:text-white">{reportDates.length}</div>
                         <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{firstReportDate} - {latestReportDate}</div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            expected through {reportFreshness.expectedThrough}
+                        </div>
                     </div>
                     <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-800 dark:bg-black/20">
                         <div className="text-xs font-bold uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">Model diagnostics</div>

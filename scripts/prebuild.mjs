@@ -274,13 +274,51 @@ function isBuildOrDeployLog(raw) {
     return /==> Build production bundle|Creating an optimized production build|==> Deploy to Vercel|staging copy for Vercel|done\. production:/i.test(raw);
 }
 
-const PARTIAL_RUN_PATTERN = /failed with exit code \d+, continuing|Build\/deploy will continue with existing reports/i;
+const SOFASCORE_ACCESS_PREFIX = "[SOFASCORE_ACCESS]";
+const PARTIAL_RUN_PATTERN = /failed with exit code \d+, continuing|Build\/deploy will continue with existing reports|Sofascore API is blocked for this session|\[SOFASCORE_ACCESS\].*"status"\s*:\s*"blocked"/i;
 const NOOP_SUCCESS_PATTERN = /did not change; build and deployment are not needed|skipping lineup refresh|deployment skipped by configuration/i;
 
-function logStatus(raw) {
-    if (/finished successfully/i.test(raw)) {
-        return PARTIAL_RUN_PATTERN.test(raw) ? "partial" : "success";
+function parseSofascoreAccessStatus(raw) {
+    const markerLines = raw
+        .split(/\r?\n/)
+        .filter((line) => line.includes(SOFASCORE_ACCESS_PREFIX));
+
+    for (let index = markerLines.length - 1; index >= 0; index -= 1) {
+        const line = markerLines[index];
+        const payload = line.slice(line.indexOf(SOFASCORE_ACCESS_PREFIX) + SOFASCORE_ACCESS_PREFIX.length).trim();
+        try {
+            const parsed = JSON.parse(payload);
+            if (parsed?.status === "blocked") {
+                return {
+                    status: "blocked",
+                    endpoint: String(parsed.endpoint || "unknown endpoint"),
+                    code: parsed.code ?? "unknown code",
+                    reason: String(parsed.reason || "unknown reason"),
+                };
+            }
+        } catch {
+            continue;
+        }
     }
+
+    if (!/Sofascore API is blocked for this session/i.test(raw)) return null;
+
+    const endpoint = raw.match(/^Endpoint:\s*(.+)$/im)?.[1]?.trim() || "unknown endpoint";
+    const response = raw.match(/^Response:\s*(\S+)(?:\s+(.+))?$/im);
+    return {
+        status: "blocked",
+        endpoint,
+        code: response?.[1] || "unknown code",
+        reason: response?.[2]?.trim() || "unknown reason",
+    };
+}
+
+function logStatus(raw) {
+    const accessBlocked = parseSofascoreAccessStatus(raw) !== null;
+    if (/finished successfully/i.test(raw)) {
+        return PARTIAL_RUN_PATTERN.test(raw) || accessBlocked ? "partial" : "success";
+    }
+    if (accessBlocked) return isBuildOrDeployLog(raw) ? "partial" : "failed";
     if (NOOP_SUCCESS_PATTERN.test(raw)) return "success";
     if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
     if (isBuildOrDeployLog(raw)) return "success";
@@ -293,6 +331,11 @@ function isCompleteLog(raw) {
 
 function logSummary(raw, status) {
     const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const access = parseSofascoreAccessStatus(raw);
+
+    if (access && (status === "partial" || status === "failed")) {
+        return `Sofascore access blocked: ${access.code} ${access.reason} (${access.endpoint}).`;
+    }
 
     if (status === "partial") {
         const partial = lines.find((line) => PARTIAL_RUN_PATTERN.test(line));
@@ -370,6 +413,7 @@ function newestLogEntry(logDir, prefix, kind) {
         status,
         summary: logSummary(raw, status),
         tail,
+        sofascore_access: parseSofascoreAccessStatus(raw),
     };
 }
 

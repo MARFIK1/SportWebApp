@@ -3,7 +3,7 @@ import path from "path";
 import { cache } from "../serverCache";
 import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
-import { isValidYmdDate, normalizeReportDate } from "./dateUtils";
+import { isValidYmdDate, normalizeReportDate, todayYmd } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
 import type { MatchEventSnapshot, MatchEventsArtifact, MatchTimelineEvent } from "@/types/matchEvents";
 import type { MatchLineupPlayer, MatchLineupSide, MatchLineupSnapshot, MatchLineupsArtifact, MatchPlayerOfTheMatch, MatchTopRatedPlayer } from "@/types/matchLineups";
@@ -151,6 +151,13 @@ export interface ModelDiagnosticsArtifact {
 
 export type OperationalLogStatus = "success" | "partial" | "failed" | "unknown";
 
+export interface SofascoreAccessStatus {
+    status: "blocked";
+    endpoint: string;
+    code: string | number;
+    reason: string;
+}
+
 export interface OperationalLogEntry {
     kind: "daily" | "weekly" | "lineup";
     file_name: string;
@@ -160,6 +167,7 @@ export interface OperationalLogEntry {
     status: OperationalLogStatus;
     summary: string;
     tail: string[];
+    sofascore_access?: SofascoreAccessStatus | null;
 }
 
 export interface OperationalStatusArtifact {
@@ -168,6 +176,70 @@ export interface OperationalStatusArtifact {
     daily: OperationalLogEntry | null;
     weekly: OperationalLogEntry | null;
     lineup?: OperationalLogEntry | null;
+}
+
+export type ReportFreshnessStatus = "current" | "lagging" | "stale" | "missing";
+
+export interface ReportFreshnessSummary {
+    status: ReportFreshnessStatus;
+    referenceDate: string;
+    latestReportDate: string | null;
+    expectedThrough: string;
+    coverageDaysAhead: number | null;
+    daysShortOfExpected: number | null;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function ymdTime(value: string): number {
+    return Date.parse(`${value}T12:00:00Z`);
+}
+
+function addYmdDays(value: string, days: number): string {
+    return new Date(ymdTime(value) + days * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+export function summarizeReportFreshness(
+    reportDates: string[],
+    referenceDate = todayYmd(),
+    expectedDaysAhead = 2,
+): ReportFreshnessSummary {
+    const safeReferenceDate = isValidYmdDate(referenceDate) ? referenceDate : todayYmd();
+    const safeExpectedDaysAhead = Number.isFinite(expectedDaysAhead)
+        ? Math.max(0, Math.trunc(expectedDaysAhead))
+        : 2;
+    const expectedThrough = addYmdDays(safeReferenceDate, safeExpectedDaysAhead);
+    const latestReportDate = Array.from(new Set(reportDates.filter(isValidYmdDate))).sort().at(-1) ?? null;
+
+    if (!latestReportDate) {
+        return {
+            status: "missing",
+            referenceDate: safeReferenceDate,
+            latestReportDate: null,
+            expectedThrough,
+            coverageDaysAhead: null,
+            daysShortOfExpected: null,
+        };
+    }
+
+    const coverageDaysAhead = Math.round(
+        (ymdTime(latestReportDate) - ymdTime(safeReferenceDate)) / MS_PER_DAY,
+    );
+    const daysShortOfExpected = Math.max(0, safeExpectedDaysAhead - coverageDaysAhead);
+    const status: ReportFreshnessStatus = latestReportDate >= expectedThrough
+        ? "current"
+        : latestReportDate >= safeReferenceDate
+            ? "lagging"
+            : "stale";
+
+    return {
+        status,
+        referenceDate: safeReferenceDate,
+        latestReportDate,
+        expectedThrough,
+        coverageDaysAhead,
+        daysShortOfExpected,
+    };
 }
 
 const LOG_TIME_ZONE = process.env.REPORT_TIME_ZONE || "Europe/Warsaw";
@@ -345,13 +417,51 @@ function isBuildOrDeployLog(raw: string): boolean {
     return /==> Build production bundle|Creating an optimized production build|==> Deploy to Vercel|staging copy for Vercel|done\. production:/i.test(raw);
 }
 
-const PARTIAL_RUN_PATTERN = /failed with exit code \d+, continuing|Build\/deploy will continue with existing reports/i;
+const SOFASCORE_ACCESS_PREFIX = "[SOFASCORE_ACCESS]";
+const PARTIAL_RUN_PATTERN = /failed with exit code \d+, continuing|Build\/deploy will continue with existing reports|Sofascore API is blocked for this session|\[SOFASCORE_ACCESS\].*"status"\s*:\s*"blocked"/i;
 const NOOP_SUCCESS_PATTERN = /did not change; build and deployment are not needed|skipping lineup refresh|deployment skipped by configuration/i;
 
-export function classifyOperationalLog(raw: string): OperationalLogStatus {
-    if (/finished successfully/i.test(raw)) {
-        return PARTIAL_RUN_PATTERN.test(raw) ? "partial" : "success";
+export function parseSofascoreAccessStatus(raw: string): SofascoreAccessStatus | null {
+    const markerLines = raw
+        .split(/\r?\n/)
+        .filter((line) => line.includes(SOFASCORE_ACCESS_PREFIX));
+
+    for (let index = markerLines.length - 1; index >= 0; index -= 1) {
+        const line = markerLines[index];
+        const payload = line.slice(line.indexOf(SOFASCORE_ACCESS_PREFIX) + SOFASCORE_ACCESS_PREFIX.length).trim();
+        try {
+            const parsed = JSON.parse(payload) as Partial<SofascoreAccessStatus>;
+            if (parsed.status === "blocked") {
+                return {
+                    status: "blocked",
+                    endpoint: String(parsed.endpoint || "unknown endpoint"),
+                    code: parsed.code ?? "unknown code",
+                    reason: String(parsed.reason || "unknown reason"),
+                };
+            }
+        } catch {
+            continue;
+        }
     }
+
+    if (!/Sofascore API is blocked for this session/i.test(raw)) return null;
+
+    const endpoint = raw.match(/^Endpoint:\s*(.+)$/im)?.[1]?.trim() || "unknown endpoint";
+    const response = raw.match(/^Response:\s*(\S+)(?:\s+(.+))?$/im);
+    return {
+        status: "blocked",
+        endpoint,
+        code: response?.[1] || "unknown code",
+        reason: response?.[2]?.trim() || "unknown reason",
+    };
+}
+
+export function classifyOperationalLog(raw: string): OperationalLogStatus {
+    const accessBlocked = parseSofascoreAccessStatus(raw) !== null;
+    if (/finished successfully/i.test(raw)) {
+        return PARTIAL_RUN_PATTERN.test(raw) || accessBlocked ? "partial" : "success";
+    }
+    if (accessBlocked) return isBuildOrDeployLog(raw) ? "partial" : "failed";
     if (NOOP_SUCCESS_PATTERN.test(raw)) return "success";
     if (/failed with exit code|TerminatingError|Jupyter command .* not found|DEV_NOT_READY|error=/i.test(raw)) return "failed";
     if (isBuildOrDeployLog(raw)) return "success";
@@ -364,6 +474,11 @@ function isCompleteLog(raw: string): boolean {
 
 export function summarizeOperationalLog(raw: string, status: OperationalLogStatus): string {
     const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const access = parseSofascoreAccessStatus(raw);
+
+    if (access && (status === "partial" || status === "failed")) {
+        return `Sofascore access blocked: ${access.code} ${access.reason} (${access.endpoint}).`;
+    }
 
     if (status === "partial") {
         const partial = lines.find((line) => PARTIAL_RUN_PATTERN.test(line));
@@ -459,6 +574,7 @@ function newestLogEntry(logDir: string, prefix: string, kind: OperationalLogEntr
             status,
             summary: summarizeOperationalLog(raw, status),
             tail: raw.split(/\r?\n/).slice(-40),
+            sofascore_access: parseSofascoreAccessStatus(raw),
         };
     } catch {
         return null;
