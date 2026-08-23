@@ -28,6 +28,26 @@ from .utils import (
 )
 
 
+def _api_access_stopped(scraper):
+    return bool(
+        getattr(scraper, 'api_blocked', False)
+        or getattr(scraper, 'api_budget_exhausted', False)
+    )
+
+
+def _warn_api_access_stopped(scraper, context):
+    error = getattr(scraper, 'last_api_error', None) or {}
+    code = error.get('code') or 'unknown'
+    reason = error.get('reason') or 'request unavailable'
+    endpoint = error.get('endpoint')
+    suffix = f" at {endpoint}" if endpoint else ''
+    print(f"[WARN] Stopping {context}: {code} {reason}{suffix}")
+
+
+def _event_key(value):
+    return str(value) if value is not None else ''
+
+
 def resolve_seasons_to_scrape(scraper, tournament_id, configured_seasons, num_seasons):
     """Merge API seasons with configured fallbacks, keeping the newest API entries first."""
     configured = list((configured_seasons or {}).items())
@@ -109,7 +129,14 @@ def scrape_season_matches_incremental(scraper, dm, fg, tournament_id, season_id,
     print(f"   Existing matches in database: {len(finished_ids)} finished, {len(postponed_ids)} postponed")
 
     past_matches = scraper.get_all_season_matches(tournament_id, season_id)
+    if _api_access_stopped(scraper):
+        _warn_api_access_stopped(scraper, f"{season_name} season discovery")
+        return existing_matches, None
+
     upcoming_matches = scraper.get_all_upcoming_matches(tournament_id, season_id)
+    if _api_access_stopped(scraper):
+        _warn_api_access_stopped(scraper, f"{season_name} upcoming discovery")
+        return existing_matches, None
     finished = [m for m in past_matches if m.get('status', {}).get('type') == 'finished']
     postponed = [m for m in past_matches if m.get('status', {}).get('type') in ('postponed', 'canceled')]
     notstarted = upcoming_matches
@@ -220,6 +247,14 @@ def scrape_season_matches_incremental(scraper, dm, fg, tournament_id, season_id,
     for i, match in enumerate(pbar):
         try:
             data = scrape_full_match_data(scraper, match, delay=delay)
+            if data is None:
+                if _api_access_stopped(scraper):
+                    _warn_api_access_stopped(scraper, f"{season_name} match details")
+                    break
+                errors += 1
+                pbar.set_postfix_str(f"err #{errors}: {match.get('id')}")
+                continue
+
             data['season'] = season_name
             new_matches_data.append(data)
 
@@ -231,6 +266,9 @@ def scrape_season_matches_incremental(scraper, dm, fg, tournament_id, season_id,
         except Exception as e:
             errors += 1
             pbar.set_postfix_str(f"err #{errors}: {match.get('id')}")
+            if _api_access_stopped(scraper):
+                _warn_api_access_stopped(scraper, f"{season_name} match details")
+                break
             if new_matches_data and (i + 1) - last_checkpoint >= checkpoint_every:
                 save_checkpoint(existing_matches, new_matches_data)
                 last_checkpoint = i + 1
@@ -260,7 +298,11 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
     
     processed_events = set()
     if existing_lineups and 'lineups' in existing_lineups:
-        processed_events = set(l.get('event_id') for l in existing_lineups['lineups'])
+        processed_events = {
+            _event_key(lineup.get('event_id'))
+            for lineup in existing_lineups['lineups']
+            if lineup.get('event_id') is not None
+        }
     
     cutoff_date = None
     if update_recent_days > 0:
@@ -277,7 +319,8 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
         event_id = m.get('event_id')
         match_date = m.get('date', '')
 
-        if event_id not in processed_events:
+        event_key = _event_key(event_id)
+        if event_key not in processed_events:
             new_matches.append(m)
         elif cutoff_date and match_date >= cutoff_date:
             new_matches.append(m)
@@ -288,12 +331,8 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
         print("   [OK] Player data is up to date!")
         return None
     
-    update_event_ids = set(m.get('event_id') for m in new_matches if m.get('event_id') in processed_events)
-    
-    all_lineups = [l for l in (existing_lineups.get('lineups', []) if existing_lineups else []) 
-                   if l.get('event_id') not in update_event_ids]
-    all_player_stats = [s for s in (existing_stats.get('player_stats', []) if existing_stats else [])
-                        if s.get('event_id') not in update_event_ids]
+    all_lineups = list(existing_lineups.get('lineups', []) if existing_lineups else [])
+    all_player_stats = list(existing_stats.get('player_stats', []) if existing_stats else [])
     
     player_registry = {}
     if existing_registry and 'teams' in existing_registry:
@@ -304,6 +343,7 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
     
     errors = 0
     last_checkpoint = 0
+    changed = False
 
     pbar = tqdm(new_matches, desc="   Players", bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
     for i, match in enumerate(pbar):
@@ -324,25 +364,48 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
         }
 
         try:
-            lineups_data = scraper.get_api_data(f"/event/{event_id}/lineups")
+            lineups_data = scraper.get_match_lineups(event_id)
+            if _api_access_stopped(scraper):
+                _warn_api_access_stopped(scraper, f"{season_name} player data")
+                break
+
+            event_key = _event_key(event_id)
             if lineups_data and 'home' in lineups_data:
                 lineup, player_stats = pdm.process_match_lineups(lineups_data, match_info)
                 if lineup:
+                    all_lineups = [
+                        item for item in all_lineups
+                        if _event_key(item.get('event_id')) != event_key
+                    ]
+                    all_player_stats = [
+                        item for item in all_player_stats
+                        if _event_key(item.get('event_id')) != event_key
+                    ]
                     all_lineups.append(lineup)
                     all_player_stats.extend(player_stats)
+                    processed_events.add(event_key)
+                    changed = True
                     for side in ['home', 'away']:
                         for p in lineup[side]['starters'] + lineup[side]['substitutes']:
                             if p['id'] and p['id'] not in player_registry:
                                 player_registry[p['id']] = p
-            else:
+                else:
+                    errors += 1
+                    pbar.set_postfix_str(f"err #{errors}: {event_id}")
+            elif lineups_data == {} and event_key not in processed_events:
                 all_lineups.append({
                     'event_id': event_id,
                     'date': match.get('date'),
                     'season': season_name,
                     'no_data': True,
                 })
+                processed_events.add(event_key)
+                changed = True
+            elif lineups_data is None:
+                errors += 1
+                pbar.set_postfix_str(f"err #{errors}: {event_id}")
 
-            if (i + 1) % checkpoint_every == 0:
+            if changed and (i + 1) % checkpoint_every == 0:
                 pdm.save_season_data(season_name, all_lineups, all_player_stats, player_registry)
                 last_checkpoint = i + 1
                 pbar.set_postfix_str(f"checkpoint @ {len(all_lineups)} lineups")
@@ -350,16 +413,28 @@ def scrape_player_data_incremental(scraper, pdm, matches, season_name, delay=0.5
         except Exception as e:
             errors += 1
             pbar.set_postfix_str(f"err #{errors}: {event_id}")
-            if all_lineups and (i + 1) - last_checkpoint >= checkpoint_every:
+            if _api_access_stopped(scraper):
+                _warn_api_access_stopped(scraper, f"{season_name} player data")
+                break
+            if changed and (i + 1) - last_checkpoint >= checkpoint_every:
                 pdm.save_season_data(season_name, all_lineups, all_player_stats, player_registry)
                 last_checkpoint = i + 1
 
         time.sleep(random_delay(delay))
     pbar.close()
     
-    all_lineups = sorted(all_lineups, key=lambda x: (x.get('date') or '', x.get('event_id') or 0))
-    all_player_stats = sorted(all_player_stats, key=lambda x: (x.get('date') or '', x.get('event_id') or 0))
-    pdm.save_season_data(season_name, all_lineups, all_player_stats, player_registry)
+    all_lineups = sorted(
+        all_lineups,
+        key=lambda item: (item.get('date') or '', _event_key(item.get('event_id'))),
+    )
+    all_player_stats = sorted(
+        all_player_stats,
+        key=lambda item: (item.get('date') or '', _event_key(item.get('event_id'))),
+    )
+    if changed:
+        pdm.save_season_data(season_name, all_lineups, all_player_stats, player_registry)
+    else:
+        print("   [OK] No confirmed player data changes to save")
     
     print(f"   [OK] Saved: {len(all_lineups)} lineups, {len(all_player_stats)} stats, {len(player_registry)} players")
     return {'lineups': all_lineups, 'player_stats': all_player_stats, 'player_registry': player_registry}
@@ -370,6 +445,10 @@ def scrape_competition(scraper, comp_type, country, league, seasons_to_scrape=No
     print("\n" + "="*60)
     print(f"[COMPETITION] SCRAPING: {comp_type}/{country}/{league}")
     print("="*60)
+
+    if _api_access_stopped(scraper):
+        _warn_api_access_stopped(scraper, f"{country}/{league}")
+        return None
     
     comp = get_competition(comp_type, country, league)
     if not comp:
@@ -391,6 +470,10 @@ def scrape_competition(scraper, comp_type, country, league, seasons_to_scrape=No
         for name, sid in seasons_to_scrape:
             print(f"   - {name} (ID: {sid})")
 
+        if _api_access_stopped(scraper):
+            _warn_api_access_stopped(scraper, f"{country}/{league} season discovery")
+            return None
+
     if not seasons_to_scrape:
         print(f"[ERROR] No seasons available for tournament {tournament_id}")
         return None
@@ -410,6 +493,9 @@ def scrape_competition(scraper, comp_type, country, league, seasons_to_scrape=No
             season_name=season_name,
             update_recent_days=update_recent_days
         )
+
+        if _api_access_stopped(scraper):
+            break
         
         if matches:
             all_season_data[season_name] = {'matches': matches, 'dataset': dataset}
@@ -418,6 +504,9 @@ def scrape_competition(scraper, comp_type, country, league, seasons_to_scrape=No
             if scrape_players:
                 scrape_player_data_incremental(scraper, pdm, matches, season_name, 
                                                update_recent_days=update_recent_days)
+
+                if _api_access_stopped(scraper):
+                    break
         
         time.sleep(1)
     
@@ -511,6 +600,10 @@ def scrape_upcoming_matches(scraper, dm, fg, tournament_id, season_id, season_na
     print(f"{'='*50}")
     
     upcoming_raw = scraper.get_all_upcoming_matches(tournament_id, season_id)
+    if _api_access_stopped(scraper):
+        _warn_api_access_stopped(scraper, f"{season_name} upcoming matches")
+        return []
+
     print(f"   Found {len(upcoming_raw)} upcoming matches")
     
     if not upcoming_raw:
@@ -538,12 +631,18 @@ def scrape_upcoming_matches(scraper, dm, fg, tournament_id, season_id, season_na
         event_id = m.get('id')
         if event_id:
             odds_markets = scraper.get_match_odds(event_id)
+            if _api_access_stopped(scraper):
+                _warn_api_access_stopped(scraper, f"{season_name} upcoming odds")
+                return []
             if odds_markets:
                 odds = extract_odds(odds_markets)
                 match_data.update(odds)
             time.sleep(random_delay(delay))
 
             event_details = scraper.get_event_details(event_id)
+            if _api_access_stopped(scraper):
+                _warn_api_access_stopped(scraper, f"{season_name} upcoming details")
+                return []
             if event_details:
                 referee_data = extract_referee_data(event_details)
                 if referee_data:

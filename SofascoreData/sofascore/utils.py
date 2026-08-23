@@ -198,22 +198,35 @@ def random_delay(base_delay, variance=0.5):
     return base_delay + random.uniform(-variance, variance)
 
 
+def _api_access_stopped(scraper):
+    return bool(
+        getattr(scraper, 'api_blocked', False)
+        or getattr(scraper, 'api_budget_exhausted', False)
+    )
+
+
 def scrape_full_match_data(scraper, match, delay=0.5):
     event_id = match.get('id')
     data = extract_match_data(match)
     
     stats = scraper.get_match_statistics(event_id)
+    if _api_access_stopped(scraper):
+        return None
     if stats:
         data.update(extract_statistics(stats, period='ALL'))
     time.sleep(random_delay(delay))
 
     shotmap = scraper.get_match_shotmap(event_id)
+    if _api_access_stopped(scraper):
+        return None
     if shotmap:
         data['home_xg'] = round(sum(s.get('xg', 0) for s in shotmap if s.get('isHome')), 3)
         data['away_xg'] = round(sum(s.get('xg', 0) for s in shotmap if not s.get('isHome')), 3)
     time.sleep(random_delay(delay))
 
     incidents = scraper.get_match_incidents(event_id)
+    if _api_access_stopped(scraper):
+        return None
     if incidents:
         data['home_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and i.get('isHome'))
         data['away_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and not i.get('isHome'))
@@ -222,6 +235,8 @@ def scrape_full_match_data(scraper, match, delay=0.5):
     time.sleep(random_delay(delay))
 
     odds_markets = scraper.get_match_odds(event_id)
+    if _api_access_stopped(scraper):
+        return None
     if odds_markets:
         odds = extract_odds(odds_markets)
         data.update(odds)

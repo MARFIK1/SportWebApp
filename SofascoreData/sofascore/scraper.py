@@ -200,11 +200,12 @@ class SofascoreSeleniumScraper:
             'code': code,
             'reason': reason,
         }
-        if self._is_endpoint_optional_for_fallback(endpoint):
+        if str(code) == '403' or str(reason).strip().lower() in ('challenge', 'forbidden'):
+            self.api_blocked = True
             return
 
-        if code == 403 or str(reason).lower() in ('challenge', 'forbidden'):
-            self.api_blocked = True
+        if self._is_endpoint_optional_for_fallback(endpoint):
+            return
 
     def _has_api_error(self, endpoint, data):
         self._record_api_error(endpoint, data)

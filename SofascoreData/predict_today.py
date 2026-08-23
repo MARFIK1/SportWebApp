@@ -1516,6 +1516,13 @@ def _print_sofascore_api_blocked(scraper) -> bool:
     endpoint = error.get('endpoint') or 'unknown endpoint'
     code = error.get('code') or 'unknown code'
     reason = error.get('reason') or 'unknown reason'
+    access_status = {
+        'status': 'blocked',
+        'endpoint': endpoint,
+        'code': code,
+        'reason': reason,
+    }
+    print(f"[SOFASCORE_ACCESS] {json.dumps(access_status, ensure_ascii=True, separators=(',', ':'))}")
     print("\n[ERROR] Sofascore API is blocked for this session.")
     print(f"Endpoint: {endpoint}")
     print(f"Response: {code} {reason}")
@@ -1915,7 +1922,7 @@ def _update_results_from_scheduled_events(
                             ),
                         ) or modified
                     except Exception as exc:
-                        print(f"    [WARN] Failed to fetch match details: {exc}")
+                        print(f"[WARN] Failed to fetch match details: {exc}")
                 if (
                     api_status == 'finished' and
                     event_id and
@@ -2371,7 +2378,7 @@ def update_match_results(target_date: str):
                                         ),
                                     ) or modified
                                 except Exception as exc:
-                                    print(f"    [WARN] Failed to fetch match details: {exc}")
+                                    print(f"[WARN] Failed to fetch match details: {exc}")
                             has_score = _apply_api_score_fields(match, api_m)
                             _refresh_score_details_if_needed(scraper, match, api_m, api_status)
 
@@ -2693,7 +2700,7 @@ def _enrich_team_history_match(scraper, match: Dict) -> bool:
                     match[key] = value
                     changed = True
     except Exception as exc:
-        print(f"    [WARN] Team history statistics failed for event {event_id}: {exc}")
+        print(f"[WARN] Team history statistics failed for event {event_id}: {exc}")
     if getattr(scraper, 'api_blocked', False):
         return changed
 
@@ -2713,7 +2720,7 @@ def _enrich_team_history_match(scraper, match: Dict) -> bool:
                 match['away_xg'] = away_xg
                 changed = True
     except Exception as exc:
-        print(f"    [WARN] Team history shotmap failed for event {event_id}: {exc}")
+        print(f"[WARN] Team history shotmap failed for event {event_id}: {exc}")
     if getattr(scraper, 'api_blocked', False):
         return changed
 
@@ -2735,7 +2742,7 @@ def _enrich_team_history_match(scraper, match: Dict) -> bool:
                     match[key] = value
                     changed = True
     except Exception as exc:
-        print(f"    [WARN] Team history incidents failed for event {event_id}: {exc}")
+        print(f"[WARN] Team history incidents failed for event {event_id}: {exc}")
 
     if TEAM_HISTORY_ENRICH_DELAY:
         import time
@@ -2766,7 +2773,7 @@ def _enrich_team_history_matches(scraper, matches: List[Dict], team_name: str) -
             enriched += 1
 
         if getattr(scraper, 'api_blocked', False):
-            print(f"  [WARN] Team history stat enrichment stopped for {team_name}: Sofascore API blocked.")
+            print(f"[WARN] Team history stat enrichment stopped for {team_name}: Sofascore API blocked.")
             break
 
     if enriched:
@@ -2787,7 +2794,7 @@ def _load_or_fetch_team_history(scraper, team_id, team_name: str, force: bool = 
     try:
         events = scraper.get_all_team_previous_events(team_id, max_pages=TEAM_HISTORY_MAX_PAGES)
     except Exception as exc:
-        print(f"  [WARN] Team history fetch failed for {team_name or team_id}: {exc}")
+        print(f"[WARN] Team history fetch failed for {team_name or team_id}: {exc}")
         return cached
 
     matches = _normalize_team_history_events(events)
@@ -5198,7 +5205,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         for m_entry in matches:
             if m_entry['status'] == 'upcoming':
                 m_entry['status'] = 'unknown'
-                print(f"  [WARN] Match {m_entry['home_team']} vs {m_entry['away_team']} - no result after match date, marked as 'unknown'")
+                print(f"[WARN] Match {m_entry['home_team']} vs {m_entry['away_team']} - no result after match date, marked as 'unknown'")
 
     total = len(matches)
     finished = sum(1 for m in matches if m['status'] == 'finished')
@@ -5353,7 +5360,7 @@ def update_report_with_results(
         for match in report['matches']:
             if match['status'] == 'upcoming':
                 match['status'] = 'unknown'
-                print(f"  [WARN] Match {match['home_team']} vs {match['away_team']} - no result after match date, marked as 'unknown'")
+                print(f"[WARN] Match {match['home_team']} vs {match['away_team']} - no result after match date, marked as 'unknown'")
 
     total = len(report['matches'])
     finished = sum(1 for m in report['matches'] if m['status'] == 'finished')
@@ -5641,6 +5648,13 @@ def main():
             return
 
         update_state = update_match_results(target_date)
+        if not update_state.get('source_ok'):
+            print(
+                'Lineup refresh did not confirm saved matches from Sofascore; '
+                'the existing report was left unchanged.'
+            )
+            sys.exit(1)
+
         source_matches = find_matches_for_date(target_date)
         predictors = load_models()
         refreshed = refresh_report_lineup_predictions(
@@ -5656,12 +5670,6 @@ def main():
             print(f'Report updated: {report_path}')
             return
 
-        if not update_state.get('source_ok'):
-            print(
-                'Lineup refresh did not confirm saved matches from Sofascore; '
-                'the existing report was left unchanged.'
-            )
-            sys.exit(1)
         print('Existing report was left unchanged.')
         return
 

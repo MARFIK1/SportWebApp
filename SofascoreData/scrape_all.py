@@ -102,6 +102,18 @@ def scrape_all(scraper, comp_types=None, country_filter=None, league_filter=None
                 except Exception as e:
                     print(f"[ERROR] {country}/{comp_name}: {e}")
 
+                if (
+                    getattr(scraper, 'api_blocked', False)
+                    or getattr(scraper, 'api_budget_exhausted', False)
+                ):
+                    error = getattr(scraper, 'last_api_error', None) or {}
+                    print(
+                        "[WARN] Stopping the remaining competition scrape: "
+                        f"{error.get('code') or 'unknown'} "
+                        f"{error.get('reason') or 'request unavailable'}"
+                    )
+                    return results
+
     return results
 
 
@@ -213,6 +225,17 @@ def backfill_odds(
         print(f"  [{i+1}/{len(matches_to_update)}] event_id={event_id} ({match_date})...", end=' ')
 
         odds_markets = scraper.get_match_odds(event_id)
+        if (
+            getattr(scraper, 'api_blocked', False)
+            or getattr(scraper, 'api_budget_exhausted', False)
+        ):
+            error = getattr(scraper, 'last_api_error', None) or {}
+            print(
+                "\n[WARN] Stopping odds backfill immediately: "
+                f"{error.get('code') or 'unknown'} "
+                f"{error.get('reason') or 'request unavailable'}"
+            )
+            break
         if odds_markets:
             consecutive_nulls = 0
             odds = extract_odds(odds_markets)

@@ -1,0 +1,19 @@
+{
+  "events": [
+    {
+      "id": 16316950,
+      "startTimestamp": 1786888800,
+      "homeTeam": {
+        "id": 1958,
+        "name": "Home Team"
+      },
+      "awayTeam": {
+        "id": 1959,
+        "name": "Away Team"
+      },
+      "status": {
+        "type": "notstarted"
+      }
+    }
+  ]
+}
