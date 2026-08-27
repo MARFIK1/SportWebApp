@@ -9,6 +9,11 @@ export interface PredictionStrength {
     margin: number;
 }
 
+export interface ConsensusProbabilityLeader {
+    outcome: MatchResult;
+    probability: number;
+}
+
 export const OUTCOMES: MatchResult[] = ["HOME", "DRAW", "AWAY"];
 export const STRONG_CONFIDENCE_THRESHOLD = 55;
 export const STRONG_AGREEMENT_THRESHOLD = 7;
@@ -25,6 +30,30 @@ export function getConsensusConfidence(consensus: ConsensusPrediction | null | u
     if (!consensus?.prediction) return 0;
     const scale = getProbabilityScale(consensus.avg_probabilities);
     return (consensus.avg_probabilities?.[consensus.prediction] ?? 0) * scale;
+}
+
+export function getConsensusProbabilityLeader(
+    consensus: ConsensusPrediction | null | undefined,
+): ConsensusProbabilityLeader | null {
+    if (!consensus?.avg_probabilities) return null;
+
+    const scale = getProbabilityScale(consensus.avg_probabilities);
+    return OUTCOMES.reduce<ConsensusProbabilityLeader | null>((leader, outcome) => {
+        const probability = (consensus.avg_probabilities[outcome] ?? 0) * scale;
+        if (!leader || probability > leader.probability) {
+            return { outcome, probability };
+        }
+        return leader;
+    }, null);
+}
+
+export function getConsensusDecisionPolicyOverride(
+    consensus: ConsensusPrediction | null | undefined,
+): ConsensusProbabilityLeader | null {
+    if (!consensus?.prediction || consensus.decision_policy_applied !== true) return null;
+
+    const leader = getConsensusProbabilityLeader(consensus);
+    return leader && leader.outcome !== consensus.prediction ? leader : null;
 }
 
 export function getConsensusMargin(consensus: ConsensusPrediction | null | undefined): number {

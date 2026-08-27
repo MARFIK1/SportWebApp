@@ -2,7 +2,7 @@
 
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { PredictionVariantKey } from "@/types/predictions";
-import { getConsensusConfidence, getPredictionSignals, getPredictionStrength, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
+import { getConsensusConfidence, getConsensusDecisionPolicyOverride, getPredictionSignals, getPredictionStrength, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import { useMatchPredictionVariant } from "./MatchPredictionVariantProvider";
 
@@ -86,6 +86,7 @@ export default function MatchPredictionSidebar() {
     const strength = getPredictionStrength(bundle.consensus);
     const confidence = getConsensusConfidence(bundle.consensus);
     const predictionSignals = getPredictionSignals(match, { consensus: bundle.consensus });
+    const policyOverride = getConsensusDecisionPolicyOverride(bundle.consensus);
     const missingBaseOdds = oddsAvailability?.has_base_odds === false
         ? oddsAvailability.missing_base_odds
         : [];
@@ -157,6 +158,14 @@ export default function MatchPredictionSidebar() {
                             </div>
                         ))}
                     </div>
+                    {policyOverride && (
+                        <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                            <div className="font-bold">{t("decision_policy_adjusted")}</div>
+                            <div className="mt-0.5 text-gray-600 dark:text-gray-300">
+                                {t("raw_probability_leader")}: {getOutcomeLabel(policyOverride.outcome, t)} {policyOverride.probability.toFixed(0)}%
+                            </div>
+                        </div>
+                    )}
                     {drawWatch && (
                         <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3">
                             <div className="flex items-center justify-between gap-3">

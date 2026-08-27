@@ -7,7 +7,7 @@ import { PredictionMatch, ConsensusPrediction, MatchResult } from "@/types/predi
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { getDrawWatchSignalFromPredictions } from "@/app/util/predictions/drawWatch";
-import { getPredictionSignals, getPredictionStrength, getProbabilityScale, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
+import { getConsensusDecisionPolicyOverride, getPredictionSignals, getPredictionStrength, getProbabilityScale, type PredictionSignal, type PredictionStrengthTier } from "@/app/util/predictions/confidence";
 import { predictionCorrectness, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
 
 interface MatchCardProps {
@@ -132,6 +132,7 @@ export default function MatchCard({
         ? (resultState.actualResult === "HOME" ? match.home_team : resultState.actualResult === "AWAY" ? match.away_team : null)
         : null;
     const consensus = match.predictions.consensus as ConsensusPrediction;
+    const policyOverride = getConsensusDecisionPolicyOverride(consensus);
     const correct = predictionCorrectness(consensus?.prediction, match);
 
     const borderColor = correct === null
@@ -298,6 +299,14 @@ export default function MatchCard({
                             </div>
                         ))}
                     </div>
+                    {policyOverride && (
+                        <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-2.5 py-2 text-[10px] text-amber-700 dark:text-amber-200">
+                            <div className="font-bold">{t("decision_policy_adjusted")}</div>
+                            <div className="mt-0.5 text-gray-500 dark:text-gray-300">
+                                {t("raw_probability_leader")}: {getOutcomeLabel(policyOverride.outcome, t)} {policyOverride.probability.toFixed(0)}%
+                            </div>
+                        </div>
+                    )}
                     {drawWatch && (
                         <div
                             className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-2.5 py-2"

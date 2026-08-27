@@ -1,6 +1,6 @@
 "use client";
 
-import { getConsensusConfidence, getPredictionSignals, getPredictionStrength, type PredictionSignal } from "@/app/util/predictions/confidence";
+import { getConsensusConfidence, getConsensusDecisionPolicyOverride, getPredictionSignals, getPredictionStrength, type PredictionSignal } from "@/app/util/predictions/confidence";
 import { getDrawWatchSignalFromModels } from "@/app/util/predictions/drawWatch";
 import type { AnalysisMatch, MatchResult } from "@/types/predictions";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
@@ -55,6 +55,10 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
     const strength = getPredictionStrength(consensus);
     const predictionSignals = getPredictionSignals(match, { consensus });
     const predictionLabel = pickLabel(consensus.prediction, homeTeam, awayTeam, t("draw"));
+    const policyOverride = getConsensusDecisionPolicyOverride(consensus);
+    const rawProbabilityLeader = policyOverride
+        ? pickLabel(policyOverride.outcome, homeTeam, awayTeam, t("draw"))
+        : null;
     const homeXg = analysis?.goals?.expected_goals_home;
     const awayXg = analysis?.goals?.expected_goals_away;
     const xgDiff = homeXg != null && awayXg != null ? homeXg - awayXg : null;
@@ -99,6 +103,14 @@ export default function PredictionExplanation({ homeTeam, awayTeam, analysis }: 
                             {t(`prediction_strength_${strength.tier}`)}
                         </span>
                     </div>
+                    {policyOverride && rawProbabilityLeader && (
+                        <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                            <div className="font-bold">{t("decision_policy_adjusted")}</div>
+                            <div className="mt-0.5 text-gray-600 dark:text-gray-300">
+                                {t("raw_probability_leader")}: {rawProbabilityLeader} {policyOverride.probability.toFixed(0)}%
+                            </div>
+                        </div>
+                    )}
                     {predictionSignals.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2" aria-label={t("prediction_signals")}>
                             {predictionSignals.map((signal) => (

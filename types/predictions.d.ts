@@ -36,6 +36,7 @@ export interface ConsensusPrediction {
     votes: Record<MatchResult, number>;
     avg_probabilities: Record<MatchResult, number>;
     correct: boolean | null;
+    decision_policy_applied?: boolean;
     input_quality?: PredictionInputQuality | null;
 }
 
