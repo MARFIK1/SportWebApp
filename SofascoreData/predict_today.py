@@ -124,6 +124,13 @@ try:
 except ValueError:
     FINISHED_DETAIL_REQUESTS_PER_EVENT = 1
 try:
+    DIRECT_EVENT_FALLBACK_LIMIT = max(
+        0,
+        int(os.environ.get('SOFASCORE_DIRECT_EVENT_FALLBACK_LIMIT', '8')),
+    )
+except ValueError:
+    DIRECT_EVENT_FALLBACK_LIMIT = 8
+try:
     PREMATCH_LINEUP_WINDOW_MINUTES = max(
         1,
         int(os.environ.get('SOFASCORE_PREMATCH_LINEUP_WINDOW_MINUTES', '75')),
@@ -684,6 +691,55 @@ def _sync_match_start_timestamp(match: Dict, api_match: Dict) -> bool:
     return True
 
 
+def _event_local_date(event: Dict) -> Optional[str]:
+    timestamp = event.get('startTimestamp')
+    if timestamp not in (None, ''):
+        try:
+            return datetime.fromtimestamp(float(timestamp)).strftime('%Y-%m-%d')
+        except (OSError, OverflowError, TypeError, ValueError):
+            pass
+
+    for key in ('date', 'start_time', 'datetime'):
+        value = event.get(key)
+        if isinstance(value, str) and len(value) >= 10:
+            return value[:10]
+    return None
+
+
+def _sync_match_schedule(match: Dict, api_match: Dict) -> bool:
+    changed = _sync_match_start_timestamp(match, api_match)
+    event_date = _event_local_date(api_match)
+    if event_date and (match.get('date') or '')[:10] != event_date:
+        match['date'] = event_date
+        changed = True
+    return changed
+
+
+def _match_scheduled_event_for_update(
+    match: Dict,
+    target_date: str,
+    events_by_id: Dict[str, Dict],
+    events_by_teams: Dict[tuple, Dict],
+) -> Optional[Dict]:
+    match_date = (match.get('date') or '')[:10]
+    event_id = match.get('event_id')
+    event_key = str(event_id) if event_id not in (None, '') else ''
+
+    api_match = events_by_id.get(event_key) if event_key else None
+    if api_match:
+        api_date = _event_local_date(api_match)
+        if match_date == target_date or api_date == target_date:
+            return api_match
+        return None
+
+    if match_date != target_date:
+        return None
+
+    return events_by_teams.get(
+        (match.get('home_team_id'), match.get('away_team_id'))
+    )
+
+
 def _refresh_match_details(
     scraper,
     match: Dict,
@@ -1157,25 +1213,6 @@ def find_matches_for_date(target_date: str) -> list:
     return [_strip_internal_match_fields(m) for m in seen_matches.values()]
 
 
-def _event_unique_tournament_id(event: dict):
-    tournament = event.get('tournament') or {}
-    unique_tournament = tournament.get('uniqueTournament') or event.get('uniqueTournament') or {}
-    return unique_tournament.get('id')
-
-
-def _competition_lookup_by_tournament_id(competitions: dict) -> dict:
-    lookup = {}
-    for comp_type, countries in competitions.items():
-        for country, comps in countries.items():
-            for comp_name, comp_data in comps.items():
-                if not _include_competition_in_daily(comp_data):
-                    continue
-                tournament_id = comp_data.get('tournament_id')
-                if tournament_id:
-                    lookup[tournament_id] = (comp_type, country, comp_name)
-    return lookup
-
-
 def _include_competition_in_daily(comp_data: Optional[Dict]) -> bool:
     return not isinstance(comp_data, dict) or comp_data.get('include_in_daily', True) is not False
 
@@ -1332,19 +1369,8 @@ def _match_belongs_to_date(match: dict, target_date: str) -> bool:
 
 
 def _scheduled_event_belongs_to_date(event: dict, target_date: str) -> bool:
-    timestamp = event.get("startTimestamp")
-    if timestamp not in (None, ""):
-        try:
-            return datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d") == target_date
-        except (OSError, OverflowError, TypeError, ValueError):
-            pass
-
-    for key in ("date", "start_time", "datetime"):
-        value = event.get(key)
-        if isinstance(value, str) and value:
-            return value.startswith(target_date)
-
-    return True
+    event_date = _event_local_date(event)
+    return event_date == target_date if event_date else True
 
 
 def _filter_scheduled_events_for_date(events, target_date: str):
@@ -1356,6 +1382,104 @@ def _filter_scheduled_events_for_date(events, target_date: str):
         else:
             ignored += 1
     return filtered, ignored
+
+
+def _collect_direct_event_fallback_ids(
+    base_dir: Path,
+    target_date: str,
+    scheduled_events: List[Dict],
+    competitions_to_check: Optional[set] = None,
+) -> List[str]:
+    scheduled_ids = {
+        str(event.get('id'))
+        for event in scheduled_events
+        if event.get('id') not in (None, '')
+    }
+    scheduled_teams = {
+        (event.get('homeTeam', {}).get('id'), event.get('awayTeam', {}).get('id'))
+        for event in scheduled_events
+        if event.get('homeTeam', {}).get('id') and event.get('awayTeam', {}).get('id')
+    }
+    candidates = []
+    seen = set()
+
+    for comp_type, country, comp_name, comp_dir in iter_competition_dirs(base_dir):
+        if competitions_to_check and (comp_type, country, comp_name) not in competitions_to_check:
+            continue
+        raw_dir = comp_dir / 'raw'
+        if not raw_dir.exists():
+            continue
+
+        raw_files = list(raw_dir.glob('*.json'))
+        upcoming_dir = raw_dir / 'upcoming'
+        if upcoming_dir.exists():
+            raw_files.extend(upcoming_dir.glob('*.json'))
+
+        for raw_file in raw_files:
+            try:
+                with open(raw_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            for match in data.get('matches', []):
+                if not isinstance(match, dict) or not _match_belongs_to_date(match, target_date):
+                    continue
+                if not _match_requires_result_refresh(match, comp_type):
+                    continue
+
+                event_id = match.get('event_id')
+                event_key = str(event_id) if event_id not in (None, '') else ''
+                team_key = (match.get('home_team_id'), match.get('away_team_id'))
+                if not event_key or event_key in scheduled_ids or team_key in scheduled_teams:
+                    continue
+                if event_key in seen:
+                    continue
+
+                seen.add(event_key)
+                candidates.append(event_key)
+
+    return candidates
+
+
+def _fetch_direct_event_fallbacks(
+    scraper,
+    target_date: str,
+    base_dir: Path,
+    scheduled_events: List[Dict],
+    competitions_to_check: Optional[set] = None,
+) -> List[Dict]:
+    if DIRECT_EVENT_FALLBACK_LIMIT == 0:
+        return []
+
+    candidate_ids = _collect_direct_event_fallback_ids(
+        base_dir,
+        target_date,
+        scheduled_events,
+        competitions_to_check,
+    )
+    if not candidate_ids:
+        return []
+
+    loaded = []
+    attempted = 0
+    for event_id in candidate_ids[:DIRECT_EVENT_FALLBACK_LIMIT]:
+        if getattr(scraper, 'api_budget_exhausted', False):
+            break
+        attempted += 1
+        event = scraper.get_event_details(event_id)
+        if not isinstance(event, dict):
+            continue
+        if str(event.get('id')) != event_id:
+            continue
+        loaded.append(event)
+
+    if attempted:
+        print(
+            f"[INFO] Direct event fallback loaded {len(loaded)}/{attempted} "
+            f"unmatched local events for {target_date}."
+        )
+    return loaded
 
 
 def _prune_misaligned_scheduled_cache(base_dir: Path):
@@ -1542,23 +1666,16 @@ def _print_sofascore_budget_exhausted(scraper) -> bool:
 
 
 def _sofascore_bootstrap_url(target_date: Optional[str]) -> str:
-    if target_date:
-        return f"https://www.sofascore.com/api/v1/sport/football/scheduled-events/{target_date}"
-    return "https://www.sofascore.com/api/v1/sport/football/categories"
+    return "https://www.sofascore.com/"
 
 
 def _warm_up_sofascore_session(driver, target_date: Optional[str] = None):
     import time
 
     full_page = str(os.environ.get('SOFASCORE_FULL_PAGE_BOOTSTRAP', '')).strip().lower()
-    if full_page in {'1', 'true', 'yes', 'on'}:
-        url = f"https://www.sofascore.com/football/{target_date}" if target_date else "https://www.sofascore.com"
-        wait_seconds = 3.0
-        mode = "full page"
-    else:
-        url = _sofascore_bootstrap_url(target_date)
-        wait_seconds = 0.75
-        mode = "api"
+    url = _sofascore_bootstrap_url(target_date)
+    wait_seconds = 3.0 if full_page in {'1', 'true', 'yes', 'on'} else 0.75
+    mode = "website"
 
     try:
         wait_seconds = max(0.0, float(os.environ.get('SOFASCORE_BOOTSTRAP_WAIT', wait_seconds)))
@@ -1583,65 +1700,38 @@ def _scrape_scheduled_upcoming(scraper, target_date: str, competitions: dict, ba
     from sofascore import FootballDataManager
     from sofascore.utils import extract_match_data, extract_referee_data, extract_odds
 
-    scheduled_events = scraper.get_scheduled_events(target_date)
-    if scheduled_events:
-        scheduled_events, ignored_off_date = _filter_scheduled_events_for_date(
-            scheduled_events,
-            target_date,
-        )
-        if ignored_off_date:
-            print(
-                f"[INFO] Ignored {ignored_off_date} scheduled events outside "
-                f"local date {target_date}."
-            )
-    events_by_comp = {}
-    total_events = 0
-
-    if scheduled_events:
-        competition_lookup = _competition_lookup_by_tournament_id(competitions)
-        for event in scheduled_events:
-            comp_key = competition_lookup.get(_event_unique_tournament_id(event))
-            if comp_key:
-                events_by_comp.setdefault(comp_key, []).append(event)
-        total_events = len(scheduled_events)
+    fallback_comp_keys = _daily_fallback_comp_keys_from_env(competitions)
+    if fallback_comp_keys:
+        print("Using SOFASCORE_DAILY_COMP_KEYS for tournament scheduled-events discovery.")
     else:
-        if scheduled_events is None:
-            print("Scheduled events endpoint unavailable; trying tournament scheduled-events.")
-        else:
-            print("Scheduled events endpoint returned 0 events; trying tournament scheduled-events.")
-
-        fallback_comp_keys = _daily_fallback_comp_keys_from_env(competitions)
+        fallback_comp_keys = _local_scheduled_comp_keys_for_date(base_dir, target_date, competitions)
         if fallback_comp_keys:
-            print("Using SOFASCORE_DAILY_COMP_KEYS for tournament scheduled-events fallback.")
-        else:
-            fallback_comp_keys = _local_scheduled_comp_keys_for_date(base_dir, target_date, competitions)
-            if fallback_comp_keys:
-                print("Using local upcoming data to scope tournament scheduled-events fallback.")
-            discovery_comp_keys = _configured_daily_discovery_comp_keys(competitions)
-            if discovery_comp_keys:
-                fallback_comp_keys.update(discovery_comp_keys)
-                discovery_types = ", ".join(sorted(_daily_discovery_comp_types_from_env()))
-                print(
-                    "Adding configured competition types to tournament "
-                    f"scheduled-events discovery: {discovery_types}"
-                )
+            print("Using local upcoming data to scope tournament scheduled-events discovery.")
+        discovery_comp_keys = _configured_daily_discovery_comp_keys(competitions)
+        if discovery_comp_keys:
+            fallback_comp_keys.update(discovery_comp_keys)
+            discovery_types = ", ".join(sorted(_daily_discovery_comp_types_from_env()))
+            print(
+                "Adding configured competition types to tournament "
+                f"scheduled-events discovery: {discovery_types}"
+            )
 
-        allow_broad_scan = _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN")
-        events_by_comp, total_events = _fetch_tournament_scheduled_events_by_comp(
-            scraper,
-            target_date,
-            competitions,
-            fallback_comp_keys=fallback_comp_keys,
-            allow_broad_scan=allow_broad_scan,
-        )
-        if events_by_comp is None:
+    allow_broad_scan = _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN")
+    events_by_comp, total_events = _fetch_tournament_scheduled_events_by_comp(
+        scraper,
+        target_date,
+        competitions,
+        fallback_comp_keys=fallback_comp_keys,
+        allow_broad_scan=allow_broad_scan,
+    )
+    if events_by_comp is None:
+        return False
+    if not events_by_comp:
+        if allow_broad_scan:
+            print("Tournament scheduled-events returned 0 tracked events; falling back to season lookup.")
             return False
-        if not events_by_comp:
-            if allow_broad_scan:
-                print("Tournament scheduled-events returned 0 tracked events; falling back to season lookup.")
-                return False
-            print("No scoped tournament scheduled-events found; skipping broad season lookup to avoid API block.")
-            return True
+        print("No scoped tournament scheduled-events found; skipping broad season lookup to avoid API block.")
+        return True
 
     pruned_files, removed_matches = _prune_misaligned_scheduled_cache(base_dir)
     if removed_matches:
@@ -1765,12 +1855,8 @@ def _update_results_from_scheduled_events(
 ) -> Optional[Dict]:
     comps_to_check = _collect_competitions_requiring_update(base_dir, target_date)
     scheduled_events = []
-    used_scoped_tournament_first = bool(
-        competitions and comps_to_check and not _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN")
-    )
-
-    if used_scoped_tournament_first:
-        print("Skipping global scheduled-events endpoint; using scoped tournament scheduled-events.")
+    if competitions and comps_to_check:
+        print("Using scoped tournament scheduled-events for result updates.")
         events_by_comp, _total_events = _fetch_tournament_scheduled_events_by_comp(
             scraper,
             target_date,
@@ -1784,38 +1870,17 @@ def _update_results_from_scheduled_events(
             for events in events_by_comp.values()
             for event in events
         ]
-    else:
-        scheduled_events = scraper.get_scheduled_events(target_date)
-        if scheduled_events:
-            scheduled_events, ignored_off_date = _filter_scheduled_events_for_date(
-                scheduled_events,
-                target_date,
-            )
-            if ignored_off_date:
-                print(
-                    f"[INFO] Ignored {ignored_off_date} scheduled events outside "
-                    f"local date {target_date}."
-                )
-    if not scheduled_events and not used_scoped_tournament_first:
-        if scheduled_events is None:
-            print("Scheduled events endpoint unavailable; trying tournament scheduled-events.")
-        else:
-            print("Scheduled events endpoint returned 0 events; trying tournament scheduled-events.")
 
-        if competitions and comps_to_check:
-            events_by_comp, _total_events = _fetch_tournament_scheduled_events_by_comp(
-                scraper,
-                target_date,
-                competitions,
-                only_comp_keys=comps_to_check,
-            )
-            if events_by_comp is None:
-                return None
-            scheduled_events = [
-                event
-                for events in events_by_comp.values()
-                for event in events
-            ]
+    scheduled_events = list(scheduled_events or [])
+    direct_events = _fetch_direct_event_fallbacks(
+        scraper,
+        target_date,
+        base_dir,
+        scheduled_events,
+        comps_to_check,
+    )
+    if direct_events:
+        scheduled_events.extend(direct_events)
 
     if not scheduled_events:
         if not _truthy_env("SOFASCORE_ALLOW_BROAD_DAILY_SCAN"):
@@ -1830,7 +1895,11 @@ def _update_results_from_scheduled_events(
         print("Tournament scheduled-events returned 0 update candidates; falling back to season lookup.")
         return None
 
-    events_by_id = {event.get('id'): event for event in scheduled_events if event.get('id')}
+    events_by_id = {
+        str(event.get('id')): event
+        for event in scheduled_events
+        if event.get('id') not in (None, '')
+    }
     events_by_teams = {}
     for event in scheduled_events:
         home_id = event.get('homeTeam', {}).get('id')
@@ -1867,12 +1936,12 @@ def _update_results_from_scheduled_events(
 
             modified = False
             for match in data.get('matches', []):
-                if not match.get('date', '').startswith(target_date):
-                    continue
-
-                api_match = events_by_id.get(match.get('event_id'))
-                if not api_match:
-                    api_match = events_by_teams.get((match.get('home_team_id'), match.get('away_team_id')))
+                api_match = _match_scheduled_event_for_update(
+                    match,
+                    target_date,
+                    events_by_id,
+                    events_by_teams,
+                )
                 if not api_match:
                     continue
 
@@ -1882,7 +1951,7 @@ def _update_results_from_scheduled_events(
                 event_id = api_match.get('id') or match.get('event_id')
                 if event_id and not match.get('event_id'):
                     match['event_id'] = event_id
-                modified = _sync_match_start_timestamp(match, api_match) or modified
+                modified = _sync_match_schedule(match, api_match) or modified
                 prematch_lineup_refresh = _should_refresh_prematch_lineups(
                     match,
                     api_match,
@@ -1942,8 +2011,8 @@ def _update_results_from_scheduled_events(
                         team_history_updates.append(match.copy())
                     modified = True
                     updated_count += 1
-                elif api_status == 'postponed':
-                    match['status'] = 'postponed'
+                elif api_status in ('postponed', 'canceled'):
+                    match['status'] = api_status
                     if api_match.get('id') and not match.get('event_id'):
                         match['event_id'] = api_match.get('id')
                     modified = True
@@ -2342,7 +2411,7 @@ def update_match_results(target_date: str):
                             event_id = api_m.get('id') or match.get('event_id')
                             if event_id and not match.get('event_id'):
                                 match['event_id'] = event_id
-                            modified = _sync_match_start_timestamp(match, api_m) or modified
+                            modified = _sync_match_schedule(match, api_m) or modified
                             prematch_lineup_refresh = _should_refresh_prematch_lineups(
                                 match,
                                 api_m,
@@ -2395,13 +2464,16 @@ def update_match_results(target_date: str):
                                     print(f"    OK {match.get('home_team')} {score_text}{penalty_suffix} {match.get('away_team')}")
                                 updated_matches.add(match_key)
                                 reported_matches.add(match_key)
-                            elif api_status == 'postponed':
-                                match['status'] = 'postponed'
+                            elif api_status in ('postponed', 'canceled'):
+                                match['status'] = api_status
                                 matches[idx] = match
                                 modified = True
                                 updated_matches.add(match_key)
                                 if first_report_for_match:
-                                    print(f"    PP {match.get('home_team')} vs {match.get('away_team')} - POSTPONED")
+                                    print(
+                                        f"    PP {match.get('home_team')} vs {match.get('away_team')} - "
+                                        f"{api_status.upper()}"
+                                    )
                                 reported_matches.add(match_key)
                             elif api_status == 'inprogress':
                                 match['status'] = 'inprogress'
@@ -5023,6 +5095,16 @@ def _find_by_keys(index: Dict[str, Dict], keys: List[str]) -> Optional[Dict]:
     return None
 
 
+def _sync_nonfinal_report_status(match_entry: Dict, source_match: Dict) -> bool:
+    source_status = str(source_match.get('status') or '').strip().lower()
+    if source_status not in {'postponed', 'canceled', 'inprogress'}:
+        return False
+    if match_entry.get('status') == source_status:
+        return False
+    match_entry['status'] = source_status
+    return True
+
+
 def _drop_stale_rescheduled_report_entries(report: Dict, target_date: str) -> int:
     canonical_events = _build_canonical_raw_event_index(DATA_DIR)
     kept = []
@@ -5133,10 +5215,10 @@ def _refresh_report_summary_counts(report: Dict):
     matches = report.get('matches', [])
     total = len(matches)
     finished = sum(1 for m in matches if m.get('status') == 'finished')
-    postponed = sum(1 for m in matches if m.get('status') == 'postponed')
+    postponed = sum(1 for m in matches if m.get('status') in ('postponed', 'canceled'))
     inprogress = sum(1 for m in matches if m.get('status') == 'inprogress')
     unknown = sum(1 for m in matches if m.get('status') == 'unknown')
-    pending = total - finished - postponed - unknown
+    pending = total - finished - postponed - inprogress - unknown
 
     summary = report.setdefault('summary', {})
     summary['total_matches'] = total
@@ -5718,12 +5800,14 @@ def main():
 
     if args.update:
         update_state = update_match_results(target_date)
-        if not update_state.get('source_ok'):
-            print("\nUpdate did not confirm any saved matches from Sofascore; existing report was left unchanged.")
-            sys.exit(1)
-
         existing_report = load_existing_report(target_date)
         if existing_report:
+            report_state_before = json.dumps(
+                existing_report,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
             matches = find_matches_for_date(target_date)
             matches_by_key = {}
             for m_data in matches:
@@ -5739,6 +5823,7 @@ def main():
                 if source_season:
                     match_entry['season'] = source_season
                 match_entry['odds_availability'] = _source_match_odds_availability(m_data)
+                _sync_nonfinal_report_status(match_entry, m_data)
                 if not m_data.get('result'):
                     continue
                 actual_result = _apply_actual_fields_to_report_match(match_entry, m_data)
@@ -5765,20 +5850,48 @@ def main():
             existing_report['summary']['model_accuracy'] = calculate_model_accuracy(all_matches)
             existing_report['summary']['total_matches'] = len(all_matches)
             existing_report['summary']['finished_matches'] = sum(1 for m in all_matches if m.get('status') == 'finished')
-            existing_report['summary']['postponed_matches'] = sum(1 for m in all_matches if m.get('status') == 'postponed')
+            existing_report['summary']['postponed_matches'] = sum(
+                1
+                for m in all_matches
+                if m.get('status') in ('postponed', 'canceled')
+            )
             existing_report['summary']['inprogress_matches'] = sum(1 for m in all_matches if m.get('status') == 'inprogress')
             existing_report['summary']['unknown_matches'] = sum(1 for m in all_matches if m.get('status') == 'unknown')
             existing_report['summary']['pending_matches'] = sum(1 for m in all_matches if m.get('status') == 'upcoming')
-            existing_report['updated_at'] = _dt.now().strftime('%Y-%m-%d %H:%M:%S')
 
             remaining = sum(1 for m in all_matches if m.get('status') in ('upcoming', 'inprogress'))
             if remaining == 0 and len(all_matches) > 0:
                 existing_report['status'] = 'finished'
 
+            report_changed = json.dumps(
+                existing_report,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ) != report_state_before
+            if not update_state.get('source_ok') and not report_changed:
+                print(
+                    "\nUpdate did not confirm any saved matches from Sofascore; "
+                    "existing report was left unchanged."
+                )
+                sys.exit(1)
+            if not update_state.get('source_ok'):
+                print(
+                    "\nSofascore did not confirm a saved match, but the report "
+                    "was reconciled from existing local source data."
+                )
+
+            existing_report['updated_at'] = _dt.now().strftime('%Y-%m-%d %H:%M:%S')
             report_path = save_report(existing_report, target_date)
             print(f"\nReport updated: {report_path}")
             print_report_summary(existing_report, {})
         else:
+            if not update_state.get('source_ok'):
+                print(
+                    "\nUpdate did not confirm any saved matches from Sofascore; "
+                    "no existing report could be reconciled."
+                )
+                sys.exit(1)
             print(f"\nNo existing report for {target_date}.")
             print("First run: python predict_today.py --scrape")
         return

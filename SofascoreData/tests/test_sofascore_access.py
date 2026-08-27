@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import predict_today
-from predict_today import _print_sofascore_api_blocked
+from predict_today import _print_sofascore_api_blocked, _sofascore_bootstrap_url
 from sofascore.scraper import SofascoreSeleniumScraper
 
 
@@ -78,6 +78,31 @@ class SofascoreAccessTests(unittest.TestCase):
 
         self.assertFalse(scraper.api_blocked)
         self.assertEqual(scraper.last_api_error['code'], 404)
+
+    def test_optional_match_details_treat_404_as_checked_and_unavailable(self):
+        missing = {'error': {'code': 404, 'reason': 'Not Found'}}
+
+        for getter_name in (
+            'get_match_statistics',
+            'get_match_shotmap',
+            'get_match_incidents',
+        ):
+            with self.subTest(getter=getter_name):
+                scraper, _driver = self.create_scraper([missing])
+                self.assertEqual(getattr(scraper, getter_name)(16316950), [])
+                self.assertFalse(scraper.api_blocked)
+
+    def test_optional_match_details_keep_transient_errors_retryable(self):
+        unavailable = {'error': {'code': 500, 'reason': 'Server Error'}}
+        scraper, _driver = self.create_scraper([unavailable])
+
+        self.assertIsNone(scraper.get_match_statistics(16316950))
+
+    def test_bootstrap_uses_the_website_instead_of_removed_global_api(self):
+        self.assertEqual(
+            _sofascore_bootstrap_url('2026-08-15'),
+            'https://www.sofascore.com/',
+        )
 
     def test_blocked_log_contains_a_machine_readable_access_marker(self):
         scraper, _driver = self.create_scraper([])

@@ -183,10 +183,7 @@ class SofascoreSeleniumScraper:
 
     def _is_endpoint_optional_for_fallback(self, endpoint):
         endpoint = str(endpoint or '')
-        return (
-            endpoint.startswith('/sport/football/scheduled-events/') or
-            endpoint.endswith('/lineups')
-        )
+        return endpoint.endswith('/lineups')
 
     def _record_api_error(self, endpoint, data):
         if not isinstance(data, dict) or not isinstance(data.get('error'), dict):
@@ -210,6 +207,15 @@ class SofascoreSeleniumScraper:
     def _has_api_error(self, endpoint, data):
         self._record_api_error(endpoint, data)
         return isinstance(data, dict) and isinstance(data.get('error'), dict)
+
+    @staticmethod
+    def _is_missing_optional_response(data):
+        if not isinstance(data, dict):
+            return False
+        error = data.get('error')
+        if not isinstance(error, dict):
+            return False
+        return str(error.get('code')) in {'404', '422'}
 
     def _can_make_api_request(self, endpoint):
         if self.api_blocked or self.api_budget_exhausted:
@@ -337,25 +343,34 @@ class SofascoreSeleniumScraper:
         return all_matches
     
     def get_match_statistics(self, event_id):
-        data = self.get_api_data(f"/event/{event_id}/statistics")
-        return data.get('statistics', []) if data else None
+        endpoint = f"/event/{event_id}/statistics"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return [] if self._is_missing_optional_response(data) else None
+        return data.get('statistics', []) if isinstance(data, dict) else None
     
     def get_match_shotmap(self, event_id):
         """Get shotmap (xG data) for a match"""
-        data = self.get_api_data(f"/event/{event_id}/shotmap")
-        return data.get('shotmap', []) if data else None
+        endpoint = f"/event/{event_id}/shotmap"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return [] if self._is_missing_optional_response(data) else None
+        return data.get('shotmap', []) if isinstance(data, dict) else None
     
     def get_match_incidents(self, event_id):
         """Get incidents (goals, cards) for a match"""
-        data = self.get_api_data(f"/event/{event_id}/incidents")
-        return data.get('incidents', []) if data else None
+        endpoint = f"/event/{event_id}/incidents"
+        data = self.get_api_data(endpoint)
+        if self._has_api_error(endpoint, data):
+            return [] if self._is_missing_optional_response(data) else None
+        return data.get('incidents', []) if isinstance(data, dict) else None
+
     def get_match_lineups(self, event_id):
         """Get formations and player lineups for a match when available."""
         endpoint = f"/event/{event_id}/lineups"
         data = self.get_api_data(endpoint)
         if self._has_api_error(endpoint, data):
-            error = data.get('error') or {}
-            return {} if error.get('code') in (404, 422) else None
+            return {} if self._is_missing_optional_response(data) else None
         return data if isinstance(data, dict) else None
 
     
@@ -404,23 +419,6 @@ class SofascoreSeleniumScraper:
         if self._has_api_error(endpoint, data):
             return None
         return data.get('event', data) if data and isinstance(data, dict) else None
-
-    def get_scheduled_events(self, date_ymd):
-        endpoint = f"/sport/football/scheduled-events/{date_ymd}"
-        data = self.get_api_data(endpoint)
-        if self._has_api_error(endpoint, data):
-            error = data.get('error') or {}
-            print(
-                f"[INFO] global scheduled-events {date_ymd} unavailable "
-                f"({error.get('code')} {error.get('reason')}); using tournament fallback."
-            )
-            return None
-        if not data or not isinstance(data, dict):
-            return None
-        events = data.get('events', [])
-        if not events:
-            print(f"[DEBUG] scheduled-events {date_ymd}: keys={list(data.keys())}")
-        return events
 
     def get_tournament_scheduled_events(self, tournament_id, date_ymd):
         endpoint = f"/unique-tournament/{tournament_id}/scheduled-events/{date_ymd}"

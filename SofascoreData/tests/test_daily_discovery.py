@@ -9,11 +9,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from predict_today import (
+    _collect_direct_event_fallback_ids,
     _configured_daily_discovery_comp_keys,
     _fetch_tournament_scheduled_events_by_comp,
     _filter_scheduled_events_for_date,
     _match_requires_result_refresh,
+    _match_scheduled_event_for_update,
     _prune_misaligned_scheduled_cache,
+    _scrape_scheduled_upcoming,
+    _sync_match_schedule,
+    _sync_nonfinal_report_status,
     _unreported_source_matches,
 )
 from sofascore.scraper import SofascoreSeleniumScraper
@@ -53,6 +58,24 @@ COMPETITIONS = {
 
 
 class DailyDiscoveryTests(unittest.TestCase):
+    def test_upcoming_discovery_does_not_call_removed_global_endpoint(self):
+        class ScopedOnlyScraper:
+            def get_scheduled_events(self, _target_date):
+                raise AssertionError("removed global scheduled-events endpoint was called")
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "predict_today._fetch_tournament_scheduled_events_by_comp",
+            return_value=({}, 0),
+        ):
+            result = _scrape_scheduled_upcoming(
+                ScopedOnlyScraper(),
+                "2026-08-15",
+                COMPETITIONS,
+                Path(temp_dir),
+            )
+
+        self.assertTrue(result)
+
     def test_leagues_and_european_competitions_are_discovered_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SOFASCORE_DAILY_DISCOVERY_TYPES", None)
@@ -227,3 +250,139 @@ class DailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(cleaned["metadata"]["total_matches"], 1)
         self.assertEqual([match["event_id"] for match in cleaned["matches"]], [1])
         self.assertEqual([feature["event_id"] for feature in cleaned["features"]], [1])
+
+    def test_unmatched_local_event_is_selected_for_direct_lookup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            upcoming_dir = (
+                Path(temp_dir)
+                / "league"
+                / "poland"
+                / "ekstraklasa"
+                / "raw"
+                / "upcoming"
+            )
+            upcoming_dir.mkdir(parents=True)
+            (upcoming_dir / "upcoming_scheduled_2026-08-13.json").write_text(
+                json.dumps(
+                    {
+                        "matches": [
+                            {
+                                "event_id": 101,
+                                "date": "2026-08-13",
+                                "status": "notstarted",
+                                "home_team_id": 1,
+                                "away_team_id": 2,
+                                "home_score": None,
+                                "away_score": None,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            event_ids = _collect_direct_event_fallback_ids(
+                Path(temp_dir),
+                "2026-08-13",
+                [],
+                {("league", "poland", "ekstraklasa")},
+            )
+
+        self.assertEqual(event_ids, ["101"])
+
+    def test_scheduled_event_is_not_selected_for_direct_lookup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            upcoming_dir = (
+                Path(temp_dir)
+                / "league"
+                / "poland"
+                / "ekstraklasa"
+                / "raw"
+                / "upcoming"
+            )
+            upcoming_dir.mkdir(parents=True)
+            (upcoming_dir / "upcoming_scheduled_2026-08-13.json").write_text(
+                json.dumps(
+                    {
+                        "matches": [
+                            {
+                                "event_id": 101,
+                                "date": "2026-08-13",
+                                "status": "notstarted",
+                                "home_team_id": 1,
+                                "away_team_id": 2,
+                                "home_score": None,
+                                "away_score": None,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            event_ids = _collect_direct_event_fallback_ids(
+                Path(temp_dir),
+                "2026-08-13",
+                [{"id": 101, "homeTeam": {"id": 1}, "awayTeam": {"id": 2}}],
+                {("league", "poland", "ekstraklasa")},
+            )
+
+        self.assertEqual(event_ids, [])
+
+    def test_match_schedule_tracks_rescheduled_event_date(self):
+        new_timestamp = int(datetime(2026, 8, 14, 18, 0).timestamp())
+        match = {"date": "2026-08-13", "start_timestamp": None}
+
+        changed = _sync_match_schedule(
+            match,
+            {"startTimestamp": new_timestamp},
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(match["date"], "2026-08-14")
+        self.assertEqual(match["start_timestamp"], new_timestamp)
+
+    def test_rescheduled_match_is_selected_by_event_id_on_new_date(self):
+        new_timestamp = int(datetime(2026, 8, 14, 18, 0).timestamp())
+        event = {"id": 101, "startTimestamp": new_timestamp}
+
+        selected = _match_scheduled_event_for_update(
+            {"event_id": 101, "date": "2026-08-13"},
+            "2026-08-14",
+            {"101": event},
+            {},
+        )
+
+        self.assertIs(selected, event)
+
+    def test_off_date_match_is_not_selected_by_team_pair(self):
+        event = {
+            "homeTeam": {"id": 1},
+            "awayTeam": {"id": 2},
+        }
+
+        selected = _match_scheduled_event_for_update(
+            {
+                "date": "2026-08-13",
+                "home_team_id": 1,
+                "away_team_id": 2,
+            },
+            "2026-08-14",
+            {},
+            {(1, 2): event},
+        )
+
+        self.assertIsNone(selected)
+
+    def test_nonfinal_source_status_is_copied_to_report(self):
+        for status in ("postponed", "canceled", "inprogress"):
+            with self.subTest(status=status):
+                report_match = {"status": "unknown"}
+
+                changed = _sync_nonfinal_report_status(
+                    report_match,
+                    {"status": status},
+                )
+
+                self.assertTrue(changed)
+                self.assertEqual(report_match["status"], status)
