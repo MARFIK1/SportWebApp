@@ -4,6 +4,7 @@ from sofascore.dataset_builder import (
     build_competition_feature_samples,
     build_season_feature_samples,
     deduplicate_matches,
+    is_finished_match,
     normalize_match_scores,
 )
 from sofascore.features import MLFeatureGenerator
@@ -25,6 +26,24 @@ def match(event_id, date, home, away, home_score=None, away_score=None, status="
 
 
 class DatasetBuilderTests(unittest.TestCase):
+    def test_live_match_with_score_is_not_finished(self):
+        live = match(1, "2026-01-01", "A", "B", 1, 0, status="inprogress")
+
+        self.assertFalse(is_finished_match(live))
+
+    def test_live_match_with_score_has_no_training_labels(self):
+        live = match(1, "2026-01-01", "A", "B", 1, 0, status="inprogress")
+
+        result = build_season_feature_samples(
+            [live],
+            MLFeatureGenerator(),
+            season="2026",
+        )
+
+        self.assertEqual(result.finished_samples, 0)
+        self.assertEqual(result.pending_samples, 1)
+        self.assertNotIn("label_result_int", result.samples[0])
+
     def test_keeps_draw_score_when_penalties_are_separate(self):
         normalized = normalize_match_scores(
             match(1, "2026-01-01", "A", "B", 1, 1, home_score_pen=3, away_score_pen=5)

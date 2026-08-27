@@ -2,9 +2,10 @@ from dataclasses import dataclass
 import math
 from typing import Dict, Iterable, List, Optional, Sequence
 
+from .utils import is_finished_match
 
-DATASET_BUILDER_VERSION = 4
-PENDING_STATUSES = frozenset({"upcoming", "notstarted", "postponed", "canceled"})
+
+DATASET_BUILDER_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -22,13 +23,6 @@ def match_sort_key(match: Dict):
         match.get("time") or match.get("start_time") or "",
         str(match.get("event_id") or ""),
     )
-
-
-def is_finished_match(match: Dict) -> bool:
-    status = str(match.get("status") or "").lower()
-    if status in PENDING_STATUSES:
-        return False
-    return status == "finished" or match.get("home_score") is not None
 
 
 def _score_int(value) -> Optional[int]:
