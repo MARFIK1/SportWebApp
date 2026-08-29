@@ -354,6 +354,95 @@ def _align_predict_proba(model, X, class_labels: List[int]) -> Optional[np.ndarr
     return aligned
 
 
+class DeploymentCalibratedClassifier(BaseEstimator, ClassifierMixin):
+    """Apply frozen pre-test calibrators to a separately refitted estimator."""
+
+    def __init__(self, estimator, class_labels, calibrators=None):
+        self.estimator = estimator
+        self.class_labels = class_labels
+        self.calibrators = calibrators
+
+    @property
+    def classes_(self):
+        return np.asarray(self.class_labels)
+
+    def predict_proba(self, X):
+        probabilities = _align_predict_proba(self.estimator, X, list(self.class_labels))
+        if probabilities is None:
+            raise ValueError("deployment estimator does not expose valid probabilities")
+
+        calibrated = probabilities.copy()
+        for class_label, calibrator in (self.calibrators or {}).items():
+            class_position = list(self.class_labels).index(class_label)
+            class_probability = np.clip(
+                probabilities[:, class_position],
+                1e-6,
+                1.0 - 1e-6,
+            )
+            logits = np.log(class_probability / (1.0 - class_probability)).reshape(-1, 1)
+            calibrated[:, class_position] = calibrator.predict_proba(logits)[:, 1]
+
+        return normalize_probabilities(calibrated)
+
+    def predict(self, X):
+        probabilities = self.predict_proba(X)
+        return self.classes_[np.argmax(probabilities, axis=1)]
+
+
+def _fit_frozen_probability_calibrators(
+    model,
+    X_calibration,
+    y_calibration,
+    class_labels: List[int],
+) -> Tuple[Dict, Dict]:
+    """Learn one-vs-rest probability mappings without refitting the estimator."""
+    if X_calibration is None or y_calibration is None or len(y_calibration) == 0:
+        return {}, {'status': 'not_available', 'rows': 0}
+
+    probabilities = _align_predict_proba(model, X_calibration, class_labels)
+    if probabilities is None:
+        return {}, {'status': 'not_available', 'rows': int(len(y_calibration))}
+
+    y_values = np.asarray(y_calibration)
+    calibrators = {}
+    calibrated_labels = []
+    for class_position, class_label in enumerate(class_labels):
+        binary_target = (y_values == class_label).astype(int)
+        if np.unique(binary_target).size < 2:
+            continue
+
+        class_probability = np.clip(
+            probabilities[:, class_position],
+            1e-6,
+            1.0 - 1e-6,
+        )
+        logits = np.log(class_probability / (1.0 - class_probability)).reshape(-1, 1)
+        calibrator = LogisticRegression(random_state=42, max_iter=1000)
+        calibrator.fit(logits, binary_target)
+        calibrators[class_label] = calibrator
+        calibrated_labels.append(class_label)
+
+    return calibrators, {
+        'status': 'frozen' if calibrators else 'not_available',
+        'rows': int(len(y_calibration)),
+        'class_labels': calibrated_labels,
+    }
+
+
+def _resolve_classification_prediction_model(model_data, raw_frame, scaler=None):
+    """Prefer the deployment refit while retaining legacy artifact support."""
+    deployment_model = model_data.get('deployment_model')
+    if deployment_model is not None:
+        return deployment_model, raw_frame, True
+
+    prediction_frame = raw_frame
+    if model_data.get('scaled') and scaler is not None:
+        prediction_frame = scaler.transform(raw_frame)
+    calibrated_model = model_data.get('calibrated_model')
+    prediction_model = calibrated_model if calibrated_model is not None else model_data['model']
+    return prediction_model, prediction_frame, False
+
+
 def _expected_calibration_error(y_true, proba, class_labels: List[int], n_bins: int = 10) -> float:
     y_arr = np.asarray(y_true)
     pred_pos = np.argmax(proba, axis=1)
@@ -1157,24 +1246,24 @@ class UniversalPredictor:
 
         for name, model_data in target_models.items():
             model = model_data['model']
+            deployment_model = model_data.get('deployment_model')
             if (
                 model_data.get('type') == 'lstm'
-                and hasattr(model, '_predict_from_seqs')
+                and hasattr(deployment_model or model, '_predict_from_seqs')
             ):
+                prediction_model = deployment_model or model
                 probabilities = self._predict_lstm_probability_batch(
-                    model,
+                    prediction_model,
                     source_df,
                     len(class_labels),
                 )
                 predictions = np.asarray(class_labels)[np.argmax(probabilities, axis=1)]
             else:
-                X_pred = (
-                    scaler.transform(model_frame)
-                    if model_data.get('scaled')
-                    else model_frame
+                prediction_model, X_pred, _ = _resolve_classification_prediction_model(
+                    model_data,
+                    model_frame,
+                    scaler,
                 )
-                calibrated_model = model_data.get('calibrated_model')
-                prediction_model = calibrated_model if calibrated_model is not None else model
                 probabilities = _align_predict_proba(
                     prediction_model,
                     X_pred,
@@ -1840,6 +1929,316 @@ class UniversalPredictor:
 
         return model_configs
 
+    def _fit_deployment_classification_models(
+        self,
+        target: str,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        train_dates,
+        sample_weights,
+        X_probability_cal_raw: Optional[pd.DataFrame],
+        y_probability_cal: Optional[pd.Series],
+        scaler,
+        X_test: pd.DataFrame,
+        y_test: pd.Series,
+        class_labels: List[int],
+        avg_method: str,
+        lstm_meta: Optional[Dict] = None,
+    ) -> Dict:
+        """Refit deployable estimators on every row before the untouched test holdout."""
+        X_deployment_train, y_deployment_train, deployment_weights, deployment_dates = (
+            _sort_training_rows_by_date(
+                X_train,
+                y_train,
+                train_dates,
+                sample_weights,
+            )
+        )
+        deployment_range = _date_range_summary(deployment_dates)
+        summary = {
+            'status': 'completed',
+            'rows': int(len(X_deployment_train)),
+            'date_range': deployment_range,
+            'test_rows': int(len(X_test)),
+            'test_excluded': True,
+            'models': {},
+        }
+
+        print(
+            f"\nRefitting deployment estimators on all {len(X_deployment_train)} "
+            "pre-test rows..."
+        )
+        for name, model_data in self.models[target].items():
+            benchmark_model = model_data.get('model')
+            benchmark_metadata = {
+                'rows': int(model_data.get('benchmark_train_rows', 0)),
+                'date_range': model_data.get('benchmark_train_date_range', {}),
+            }
+
+            if model_data.get('type') == 'lstm':
+                try:
+                    if benchmark_model is None or not hasattr(benchmark_model, 'fit_full'):
+                        raise ValueError('benchmark LSTM does not support deployment refit')
+
+                    selected_epochs = max(
+                        1,
+                        int(
+                            getattr(benchmark_model, '_best_epoch', None)
+                            or benchmark_model.epochs
+                        ),
+                    )
+                    deployment_model = LSTMPredictor(
+                        num_classes=benchmark_model.num_classes,
+                        hidden_size=benchmark_model.hidden_size,
+                        num_layers=benchmark_model.num_layers,
+                        dropout=benchmark_model.dropout,
+                        lr=benchmark_model.lr,
+                        epochs=selected_epochs,
+                        batch_size=benchmark_model.batch_size,
+                    )
+                    deployment_model.fit_full(
+                        X_deployment_train,
+                        y_deployment_train,
+                        meta=lstm_meta,
+                        epochs=selected_epochs,
+                    )
+                    if not deployment_model._fitted:
+                        raise ValueError('deployment LSTM did not produce a fitted model')
+
+                    X_full = pd.concat([X_deployment_train, X_test])
+                    home_all, away_all, valid_all = deployment_model.build_sequences(
+                        X_full,
+                        meta=lstm_meta,
+                        update_history=False,
+                    )
+                    train_count = len(X_deployment_train)
+                    valid_test = valid_all[train_count:]
+                    if valid_test.sum() == 0:
+                        raise ValueError('deployment LSTM has no valid untouched test sequences')
+
+                    deployment_probabilities = deployment_model.predict_proba((
+                        home_all[train_count:][valid_test],
+                        away_all[train_count:][valid_test],
+                    ))
+                    deployment_predictions = np.asarray(class_labels)[
+                        np.argmax(deployment_probabilities, axis=1)
+                    ]
+                    y_test_valid = y_test.iloc[np.flatnonzero(valid_test)]
+                    probability_metrics = _classification_eval_metrics(
+                        y_test_valid,
+                        deployment_predictions,
+                        deployment_probabilities,
+                        class_labels,
+                    )
+                    deployment_metrics = {
+                        'accuracy': round(float(accuracy_score(
+                            y_test_valid,
+                            deployment_predictions,
+                        )), 4),
+                        'precision': round(float(precision_score(
+                            y_test_valid,
+                            deployment_predictions,
+                            average=avg_method,
+                            zero_division=0,
+                        )), 4),
+                        'recall': round(float(recall_score(
+                            y_test_valid,
+                            deployment_predictions,
+                            average=avg_method,
+                            zero_division=0,
+                        )), 4),
+                        'f1': round(float(f1_score(
+                            y_test_valid,
+                            deployment_predictions,
+                            average=avg_method,
+                            zero_division=0,
+                        )), 4),
+                        **probability_metrics,
+                    }
+                    training_metadata = getattr(
+                        deployment_model,
+                        '_training_metadata',
+                        {},
+                    )
+                    metadata = {
+                        'status': 'refit',
+                        'rows': int(len(X_deployment_train)),
+                        'sequences': int(training_metadata.get('sequences', 0)),
+                        'selected_epochs': selected_epochs,
+                        'date_range': deployment_range,
+                        'accepts_raw_features': True,
+                        'test_excluded': True,
+                        'test_sequences': int(valid_test.sum()),
+                        'probability_calibration': {
+                            'status': 'not_supported',
+                            'rows': 0,
+                        },
+                        'benchmark': benchmark_metadata,
+                    }
+                    model_data['deployment_model'] = deployment_model
+                    model_data['deployment_metrics'] = deployment_metrics
+                    model_data['deployment_metadata'] = metadata
+                    summary['models'][name] = metadata
+                    print(
+                        f"    {name}: deployment refit="
+                        f"{training_metadata.get('sequences', 0)} sequences, "
+                        f"test macro_f1="
+                        f"{deployment_metrics.get('macro_f1', 0.0):.1%}"
+                    )
+                except Exception as exc:
+                    metadata = {
+                        'status': 'failed',
+                        'reason': str(exc),
+                        'test_excluded': True,
+                        'benchmark': benchmark_metadata,
+                    }
+                    model_data.pop('deployment_model', None)
+                    model_data['deployment_metadata'] = metadata
+                    summary['models'][name] = metadata
+                    print(f"    {name}: deployment refit failed ({exc})")
+                continue
+
+            if benchmark_model is None:
+                metadata = {
+                    'status': 'failed',
+                    'reason': 'benchmark estimator is missing',
+                    'test_excluded': True,
+                    'benchmark': benchmark_metadata,
+                }
+                model_data['deployment_metadata'] = metadata
+                summary['models'][name] = metadata
+                continue
+
+            try:
+                calibration_input = X_probability_cal_raw
+                if calibration_input is not None and model_data.get('scaled'):
+                    calibration_input = scaler.transform(calibration_input)
+
+                calibrators = {}
+                calibration_metadata = {'status': 'not_requested', 'rows': 0}
+                if model_data.get('calibrated_model') is not None:
+                    calibrators, calibration_metadata = _fit_frozen_probability_calibrators(
+                        benchmark_model,
+                        calibration_input,
+                        y_probability_cal,
+                        class_labels,
+                    )
+
+                deployment_estimator = clone(benchmark_model)
+                supports_sample_weight = bool(model_data.get('supports_sample_weight'))
+                if model_data.get('scaled'):
+                    deployment_estimator = Pipeline([
+                        ('scaler', StandardScaler()),
+                        ('model', deployment_estimator),
+                    ])
+                    if supports_sample_weight:
+                        deployment_estimator.fit(
+                            X_deployment_train,
+                            y_deployment_train,
+                            model__sample_weight=deployment_weights,
+                        )
+                    else:
+                        deployment_estimator.fit(X_deployment_train, y_deployment_train)
+                elif supports_sample_weight:
+                    deployment_estimator.fit(
+                        X_deployment_train,
+                        y_deployment_train,
+                        sample_weight=deployment_weights,
+                    )
+                else:
+                    deployment_estimator.fit(X_deployment_train, y_deployment_train)
+
+                deployment_model = DeploymentCalibratedClassifier(
+                    deployment_estimator,
+                    class_labels,
+                    calibrators,
+                )
+                deployment_probabilities = deployment_model.predict_proba(X_test)
+                decision_policy = model_data.get('decision_policy')
+                if decision_policy:
+                    deployment_predictions = apply_decision_policy(
+                        deployment_probabilities,
+                        decision_policy,
+                        class_labels,
+                    )
+                else:
+                    deployment_predictions = deployment_model.predict(X_test)
+
+                probability_metrics = _classification_eval_metrics(
+                    y_test,
+                    deployment_predictions,
+                    deployment_probabilities,
+                    class_labels,
+                )
+                deployment_metrics = {
+                    'accuracy': round(float(accuracy_score(y_test, deployment_predictions)), 4),
+                    'precision': round(float(precision_score(
+                        y_test,
+                        deployment_predictions,
+                        average=avg_method,
+                        zero_division=0,
+                    )), 4),
+                    'recall': round(float(recall_score(
+                        y_test,
+                        deployment_predictions,
+                        average=avg_method,
+                        zero_division=0,
+                    )), 4),
+                    'f1': round(float(f1_score(
+                        y_test,
+                        deployment_predictions,
+                        average=avg_method,
+                        zero_division=0,
+                    )), 4),
+                    **probability_metrics,
+                }
+                metadata = {
+                    'status': 'refit',
+                    'rows': int(len(X_deployment_train)),
+                    'date_range': deployment_range,
+                    'accepts_raw_features': True,
+                    'test_excluded': True,
+                    'decision_policy': 'reused_pre_test_policy' if decision_policy else 'none',
+                    'probability_calibration': calibration_metadata,
+                    'benchmark': benchmark_metadata,
+                }
+                model_data['deployment_model'] = deployment_model
+                model_data['deployment_metrics'] = deployment_metrics
+                model_data['deployment_metadata'] = metadata
+                summary['models'][name] = metadata
+                print(
+                    f"    {name}: deployment refit={len(X_deployment_train)} rows, "
+                    f"test macro_f1={deployment_metrics.get('macro_f1', 0.0):.1%}"
+                )
+            except Exception as exc:
+                metadata = {
+                    'status': 'failed',
+                    'reason': str(exc),
+                    'test_excluded': True,
+                    'benchmark': benchmark_metadata,
+                }
+                model_data.pop('deployment_model', None)
+                model_data['deployment_metadata'] = metadata
+                summary['models'][name] = metadata
+                print(f"    {name}: deployment refit failed ({exc})")
+
+        statuses = [values.get('status') for values in summary['models'].values()]
+        failed_models = [
+            name
+            for name, values in summary['models'].items()
+            if values.get('status') != 'refit'
+        ]
+        if failed_models:
+            summary['status'] = (
+                'failed'
+                if len(failed_models) == len(summary['models'])
+                else 'partial'
+            )
+            raise RuntimeError(
+                "deployment refit failed for: " + ", ".join(failed_models)
+            )
+        return summary
+
     def _train_target(
         self,
         df: pd.DataFrame,
@@ -2009,6 +2408,7 @@ class UniversalPredictor:
             sample_weights = sample_weights * temporal_weights
             print(f"Temporal weighting: decay=365d, range=[{temporal_weights.min():.3f}, {temporal_weights.max():.3f}]")
 
+        weights_by_index = pd.Series(sample_weights, index=X_train.index)
         X_model_train = X_train
         y_model_train = y_train
         sample_weights_model = sample_weights
@@ -2025,7 +2425,6 @@ class UniversalPredictor:
         policy_cutoff = None
 
         if calibration_idx:
-            weights_by_index = pd.Series(sample_weights, index=X_train.index)
             X_model_train = X_train.loc[calibration_fit_idx]
             y_model_train = y_train.loc[calibration_fit_idx]
             sample_weights_model = weights_by_index.loc[calibration_fit_idx].values
@@ -2175,6 +2574,9 @@ class UniversalPredictor:
 
             self.models[target][name] = {
                 'model': model, 'scaled': mc['scaled'], 'accuracy': acc,
+                'supports_sample_weight': bool(mc.get('sample_weight')),
+                'benchmark_train_rows': int(len(X_model_train)),
+                'benchmark_train_date_range': _date_range_summary(model_train_dates),
                 'precision': prec, 'recall': rec, 'f1': f1,
                 'brier_score': prob_metrics.get('brier_score'),
                 'log_loss': prob_metrics.get('log_loss'),
@@ -2488,6 +2890,9 @@ class UniversalPredictor:
             f1_ens = f1_score(y_test, y_ens, average=avg_method, zero_division=0)
             self.models[target]['Ensemble'] = {
                 'model': ensemble, 'scaled': False, 'accuracy': acc_ens,
+                'supports_sample_weight': True,
+                'benchmark_train_rows': int(len(X_model_train)),
+                'benchmark_train_date_range': _date_range_summary(model_train_dates),
                 'precision': prec_ens, 'recall': rec_ens, 'f1': f1_ens,
                 'brier_score': ens_prob_metrics.get('brier_score'),
                 'log_loss': ens_prob_metrics.get('log_loss'),
@@ -2557,6 +2962,9 @@ class UniversalPredictor:
             f1_stack = f1_score(y_test, y_stack, average=avg_method, zero_division=0)
             self.models[target]['Stacking'] = {
                 'model': stacking, 'scaled': False, 'accuracy': acc_stack,
+                'supports_sample_weight': True,
+                'benchmark_train_rows': int(len(X_model_train)),
+                'benchmark_train_date_range': _date_range_summary(model_train_dates),
                 'precision': prec_stack, 'recall': rec_stack, 'f1': f1_stack,
                 'brier_score': stack_prob_metrics.get('brier_score'),
                 'log_loss': stack_prob_metrics.get('log_loss'),
@@ -2641,6 +3049,9 @@ class UniversalPredictor:
 
                         self.models[target]['LSTM'] = {
                             'model': lstm, 'scaled': False, 'accuracy': acc_lstm,
+                            'supports_sample_weight': False,
+                            'benchmark_train_rows': int(len(X_model_train)),
+                            'benchmark_train_date_range': _date_range_summary(model_train_dates),
                             'precision': prec_lstm, 'recall': rec_lstm, 'f1': f1_lstm,
                             'brier_score': lstm_prob_metrics.get('brier_score'),
                             'log_loss': lstm_prob_metrics.get('log_loss'),
@@ -2673,11 +3084,32 @@ class UniversalPredictor:
                             'memory_mb': round(mem_lstm, 1),
                             'model_size_kb': round(lstm_size_kb, 1),
                         }
-                        print(f"    LSTM: acc={acc_lstm:.1%} f1={f1_lstm:.1%} "
+                        print(f"LSTM: acc={acc_lstm:.1%} f1={f1_lstm:.1%} "
                               f"[{lstm_time:.1f}s, pred={pred_time_lstm:.1f}ms, "
                               f"{lstm_size_kb:.0f}KB, {valid_te.sum()} seqs]")
             except Exception as e:
-                print(f"    LSTM: error ({e})")
+                print(f"LSTM: error ({e})")
+
+        lstm_deployment_meta = dict(meta)
+        for col in ['home_team', 'away_team']:
+            if col in df.columns:
+                lstm_deployment_meta[col] = df[col]
+
+        deployment_refit_summary = self._fit_deployment_classification_models(
+            target=target,
+            X_train=X_train,
+            y_train=y_train,
+            train_dates=train_dates,
+            sample_weights=sample_weights,
+            X_probability_cal_raw=X_probability_cal_raw,
+            y_probability_cal=y_probability_cal,
+            scaler=scaler,
+            X_test=X_test,
+            y_test=y_test,
+            class_labels=class_labels,
+            avg_method=avg_method,
+            lstm_meta=lstm_deployment_meta,
+        )
 
         test_best, selection_metric, test_best_score = _select_best_classification_model(
             target,
@@ -2727,6 +3159,7 @@ class UniversalPredictor:
             'baseline': classification_baseline,
             'decision_policy': self.decision_policies.get(target),
             'decision_policy_test_evaluation': decision_policy_test_evaluation,
+            'deployment_refit': deployment_refit_summary,
             'validation': {
                 'strategy': validation_strategy,
                 'test_cutoff': test_cutoff.isoformat() if test_cutoff is not None else None,
@@ -2755,6 +3188,7 @@ class UniversalPredictor:
                     train_dates.loc[X_policy_raw.index]
                     if train_dates is not None and X_policy_raw is not None else None
                 ),
+                'deployment_train': deployment_refit_summary.get('date_range', {}),
                 'test': _date_range_summary(dates.loc[X_test.index] if dates is not None else None),
             },
             'mi_scores_top10': mi_series.head(10).to_dict(),
@@ -3034,13 +3468,22 @@ class UniversalPredictor:
 
         class_names = config['class_names']
 
-        if model_data.get('type') == 'lstm' and hasattr(model, 'predict_single'):
+        if model_data.get('type') == 'lstm':
+            prediction_model = model_data.get('deployment_model') or model
+        else:
+            prediction_model = model
+
+        if (
+            model_data.get('type') == 'lstm'
+            and hasattr(prediction_model, 'predict_single')
+        ):
             lstm_features = dict(features)
             lstm_features['_home_team'] = features.get('home_team', features.get('_home_team', ''))
             lstm_features['_away_team'] = features.get('away_team', features.get('_away_team', ''))
             lstm_features['_date'] = features.get('date', features.get('_date', 'z'))
-            proba = model.predict_single(lstm_features)
+            proba = prediction_model.predict_single(lstm_features)
             pred = int(np.argmax(proba))
+            deployment_refit = prediction_model is not model
 
             result = {
                 'prediction': class_names.get(pred, str(pred)),
@@ -3051,17 +3494,22 @@ class UniversalPredictor:
                     for i, p in enumerate(proba)
                 },
                 'confidence': round(float(max(proba)) * 100, 1),
+                'deployment_refit': deployment_refit,
+                'model_source': (
+                    'deployment_refit'
+                    if deployment_refit
+                    else 'benchmark_legacy'
+                ),
                 'input_quality': input_quality,
             }
             return result
 
-        if model_data['scaled']:
-            X_pred = scaler.transform(X)
-        else:
-            X_pred = X
-
         cal_model = model_data.get('calibrated_model')
-        predict_model = cal_model if cal_model is not None else model
+        predict_model, X_pred, deployment_refit = _resolve_classification_prediction_model(
+            model_data,
+            X,
+            scaler,
+        )
 
         class_labels = list(class_names)
         proba_matrix = _align_predict_proba(predict_model, X_pred, class_labels)
@@ -3080,7 +3528,17 @@ class UniversalPredictor:
             'prediction': class_names.get(int(pred), str(pred)),
             'prediction_int': int(pred),
             'model': model_name,
-            'calibrated': cal_model is not None,
+            'calibrated': (
+                bool(getattr(predict_model, 'calibrators', {}))
+                if deployment_refit
+                else cal_model is not None
+            ),
+            'deployment_refit': deployment_refit,
+            'model_source': (
+                'deployment_refit'
+                if deployment_refit
+                else 'benchmark_legacy'
+            ),
             'decision_policy_applied': decision_policy is not None,
             'input_quality': input_quality,
         }
@@ -3404,6 +3862,7 @@ class UniversalPredictor:
             Path(__file__).with_name('features.py'),
             Path(__file__).with_name('dataset_builder.py'),
             Path(__file__).with_name('decision_policy.py'),
+            Path(__file__).with_name('lstm_model.py'),
             Path(__file__).with_name('temporal_validation.py'),
             Path(__file__).with_name('model_acceptance.py'),
             Path(__file__).with_name('model_promotion.py'),
@@ -3472,6 +3931,23 @@ class UniversalPredictor:
                 target: stats.get('detailed_metrics', {})
                 for target, stats in self.training_stats.items()
             },
+            'deployment_refit_by_target': {
+                target: stats.get('deployment_refit', {})
+                for target, stats in self.training_stats.items()
+                if stats.get('deployment_refit')
+            },
+            'deployment_metrics_by_target': {
+                target: {
+                    model_name: model_data.get('deployment_metrics')
+                    for model_name, model_data in target_models.items()
+                    if model_data.get('deployment_metrics')
+                }
+                for target, target_models in self.models.items()
+                if any(
+                    model_data.get('deployment_metrics')
+                    for model_data in target_models.values()
+                )
+            },
             'metric_contract': METRIC_CONTRACT,
             'reproducibility': {
                 'git_commit': git_commit,
@@ -3490,19 +3966,25 @@ class UniversalPredictor:
             raise ValueError("No trained models to save")
 
         lstm_states = {}
+        lstm_deployment_states = {}
         models_for_joblib = {}
 
         for target, target_models in self.models.items():
             models_for_joblib[target] = {}
             for name, data in target_models.items():
-                if data.get('type') == 'lstm' and hasattr(data['model'], 'get_state'):
-                    lstm_states[f"{target}/{name}"] = data['model'].get_state()
+                benchmark_model = data.get('model')
+                if data.get('type') == 'lstm' and hasattr(benchmark_model, 'get_state'):
+                    state_key = f"{target}/{name}"
+                    lstm_states[state_key] = benchmark_model.get_state()
+                    deployment_model = data.get('deployment_model')
+                    if hasattr(deployment_model, 'get_state'):
+                        lstm_deployment_states[state_key] = deployment_model.get_state()
                     placeholder = {
-                        'model': None, 'scaled': False, 'type': 'lstm',
+                        key: value
+                        for key, value in data.items()
+                        if key not in {'model', 'deployment_model', 'calibrated_model'}
                     }
-                    for k in ('accuracy', 'f1', 'brier_score', 'log_loss', 'ece', 'mae', 'rmse', 'r2', 'task'):
-                        if k in data:
-                            placeholder[k] = data[k]
+                    placeholder['model'] = None
                     models_for_joblib[target][name] = placeholder
                 else:
                     models_for_joblib[target][name] = data
@@ -3519,6 +4001,7 @@ class UniversalPredictor:
             'decision_policies': self.decision_policies,
             'training_stats': self.training_stats,
             'lstm_states': lstm_states,
+            'lstm_deployment_states': lstm_deployment_states,
             'manifest': manifest,
             'artifact_metadata': self.artifact_metadata,
         }
@@ -3580,6 +4063,15 @@ class UniversalPredictor:
                         lstm = LSTMPredictor()
                         lstm.load_state(state)
                         self.models[target][name]['model'] = lstm
+
+            lstm_deployment_states = save_data.get('lstm_deployment_states', {})
+            for key, state in lstm_deployment_states.items():
+                if '/' in key and state is not None and HAS_TORCH:
+                    target, name = key.split('/', 1)
+                    if target in self.models and name in self.models[target]:
+                        lstm = LSTMPredictor()
+                        lstm.load_state(state)
+                        self.models[target][name]['deployment_model'] = lstm
         else:
             # Legacy v1: flat models dict -> wrap as 'result' target
             self.models = {'result': save_data['models']}
@@ -3608,6 +4100,7 @@ class UniversalPredictor:
             for model_data in target_models.values():
                 _configure_estimator_for_single_thread_inference(model_data.get('model'))
                 _configure_estimator_for_single_thread_inference(model_data.get('calibrated_model'))
+                _configure_estimator_for_single_thread_inference(model_data.get('deployment_model'))
 
         targets = list(self.models.keys())
         for t in targets:

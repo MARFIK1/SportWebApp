@@ -147,6 +147,8 @@ else:
 
             self.team_history = {}
             self._fitted = False
+            self._best_epoch = None
+            self._training_metadata = {}
 
         def build_sequences(self, df, y=None, meta=None, update_history=True):
             """Build (home_seqs, away_seqs, valid_mask) from a DataFrame of features."""
@@ -197,7 +199,7 @@ else:
             return home_seqs, away_seqs, valid_mask
 
         def fit(self, df, y, meta=None):
-            print("    LSTM: building sequences...")
+            print("LSTM: building sequences...")
             home_seqs, away_seqs, valid = self.build_sequences(df, y, meta)
 
             n_valid = valid.sum()
@@ -262,8 +264,9 @@ else:
             optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=1e-4)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
-            best_val_acc = 0.0
+            best_val_acc = float('-inf')
             best_state = None
+            best_epoch = 1
             patience_counter = 0
 
             for epoch in range(self.epochs):
@@ -305,6 +308,7 @@ else:
                 if val_acc > best_val_acc + 0.001:
                     best_val_acc = val_acc
                     best_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+                    best_epoch = epoch + 1
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -323,7 +327,97 @@ else:
                 self.model.load_state_dict(best_state)
                 self.model.to(self.device)
 
+            self._best_epoch = best_epoch
+            self._training_metadata = {
+                'mode': 'benchmark',
+                'rows': int(len(df)),
+                'sequences': int(n_valid),
+                'train_sequences': int(len(train_idx)),
+                'validation_sequences': int(len(val_idx)),
+                'selected_epochs': int(best_epoch),
+            }
             self._fitted = True
+            return self
+
+        def fit_full(self, df, y, meta=None, epochs=None):
+            """Refit on all eligible pre-test sequences for deployment."""
+            print("LSTM: building deployment sequences...")
+            home_seqs, away_seqs, valid = self.build_sequences(df, y, meta)
+
+            n_valid = int(valid.sum())
+            if n_valid < 100:
+                print(f"LSTM: not enough complete deployment sequences ({n_valid}), skipping")
+                return self
+
+            home_seqs = home_seqs[valid]
+            away_seqs = away_seqs[valid]
+            y_valid = np.asarray(y)[valid]
+            if np.unique(y_valid).size < self.num_classes:
+                print("LSTM: deployment data lost at least one class, skipping")
+                return self
+
+            self._home_mean = home_seqs.mean(axis=(0, 1))
+            self._home_std = home_seqs.std(axis=(0, 1)) + 1e-8
+            self._away_mean = away_seqs.mean(axis=(0, 1))
+            self._away_std = away_seqs.std(axis=(0, 1)) + 1e-8
+
+            home_seqs = (home_seqs - self._home_mean) / self._home_std
+            away_seqs = (away_seqs - self._away_mean) / self._away_std
+
+            selected_epochs = max(1, int(epochs or self.epochs))
+            _seed_everything(SEED)
+            dataset = MatchSequenceDataset(home_seqs, away_seqs, y_valid)
+            loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+
+            self.model = MatchLSTM(
+                input_size=INPUT_SIZE, hidden_size=self.hidden_size,
+                num_layers=self.num_layers, num_classes=self.num_classes,
+                dropout=self.dropout,
+            ).to(self.device)
+
+            class_counts = np.bincount(y_valid.astype(int), minlength=self.num_classes)
+            weights = 1.0 / (class_counts + 1)
+            weights = weights / weights.sum() * self.num_classes
+            criterion = nn.CrossEntropyLoss(
+                weight=torch.FloatTensor(weights).to(self.device)
+            )
+            optimizer = torch.optim.Adam(
+                self.model.parameters(),
+                lr=self.lr,
+                weight_decay=1e-4,
+            )
+
+            avg_train_loss = 0.0
+            for _ in range(selected_epochs):
+                self.model.train()
+                total_loss = 0.0
+                for h_batch, a_batch, labels in loader:
+                    h_batch = h_batch.to(self.device)
+                    a_batch = a_batch.to(self.device)
+                    labels = labels.to(self.device)
+
+                    optimizer.zero_grad()
+                    outputs = self.model(h_batch, a_batch)
+                    loss = criterion(outputs, labels)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    total_loss += loss.item()
+                avg_train_loss = total_loss / max(1, len(loader))
+
+            self.model.eval()
+            self._best_epoch = selected_epochs
+            self._training_metadata = {
+                'mode': 'deployment_refit',
+                'rows': int(len(df)),
+                'sequences': n_valid,
+                'selected_epochs': selected_epochs,
+            }
+            self._fitted = True
+            print(
+                f"LSTM: deployment refit {selected_epochs} epochs on "
+                f"{n_valid} sequences (train_loss={avg_train_loss:.4f})"
+            )
             return self
 
         def predict(self, df_or_seqs, meta=None):
@@ -401,6 +495,9 @@ else:
                     'hidden_size': self.hidden_size,
                     'num_layers': self.num_layers,
                     'dropout': self.dropout,
+                    'lr': self.lr,
+                    'epochs': self.epochs,
+                    'batch_size': self.batch_size,
                     'input_size': INPUT_SIZE,
                 },
                 'normalization': {
@@ -410,6 +507,7 @@ else:
                     'away_std': self._away_std,
                 },
                 'team_history': self.team_history,
+                'training': self._training_metadata,
             }
 
         def load_state(self, state):
@@ -421,6 +519,9 @@ else:
             self.hidden_size = cfg['hidden_size']
             self.num_layers = cfg['num_layers']
             self.dropout = cfg['dropout']
+            self.lr = cfg.get('lr', self.lr)
+            self.epochs = cfg.get('epochs', self.epochs)
+            self.batch_size = cfg.get('batch_size', self.batch_size)
 
             self.model = MatchLSTM(
                 input_size=cfg['input_size'],
@@ -439,4 +540,6 @@ else:
             self._away_std = norm['away_std']
 
             self.team_history = state.get('team_history', {})
+            self._training_metadata = state.get('training', {})
+            self._best_epoch = self._training_metadata.get('selected_epochs')
             self._fitted = True
