@@ -15,13 +15,18 @@ import {
 import type { PredictionMatch } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
 import { deduplicateTournamentMatches } from "./tournamentGroups";
+import {
+    isInactiveMatchStatus,
+    isUpcomingMatchStatus,
+    matchStatusPriority,
+} from "@/app/util/data/matchStatus";
 
 function normalizedTeamName(name: string): string {
     return name.trim().toLocaleLowerCase("en");
 }
 
 function reportQuality(match: PredictionMatch): number {
-    return (match.status === "finished" ? 10 : 0) + (match.actual_score ? 1 : 0);
+    return matchStatusPriority(match.status) * 10 + (match.actual_score ? 1 : 0);
 }
 
 function predictionMatchesByEventId(matches: PredictionMatch[]): Map<number, PredictionMatch> {
@@ -77,6 +82,7 @@ function mergeReportMatch(
     const home = mergeReportSide(source.home_team, source.home_team_id, report.home_team, teamIds);
     const away = mergeReportSide(source.away_team, source.away_team_id, report.away_team, teamIds);
     const result = resolveSofascoreMatchResult(source, report);
+    const inactive = isInactiveMatchStatus(result.displayStatus);
 
     return {
         ...source,
@@ -85,12 +91,14 @@ function mergeReportMatch(
         away_team: away.teamName,
         away_team_id: away.teamId,
         status: result.displayStatus,
-        home_score: result.regularScore?.home ?? source.home_score,
-        away_score: result.regularScore?.away ?? source.away_score,
-        home_score_et: result.extraTimeScore?.home ?? source.home_score_et,
-        away_score_et: result.extraTimeScore?.away ?? source.away_score_et,
-        home_score_pen: result.penaltyScore?.home ?? source.home_score_pen,
-        away_score_pen: result.penaltyScore?.away ?? source.away_score_pen,
+        home_score: inactive ? null : result.regularScore?.home ?? source.home_score,
+        away_score: inactive ? null : result.regularScore?.away ?? source.away_score,
+        home_score_ht: inactive ? null : source.home_score_ht,
+        away_score_ht: inactive ? null : source.away_score_ht,
+        home_score_et: inactive ? null : result.extraTimeScore?.home ?? source.home_score_et,
+        away_score_et: inactive ? null : result.extraTimeScore?.away ?? source.away_score_et,
+        home_score_pen: inactive ? null : result.penaltyScore?.home ?? source.home_score_pen,
+        away_score_pen: inactive ? null : result.penaltyScore?.away ?? source.away_score_pen,
     };
 }
 
@@ -147,7 +155,5 @@ export function normalizeWorldCupTournamentMatches(
 }
 
 export function isUpcomingTournamentMatch(match: SofascoreMatch, today: string): boolean {
-    const status = String(match.status ?? "").toLowerCase();
-    if (status === "finished" || status === "postponed" || status === "cancelled") return false;
-    return match.date.slice(0, 10) >= today;
+    return isUpcomingMatchStatus(match.status) && match.date.slice(0, 10) >= today;
 }

@@ -11,6 +11,7 @@ import { getMatchConsensusConfidence, isHighConfidenceMatch } from "./util/predi
 import type { PredictionMatch } from "@/types/predictions";
 import { formatScorePair, resolveSofascoreMatchResult } from "./util/predictions/matchResult";
 import { isWorldCupPlaceholderTeamName, resolveWorldCupReportMatches } from "./util/predictions/worldCupSlotResolver";
+import { isFinishedMatchStatus } from "./util/data/matchStatus";
 
 export const metadata: Metadata = {
     title: "Home",
@@ -149,7 +150,7 @@ export default async function Home({ searchParams }: PageProps) {
     });
 
     const totalMatches = matches.length;
-    const finishedMatches = matches.filter((match) => match.status === "finished").length;
+    const finishedMatches = matches.filter((match) => isFinishedMatchStatus(match.status)).length;
     const pendingMatches = Math.max(0, totalMatches - finishedMatches);
     const predictedMatches = matches.filter((match) => getMatchConsensusConfidence(match) > 0);
     const averageConfidence = predictedMatches.length

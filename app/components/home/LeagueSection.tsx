@@ -6,6 +6,7 @@ import LeagueSectionToggle from "./LeagueSectionToggle";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
 import { getTeamFavoriteKey } from "@/app/util/favorites/favorites";
 import { predictionCorrectness } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
 
 interface LeagueSectionProps {
     leagueName: string;
@@ -22,7 +23,7 @@ interface LeagueSectionProps {
 }
 
 function getLeagueAccuracy(matches: PredictionMatch[]): { correct: number; total: number } | null {
-    const finished = matches.filter((m) => m.status === "finished" && m.actual_result);
+    const finished = matches.filter((m) => isFinishedMatchStatus(m.status) && m.actual_result);
     if (finished.length === 0) return null;
 
     let correct = 0;
@@ -64,8 +65,8 @@ export default function LeagueSection({
     const { t } = useLanguage();
     const accuracy = getLeagueAccuracy(matches);
 
-    const finished = sortMatchesByKickoff(matches.filter((m) => m.status === "finished"));
-    const scheduled = sortMatchesByKickoff(matches.filter((m) => m.status !== "finished"));
+    const finished = sortMatchesByKickoff(matches.filter((m) => isFinishedMatchStatus(m.status)));
+    const scheduled = sortMatchesByKickoff(matches.filter((m) => !isFinishedMatchStatus(m.status)));
 
     function renderMatchList(list: PredictionMatch[]) {
         return (

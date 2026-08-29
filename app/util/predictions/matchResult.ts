@@ -6,6 +6,12 @@ import type {
     PredictionVariant,
 } from "@/types/predictions";
 import type { SofascoreMatch } from "@/types/sofascore";
+import {
+    isFinishedMatchStatus,
+    isInactiveMatchStatus,
+    isLiveMatchStatus,
+    normalizeMatchStatus,
+} from "@/app/util/data/matchStatus";
 
 export interface ScorePair {
     home: number;
@@ -94,6 +100,22 @@ export function deriveRegularScore(score: ScorePair | null, penaltyScore: ScoreP
 }
 
 export function resolvePredictionMatchResult(match: PredictionMatch): ResolvedMatchResult {
+    const displayStatus = normalizeMatchStatus(match.status);
+    if (isInactiveMatchStatus(displayStatus)) {
+        return {
+            displayStatus,
+            regularScore: null,
+            normalTimeScore: null,
+            extraTimeScore: null,
+            penaltyScore: null,
+            wentToExtraTime: false,
+            decidedByPenalties: false,
+            predictionResult: null,
+            actualResult: null,
+            isFinished: false,
+        };
+    }
+
     const penaltyScore = parseScorePair(match.actual_penalty_score);
     const regularScore = deriveRegularScore(parseScorePair(match.actual_score), penaltyScore);
     const extraTimeScore = parseScorePair(match.actual_extra_time_score)
@@ -103,15 +125,17 @@ export function resolvePredictionMatchResult(match: PredictionMatch): ResolvedMa
     const wentToExtraTime = extraTimeScore !== null;
     const decidedByPenalties = Boolean(match.decided_by_penalties || penaltyWinner(penaltyScore));
     const scoreResult = resultFromScorePair(regularScore);
-    const predictionResult = decidedByPenalties
-        ? scoreResult ?? match.actual_result
-        : match.actual_result ?? scoreResult;
+    const predictionResult = regularScore
+        ? decidedByPenalties
+            ? scoreResult ?? match.actual_result
+            : match.actual_result ?? scoreResult
+        : null;
     const actualResult = (decidedByPenalties ? penaltyWinner(penaltyScore) : null)
         ?? predictionResult;
-    const isFinished = match.status === "finished" && predictionResult !== null;
+    const isFinished = isFinishedMatchStatus(displayStatus) && predictionResult !== null;
 
     return {
-        displayStatus: match.status,
+        displayStatus,
         regularScore,
         normalTimeScore,
         extraTimeScore,
@@ -128,27 +152,50 @@ export function resolveSofascoreMatchResult(
     match: SofascoreMatch,
     predictionMatch: PredictionMatch | null | undefined,
 ): ResolvedMatchResult {
+    const rawStatus = normalizeMatchStatus(match.status);
+    const reportStatus = predictionMatch ? normalizeMatchStatus(predictionMatch.status) : null;
+    const inactiveStatus = reportStatus && isInactiveMatchStatus(reportStatus)
+        ? reportStatus
+        : isInactiveMatchStatus(rawStatus)
+            ? rawStatus
+            : null;
+
+    if (inactiveStatus) {
+        return {
+            displayStatus: inactiveStatus,
+            regularScore: null,
+            normalTimeScore: null,
+            extraTimeScore: null,
+            penaltyScore: null,
+            wentToExtraTime: false,
+            decidedByPenalties: false,
+            predictionResult: null,
+            actualResult: null,
+            isFinished: false,
+        };
+    }
+
     const predictionState = predictionMatch ? resolvePredictionMatchResult(predictionMatch) : null;
     const rawPenaltyScore = scorePairFromValues(match.home_score_pen, match.away_score_pen);
     const penaltyScore = predictionState?.penaltyScore ?? rawPenaltyScore;
     const rawExtraTimeScore = scorePairFromValues(match.home_score_et, match.away_score_et);
     const extraTimeScore = predictionState?.extraTimeScore ?? rawExtraTimeScore;
     const rawScore = scorePairFromValues(match.home_score, match.away_score);
-    const preferredScore = match.status === "finished" && rawScore
+    const preferredScore = isFinishedMatchStatus(rawStatus) && rawScore
         ? rawScore
         : predictionState?.regularScore ?? rawScore;
     const regularScore = deriveRegularScore(preferredScore, penaltyScore);
     const normalTimeScore = predictionState?.normalTimeScore ?? subtractScorePair(regularScore, extraTimeScore);
     const wentToExtraTime = Boolean(predictionState?.wentToExtraTime || extraTimeScore);
-    const reportFinished = predictionMatch?.status === "finished" && regularScore !== null;
-    const rawFinished = match.status === "finished" && regularScore !== null;
+    const reportFinished = isFinishedMatchStatus(reportStatus) && regularScore !== null;
+    const rawFinished = isFinishedMatchStatus(rawStatus) && regularScore !== null;
     const displayStatus = reportFinished || rawFinished
         ? "finished"
-        : predictionMatch?.status === "inprogress" || match.status === "inprogress"
+        : isLiveMatchStatus(reportStatus) || isLiveMatchStatus(rawStatus)
             ? "inprogress"
-            : predictionMatch?.status === "postponed" || predictionMatch?.status === "canceled"
-                ? predictionMatch.status
-                : match.status;
+            : reportStatus && reportStatus !== "unknown" && reportStatus !== "finished"
+                ? reportStatus
+                : rawStatus;
     const decidedByPenalties = Boolean(
         predictionMatch?.decided_by_penalties ||
         penaltyWinner(penaltyScore),
@@ -240,6 +287,7 @@ function normalizePredictionVariant(variant: PredictionVariant, state: ResolvedM
 
 export function normalizePredictionMatchResult(match: PredictionMatch): PredictionMatch {
     const state = resolvePredictionMatchResult(match);
+    const inactive = isInactiveMatchStatus(state.displayStatus);
     const predictions = { ...match.predictions } as PredictionMatch["predictions"];
 
     for (const [model, prediction] of Object.entries(match.predictions)) {
@@ -259,11 +307,32 @@ export function normalizePredictionMatchResult(match: PredictionMatch): Predicti
 
     return {
         ...match,
+        status: state.displayStatus,
         actual_result: state.predictionResult,
-        actual_score: state.regularScore ? formatScorePair(state.regularScore) : match.actual_score,
-        actual_penalty_score: state.penaltyScore ? formatScorePair(state.penaltyScore) : match.actual_penalty_score ?? null,
-        actual_extra_time_score: state.extraTimeScore ? formatScorePair(state.extraTimeScore) : match.actual_extra_time_score ?? null,
-        actual_normal_time_score: state.normalTimeScore ? formatScorePair(state.normalTimeScore) : match.actual_normal_time_score ?? null,
+        actual_score: inactive
+            ? null
+            : state.regularScore
+                ? formatScorePair(state.regularScore)
+                : match.actual_score,
+        actual_penalty_score: inactive
+            ? null
+            : state.penaltyScore
+                ? formatScorePair(state.penaltyScore)
+                : match.actual_penalty_score ?? null,
+        actual_extra_time_score: inactive
+            ? null
+            : state.extraTimeScore
+                ? formatScorePair(state.extraTimeScore)
+                : match.actual_extra_time_score ?? null,
+        actual_normal_time_score: inactive
+            ? null
+            : state.normalTimeScore
+                ? formatScorePair(state.normalTimeScore)
+                : match.actual_normal_time_score ?? null,
+        home_score_et: inactive ? null : match.home_score_et,
+        away_score_et: inactive ? null : match.away_score_et,
+        actual_cards: inactive ? null : match.actual_cards,
+        actual_corners: inactive ? null : match.actual_corners,
         decided_by_penalties: state.decidedByPenalties,
         predictions,
         prediction_variants: predictionVariants,

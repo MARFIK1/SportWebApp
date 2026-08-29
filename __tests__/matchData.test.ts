@@ -181,7 +181,7 @@ describe("match page data contracts", () => {
         );
 
         expect(display).toMatchObject({
-            displayStatus: "notstarted",
+            displayStatus: "upcoming",
             displayHomeScore: null,
             displayAwayScore: null,
             isFinished: false,
@@ -352,5 +352,53 @@ describe("penalty shootout prediction contract", () => {
         expect(normalized.actual_result).toBe("DRAW");
         expect(normalized.predictions.LightGBM.correct).toBe(false);
         expect(normalized.predictions.consensus.correct).toBe(false);
+    });
+});
+
+describe("inactive match prediction contract", () => {
+    it("clears stale scores, settlements and correctness after cancellation", () => {
+        const source = predictionMatch({
+            status: "cancelled",
+            actual_result: "HOME",
+            actual_score: "2-1",
+            actual_penalty_score: "4-3",
+            actual_extra_time_score: "1-0",
+            actual_normal_time_score: "1-1",
+            home_score_et: 1,
+            away_score_et: 0,
+            actual_cards: 5,
+            actual_corners: 11,
+            decided_by_penalties: true,
+            predictions: {
+                LightGBM: { ...modelPrediction("HOME"), correct: true },
+                consensus: { ...consensus("HOME"), correct: true },
+            } as unknown as PredictionMatch["predictions"],
+        });
+
+        const state = resolvePredictionMatchResult(source);
+        const normalized = normalizePredictionMatchResult(source);
+
+        expect(state).toMatchObject({
+            displayStatus: "canceled",
+            regularScore: null,
+            predictionResult: null,
+            actualResult: null,
+            isFinished: false,
+        });
+        expect(normalized).toMatchObject({
+            status: "canceled",
+            actual_result: null,
+            actual_score: null,
+            actual_penalty_score: null,
+            actual_extra_time_score: null,
+            actual_normal_time_score: null,
+            home_score_et: null,
+            away_score_et: null,
+            actual_cards: null,
+            actual_corners: null,
+            decided_by_penalties: false,
+        });
+        expect(normalized.predictions.LightGBM.correct).toBeNull();
+        expect(normalized.predictions.consensus.correct).toBeNull();
     });
 });

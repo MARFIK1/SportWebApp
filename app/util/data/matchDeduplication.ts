@@ -1,4 +1,9 @@
 import type { SofascoreMatch } from "@/types/sofascore";
+import {
+    isInactiveMatchStatus,
+    matchStatusPriority,
+    normalizeMatchStatus,
+} from "@/app/util/data/matchStatus";
 
 const COMPLETENESS_FIELDS: Array<keyof SofascoreMatch> = [
     "home_score",
@@ -15,26 +20,37 @@ const COMPLETENESS_FIELDS: Array<keyof SofascoreMatch> = [
     "away_ballpossession",
 ];
 
-function statusRank(status: string): number {
-    const normalized = String(status ?? "").trim().toLowerCase();
-    if (normalized === "finished") return 4;
-    if (normalized === "inprogress") return 3;
-    if (normalized === "postponed" || normalized === "cancelled") return 2;
-    return 1;
-}
-
 function matchQuality(match: SofascoreMatch): number {
     const completeFields = COMPLETENESS_FIELDS.reduce(
         (total, field) => total + (match[field] == null ? 0 : 1),
         0,
     );
-    return statusRank(match.status) * 100 + completeFields;
+    return matchStatusPriority(match.status) * 100 + completeFields;
+}
+
+function normalizeMatch(match: SofascoreMatch): SofascoreMatch {
+    const status = normalizeMatchStatus(match.status);
+    if (!isInactiveMatchStatus(status)) return { ...match, status };
+
+    return {
+        ...match,
+        status,
+        home_score: null,
+        away_score: null,
+        home_score_ht: null,
+        away_score_ht: null,
+        home_score_et: null,
+        away_score_et: null,
+        home_score_pen: null,
+        away_score_pen: null,
+    };
 }
 
 export function deduplicateMatchesByEventId(matches: SofascoreMatch[]): SofascoreMatch[] {
     const selected = new Map<number, { match: SofascoreMatch; quality: number }>();
 
-    for (const match of matches) {
+    for (const sourceMatch of matches) {
+        const match = normalizeMatch(sourceMatch);
         const quality = matchQuality(match);
         const current = selected.get(match.event_id);
         if (!current || quality >= current.quality) {

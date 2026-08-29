@@ -1,4 +1,5 @@
 import { parseScorePair, resultFromScorePair } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
 import type {
     ConsensusPrediction,
     MarketPrediction,
@@ -105,7 +106,7 @@ export function buildMarketSettlements({
     consensus,
     marketPredictions,
 }: MarketSettlementInput): MarketSettlement[] {
-    const isFinished = match.status === "finished";
+    const isFinished = isFinishedMatchStatus(match.status);
     const score = isFinished ? parseScorePair(match.actual_score) : null;
     const totalGoals = score ? score.home + score.away : null;
     const actualResult: MatchResult | null = isFinished

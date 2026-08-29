@@ -1,6 +1,7 @@
 import { computeWorldCupBracketSlots, detectWorldCupFormat } from "@/app/match/[id]/bracketConfig";
 import { loadAllSeasons, loadUpcomingMatches } from "@/app/util/data/dataService";
 import { loadPredictionReport } from "@/app/util/data/predictionService";
+import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
 import type { Competition } from "@/app/util/league/leagueRegistry";
 import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 import type { PredictionMatch } from "@/types/predictions";
@@ -81,7 +82,7 @@ function finishedReportMatchesByEventId(dates: string[], selectedDate: string): 
         const historicalReport = loadPredictionReport(date);
         for (const match of historicalReport?.matches ?? []) {
             if (typeof match.event_id !== "number") continue;
-            if (match.status !== "finished" || !match.actual_result) continue;
+            if (!isFinishedMatchStatus(match.status) || !match.actual_result) continue;
             byEventId.set(match.event_id, match);
         }
     }

@@ -42,6 +42,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from sofascore.features import MLFeatureGenerator
 from sofascore.incidents import normalize_match_incidents
 from sofascore.lineups import normalize_match_lineups
+from sofascore.utils import is_finished_match, is_inactive_match, match_status
 from sofascore.season_archive import sync_scheduled_matches_to_season_archives
 from sofascore.model_release import (
     PREDICTION_CONTRACT_SCHEMA_VERSION,
@@ -854,17 +855,17 @@ def _refresh_score_details_if_needed(scraper, match: Dict, api_match: Dict, api_
 
 
 def _source_status_rank(match: Dict) -> int:
+    status = match_status(match)
+    if is_inactive_match(match):
+        return 60
     if match.get('result') is not None or _raw_has_score(match):
         return 50
-    status = match.get('status')
     if status == 'finished':
         return 45
     if status == 'inprogress':
         return 40
-    if status in ('upcoming', 'notstarted'):
+    if status == 'upcoming':
         return 30
-    if status in ('postponed', 'canceled'):
-        return 20
     return 10
 
 
@@ -927,7 +928,13 @@ def _dedupe_source_matches(matches: List[Dict]) -> List[Dict]:
 
 def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
     if existing is None:
-        return candidate
+        winner = dict(candidate)
+        winner['status'] = match_status(winner)
+        if is_inactive_match(winner):
+            for key in ('result', 'score', 'penalty_score', 'total_cards', 'total_corners'):
+                winner[key] = None
+            winner['decided_by_penalties'] = False
+        return winner
 
     existing_rank = (_source_status_rank(existing), existing.get('_source_rank', 0))
     candidate_rank = (_source_status_rank(candidate), candidate.get('_source_rank', 0))
@@ -952,6 +959,11 @@ def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
         winner['match_lineups_collected'] = True
     if not winner.get('match_lineups_checked') and loser.get('match_lineups_checked'):
         winner['match_lineups_checked'] = True
+    winner['status'] = match_status(winner)
+    if is_inactive_match(winner):
+        for key in ('result', 'score', 'penalty_score', 'total_cards', 'total_corners'):
+            winner[key] = None
+        winner['decided_by_penalties'] = False
     return winner
 
 
@@ -960,7 +972,7 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
                              source_season: Optional[str] = None) -> Dict:
     result = _result_from_match_scores(match)
     score = _score_text_from_match(match)
-    raw_status = match.get('status', '')
+    raw_status = match_status(match)
 
     if raw_status in ('postponed', 'canceled'):
         result = None
@@ -995,16 +1007,16 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
         'away_team_id': match.get('away_team_id'),
         'result': result,
         'score': score if result is not None else None,
-        'penalty_score': _penalty_score_text_from_match(match),
-        'decided_by_penalties': _match_decided_by_penalties(match),
+        'penalty_score': _penalty_score_text_from_match(match) if result is not None else None,
+        'decided_by_penalties': _match_decided_by_penalties(match) if result is not None else False,
         'status': status,
         'date': match.get('date', ''),
         'start_time': match.get('time', ''),
         'start_timestamp': match.get('start_timestamp', match.get('startTimestamp')),
         'season': _usable_source_season(match.get('season')) or _usable_source_season(source_season),
         'features': None,
-        'total_cards': total_cards,
-        'total_corners': total_corners,
+        'total_cards': None if is_inactive_match(match) else total_cards,
+        'total_corners': None if is_inactive_match(match) else total_corners,
         'referee_name': match.get('referee_name'),
         'match_events': match.get('match_events') if isinstance(match.get('match_events'), list) else [],
         'match_events_collected': bool(match.get('match_events_collected')),
@@ -1101,11 +1113,11 @@ def find_matches_for_date(target_date: str) -> list:
                         if _is_stale_rescheduled_entry(match, canonical_events):
                             continue
 
-                        raw_status = match.get('status', '')
+                        raw_status = match_status(match)
                         home_score = match.get('home_score')
                         away_score = match.get('away_score')
 
-                        if raw_status == 'notstarted' and home_score is None and away_score is None:
+                        if raw_status == 'upcoming' and home_score is None and away_score is None:
                             continue
 
                         match_data = _raw_match_to_match_data(
@@ -1146,11 +1158,25 @@ def find_matches_for_date(target_date: str) -> list:
                                 seen_matches[match_key]['season'] = match['season']
                             seen_matches[match_key]['features'] = match
                         else:
+                            source_status = match_status(match)
                             home_goals = match.get('label_home_goals')
                             away_goals = match.get('label_away_goals')
                             score = f"{home_goals}-{away_goals}" if home_goals is not None and away_goals is not None else None
                             result = match.get('label_result')
-                            status = 'finished' if result else ('upcoming' if match.get('status') in ('upcoming', 'notstarted', 'postponed', 'canceled') else 'finished')
+                            if is_inactive_match(match):
+                                result = None
+                                score = None
+                                status = source_status
+                            elif source_status == 'inprogress':
+                                result = None
+                                score = None
+                                status = 'inprogress'
+                            elif result:
+                                status = 'finished'
+                            elif source_status == 'unknown':
+                                status = 'unknown'
+                            else:
+                                status = 'upcoming'
                             
                             candidate = {
                                 'event_id': event_id,
@@ -3931,6 +3957,26 @@ def _mark_match_prediction_correctness(match_entry: Dict, actual_result: str):
             variant_consensus['correct'] = (variant_consensus['prediction'] == actual_result)
 
 
+def _clear_match_prediction_correctness(match_entry: Dict) -> None:
+    for pred_data in match_entry.get('predictions', {}).values():
+        if isinstance(pred_data, dict):
+            pred_data.pop('correct', None)
+
+    consensus = match_entry.get('consensus', {})
+    if isinstance(consensus, dict):
+        consensus.pop('correct', None)
+
+    for variant_data in match_entry.get('prediction_variants', {}).values():
+        if not isinstance(variant_data, dict):
+            continue
+        for pred_data in variant_data.get('predictions', {}).values():
+            if isinstance(pred_data, dict):
+                pred_data.pop('correct', None)
+        variant_consensus = variant_data.get('consensus', {})
+        if isinstance(variant_consensus, dict):
+            variant_consensus.pop('correct', None)
+
+
 def _source_match_has_base_odds(match: Dict) -> bool:
     return all(_is_positive_odds(match.get(ok)) for ok in BASE_ODDS_KEYS)
 
@@ -4620,16 +4666,20 @@ def print_predictions(results: list, target_date: str):
             preds = r['predictions']
             cons = preds.get('consensus', {})
             
-            match_status = m.get('status', '')
-            if m['result']:
+            status_value = match_status(m)
+            if status_value == 'finished':
                 status = "FINISHED"
-            elif match_status == 'postponed':
+            elif status_value == 'postponed':
                 status = "POSTPONED"
-            elif match_status == 'inprogress':
+            elif status_value == 'canceled':
+                status = "CANCELED"
+            elif status_value == 'inprogress':
                 status = "IN PROGRESS"
+            elif status_value == 'unknown':
+                status = "NO DATA"
             else:
                 status = "UPCOMING"
-            actual = f" (Score: {m['result']})" if m['result'] else ""
+            actual = f" (Score: {m['result']})" if status_value == 'finished' and m.get('result') else ""
             
             safe_print(f"\n  * {m['home']} vs {m['away']}{actual}")
             print(f"     Status: {status}")
@@ -5005,6 +5055,16 @@ def map_result_to_label(result: str) -> str:
 
 
 def _actual_fields_from_match(m: Dict) -> Dict:
+    if not is_finished_match(m):
+        return {
+            'actual_result': None,
+            'actual_score': None,
+            'actual_penalty_score': None,
+            'decided_by_penalties': False,
+            'actual_cards': None,
+            'actual_corners': None,
+        }
+
     actual_result = map_result_to_label(m['result']) if m.get('result') else None
     return {
         'actual_result': actual_result,
@@ -5016,17 +5076,31 @@ def _actual_fields_from_match(m: Dict) -> Dict:
     }
 
 
-def _apply_actual_fields_to_report_match(match_entry: Dict, m: Dict) -> Optional[str]:
-    fields = _actual_fields_from_match(m)
+_REPORT_SETTLEMENT_FIELDS = (
+    'actual_result',
+    'actual_score',
+    'actual_penalty_score',
+    'actual_normal_time_score',
+    'actual_extra_time_score',
+    'actual_cards',
+    'actual_corners',
+)
 
-    if fields.get('actual_score') is not None:
-        match_entry['actual_score'] = fields['actual_score']
-    if fields.get('actual_penalty_score') is not None or match_entry.get('actual_penalty_score') is not None:
-        match_entry['actual_penalty_score'] = fields.get('actual_penalty_score')
-    match_entry['decided_by_penalties'] = fields.get('decided_by_penalties', False)
-    for key in ('actual_cards', 'actual_corners'):
-        if fields.get(key) is not None:
-            match_entry[key] = fields[key]
+
+def _clear_match_settlement(match_entry: Dict) -> bool:
+    changed = False
+    for key in _REPORT_SETTLEMENT_FIELDS:
+        if match_entry.get(key) is not None:
+            changed = True
+        match_entry[key] = None
+    if match_entry.get('decided_by_penalties'):
+        changed = True
+    match_entry['decided_by_penalties'] = False
+    _clear_match_prediction_correctness(match_entry)
+    return changed
+
+
+def _apply_actual_fields_to_report_match(match_entry: Dict, m: Dict) -> Optional[str]:
     if isinstance(m.get('match_events'), list) and m.get('match_events'):
         match_entry['match_events'] = copy.deepcopy(m['match_events'])
         match_entry['match_events_collected'] = bool(m.get('match_events_collected'))
@@ -5036,6 +5110,16 @@ def _apply_actual_fields_to_report_match(match_entry: Dict, m: Dict) -> Optional
     if m.get('match_lineups_checked'):
         match_entry['match_lineups_checked'] = True
 
+    if not is_finished_match(m):
+        _clear_match_settlement(match_entry)
+        return None
+
+    fields = _actual_fields_from_match(m)
+    match_entry['actual_score'] = fields.get('actual_score')
+    match_entry['actual_penalty_score'] = fields.get('actual_penalty_score')
+    match_entry['decided_by_penalties'] = fields.get('decided_by_penalties', False)
+    for key in ('actual_cards', 'actual_corners'):
+        match_entry[key] = fields.get(key)
 
     actual_result = fields.get('actual_result')
     if actual_result:
@@ -5096,11 +5180,12 @@ def _find_by_keys(index: Dict[str, Dict], keys: List[str]) -> Optional[Dict]:
 
 
 def _sync_nonfinal_report_status(match_entry: Dict, source_match: Dict) -> bool:
-    source_status = str(source_match.get('status') or '').strip().lower()
+    source_status = match_status(source_match)
     if source_status not in {'postponed', 'canceled', 'inprogress'}:
         return False
-    if match_entry.get('status') == source_status:
-        return False
+    changed = _clear_match_settlement(match_entry)
+    if match_status(match_entry) == source_status:
+        return changed
     match_entry['status'] = source_status
     return True
 
@@ -5111,12 +5196,10 @@ def _drop_stale_rescheduled_report_entries(report: Dict, target_date: str) -> in
     removed = 0
 
     for match in report.get('matches', []):
-        if match.get('status') == 'finished':
-            kept.append(match)
-            continue
-
         key = _source_event_key(match.get('event_id'))
         canonical = canonical_events.get(key) if key else None
+        if canonical:
+            _sync_nonfinal_report_status(match, canonical)
         canonical_date = (canonical.get('date') or '')[:10] if canonical else ''
         if canonical_date and canonical_date != target_date:
             removed += 1
@@ -5182,7 +5265,7 @@ def calculate_model_accuracy(matches: List[Dict]) -> Dict:
         total = 0
         
         for m in matches:
-            if m.get('status') != 'finished' or not m.get('actual_result'):
+            if not is_finished_match(m) or not m.get('actual_result'):
                 continue
             
             preds = m.get('predictions', {})
@@ -5213,12 +5296,14 @@ def calculate_model_accuracy(matches: List[Dict]) -> Dict:
 
 def _refresh_report_summary_counts(report: Dict):
     matches = report.get('matches', [])
+    for match in matches:
+        match['status'] = match_status(match)
     total = len(matches)
-    finished = sum(1 for m in matches if m.get('status') == 'finished')
-    postponed = sum(1 for m in matches if m.get('status') in ('postponed', 'canceled'))
-    inprogress = sum(1 for m in matches if m.get('status') == 'inprogress')
-    unknown = sum(1 for m in matches if m.get('status') == 'unknown')
-    pending = total - finished - postponed - inprogress - unknown
+    finished = sum(1 for m in matches if is_finished_match(m))
+    postponed = sum(1 for m in matches if is_inactive_match(m))
+    inprogress = sum(1 for m in matches if match_status(m) == 'inprogress')
+    unknown = sum(1 for m in matches if match_status(m) == 'unknown')
+    pending = sum(1 for m in matches if match_status(m) == 'upcoming')
 
     summary = report.setdefault('summary', {})
     summary['total_matches'] = total
@@ -5240,16 +5325,18 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
         comp_type = m.get('comp_type', 'league')
         match_id = _report_match_id(m)
         
+        source_status = match_status(m)
         actual_fields = _actual_fields_from_match(m)
         actual_result = actual_fields['actual_result']
-        is_finished = actual_result is not None
-        
-        if is_finished:
-            match_status = 'finished'
-        elif m.get('status') in ['postponed', 'inprogress']:
-            match_status = m.get('status')
+
+        if is_inactive_match(m) or source_status == 'inprogress':
+            report_status = source_status
+        elif actual_result:
+            report_status = 'finished'
+        elif source_status == 'unknown':
+            report_status = 'unknown'
         else:
-            match_status = 'upcoming'
+            report_status = 'upcoming'
 
         match_entry = {
             'id': match_id,
@@ -5261,9 +5348,7 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
             'away_team': m['away'],
             'start_time': m.get('start_time', ''),
             'start_timestamp': m.get('start_timestamp'),
-            'status': match_status,
-            'actual_cards': m.get('total_cards'),
-            'actual_corners': m.get('total_corners'),
+            'status': report_status,
             'referee_name': m.get('referee_name'),
             'odds_availability': _source_match_odds_availability(m),
             'match_events': copy.deepcopy(m.get('match_events') or []),
@@ -5285,36 +5370,19 @@ def create_report_from_results(results: List[Dict], target_date: str) -> Dict:
     today = datetime.now().strftime('%Y-%m-%d')
     if target_date < today:
         for m_entry in matches:
-            if m_entry['status'] == 'upcoming':
+            if match_status(m_entry) == 'upcoming':
                 m_entry['status'] = 'unknown'
                 print(f"[WARN] Match {m_entry['home_team']} vs {m_entry['away_team']} - no result after match date, marked as 'unknown'")
-
-    total = len(matches)
-    finished = sum(1 for m in matches if m['status'] == 'finished')
-    postponed = sum(1 for m in matches if m['status'] == 'postponed')
-    inprogress = sum(1 for m in matches if m['status'] == 'inprogress')
-    unknown = sum(1 for m in matches if m['status'] == 'unknown')
-    pending = total - finished - postponed - unknown
-
-    all_finished = (pending == 0 and inprogress == 0 and total > 0)
-    model_accuracy = calculate_model_accuracy(matches)
     
     report = {
         'date': target_date,
-        'status': 'finished' if all_finished else 'unfinished',
+        'status': 'unfinished',
         'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'summary': {
-            'total_matches': total,
-            'finished_matches': finished,
-            'postponed_matches': postponed,
-            'inprogress_matches': inprogress,
-            'unknown_matches': unknown,
-            'pending_matches': pending,
-            'model_accuracy': model_accuracy
-        },
+        'summary': {},
         'matches': matches
     }
+    _refresh_report_summary_counts(report)
     _refresh_report_model_release(report)
 
     return report
@@ -5357,25 +5425,21 @@ def update_report_with_results(
         if source_season:
             match['season'] = source_season
         
-        if m.get('total_cards') is not None:
-            match['actual_cards'] = m['total_cards']
-        if m.get('total_corners') is not None:
-            match['actual_corners'] = m['total_corners']
         if m.get('referee_name'):
             match['referee_name'] = m['referee_name']
         match['odds_availability'] = _source_match_odds_availability(m)
 
-        new_status = m.get('status', 'upcoming')
+        new_status = match_status(m)
 
         actual_result = _apply_actual_fields_to_report_match(match, m)
-        if actual_result:
+        if is_inactive_match(m):
+            match['status'] = new_status
+        elif new_status == 'inprogress':
+            match['status'] = 'inprogress'
+        elif actual_result:
             match['status'] = 'finished'
-            if m.get('total_cards') is not None:
-                match['actual_cards'] = m['total_cards']
-            if m.get('total_corners') is not None:
-                match['actual_corners'] = m['total_corners']
             _mark_match_prediction_correctness(match, actual_result)
-        elif new_status in ['postponed', 'inprogress'] and match['status'] == 'upcoming':
+        elif new_status in {'upcoming', 'unknown'}:
             match['status'] = new_status
 
         if prediction_locked:
@@ -5402,9 +5466,17 @@ def update_report_with_results(
         if _find_by_keys(existing_by_key, keys):
             continue
         
+        source_status = match_status(m)
         actual_fields = _actual_fields_from_match(m)
         actual_result = actual_fields['actual_result']
-        is_finished = actual_result is not None
+        if is_inactive_match(m) or source_status == 'inprogress':
+            report_status = source_status
+        elif actual_result:
+            report_status = 'finished'
+        elif source_status == 'unknown':
+            report_status = 'unknown'
+        else:
+            report_status = 'upcoming'
         comp_type = m.get('comp_type', 'league')
         match_id = _report_match_id(m)
         
@@ -5418,9 +5490,7 @@ def update_report_with_results(
             'away_team': m['away'],
             'start_time': m.get('start_time', ''),
             'start_timestamp': m.get('start_timestamp'),
-            'status': m.get('status', 'finished' if is_finished else 'upcoming'),
-            'actual_cards': m.get('total_cards'),
-            'actual_corners': m.get('total_corners'),
+            'status': report_status,
             'referee_name': m.get('referee_name'),
             'odds_availability': _source_match_odds_availability(m),
             'match_events': copy.deepcopy(m.get('match_events') or []),
@@ -5440,27 +5510,11 @@ def update_report_with_results(
     today = datetime.now().strftime('%Y-%m-%d')
     if report_date < today:
         for match in report['matches']:
-            if match['status'] == 'upcoming':
+            if match_status(match) == 'upcoming':
                 match['status'] = 'unknown'
                 print(f"[WARN] Match {match['home_team']} vs {match['away_team']} - no result after match date, marked as 'unknown'")
-
-    total = len(report['matches'])
-    finished = sum(1 for m in report['matches'] if m['status'] == 'finished')
-    postponed = sum(1 for m in report['matches'] if m['status'] == 'postponed')
-    inprogress = sum(1 for m in report['matches'] if m['status'] == 'inprogress')
-    unknown = sum(1 for m in report['matches'] if m['status'] == 'unknown')
-    pending = total - finished - postponed - unknown
-    all_finished = (pending == 0 and inprogress == 0 and total > 0)
-
-    report['status'] = 'finished' if all_finished else 'unfinished'
     report['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    report['summary']['total_matches'] = total
-    report['summary']['finished_matches'] = finished
-    report['summary']['postponed_matches'] = postponed
-    report['summary']['inprogress_matches'] = inprogress
-    report['summary']['unknown_matches'] = unknown
-    report['summary']['pending_matches'] = pending
-    report['summary']['model_accuracy'] = calculate_model_accuracy(report['matches'])
+    _refresh_report_summary_counts(report)
     _refresh_report_model_release(report)
     
     return report
@@ -5559,16 +5613,20 @@ def print_report_summary(report: Dict, analysis_map: Dict = None):
         print(f"{'='*80}")
         
         for m in matches:
-            if m['status'] == 'finished':
+            status_value = match_status(m)
+            if status_value == 'finished':
                 actual = f" (Score: {m['actual_result']})"
                 status = "FINISHED"
-            elif m['status'] == 'postponed':
+            elif status_value == 'postponed':
                 actual = ""
                 status = "POSTPONED"
-            elif m['status'] == 'inprogress':
+            elif status_value == 'canceled':
+                actual = ""
+                status = "CANCELED"
+            elif status_value == 'inprogress':
                 actual = ""
                 status = "IN PROGRESS"
-            elif m['status'] == 'unknown':
+            elif status_value == 'unknown':
                 actual = ""
                 status = "NO DATA"
             else:
@@ -5586,7 +5644,7 @@ def print_report_summary(report: Dict, analysis_map: Dict = None):
             pred_str = cons.get('prediction', '?')
             pct = cons.get('agreement_pct', 0)
 
-            if m['status'] == 'finished' and cons.get('correct') is not None:
+            if status_value == 'finished' and cons.get('correct') is not None:
                 icon = "HIT" if cons['correct'] else "MISS"
                 pred_str = f"{pred_str} [{icon}]"
 

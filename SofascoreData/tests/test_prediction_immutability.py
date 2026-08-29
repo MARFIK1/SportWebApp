@@ -238,6 +238,56 @@ class UpdateReportImmutabilityTests(unittest.TestCase):
             'model-new',
         )
 
+    def test_canceled_match_clears_stale_result_and_prediction_correctness(self):
+        entry = _report_entry(
+            5,
+            'finished',
+            900,
+            actual_result='HOME',
+            actual_score='2-1',
+            actual_penalty_score='4-3',
+            actual_normal_time_score='1-1',
+            actual_extra_time_score='1-0',
+            actual_cards=5,
+            actual_corners=9,
+            decided_by_penalties=True,
+        )
+        entry['predictions']['model_x']['correct'] = True
+        entry['consensus']['correct'] = True
+        entry['prediction_variants']['without_odds']['predictions']['model_x']['correct'] = True
+        entry['prediction_variants']['without_odds']['consensus']['correct'] = True
+        report = _report([entry])
+
+        source = _source_match(5, 'cancelled', 900)
+        _run_update(report, [_fresh_result(source)])
+
+        self.assertEqual(entry['status'], 'canceled')
+        for key in (
+            'actual_result',
+            'actual_score',
+            'actual_penalty_score',
+            'actual_normal_time_score',
+            'actual_extra_time_score',
+            'actual_cards',
+            'actual_corners',
+        ):
+            self.assertIsNone(entry[key])
+        self.assertFalse(entry['decided_by_penalties'])
+        self.assertNotIn('correct', entry['predictions']['model_x'])
+        self.assertNotIn('correct', entry['consensus'])
+        self.assertNotIn(
+            'correct',
+            entry['prediction_variants']['without_odds']['predictions']['model_x'],
+        )
+        self.assertNotIn(
+            'correct',
+            entry['prediction_variants']['without_odds']['consensus'],
+        )
+        self.assertEqual(report['summary']['finished_matches'], 0)
+        self.assertEqual(report['summary']['postponed_matches'], 1)
+        self.assertEqual(report['summary']['pending_matches'], 0)
+        self.assertEqual(report['status'], 'finished')
+
 
 BASE_ODDS = {'odds_home_win': 2.1, 'odds_draw': 3.3, 'odds_away_win': 3.6}
 

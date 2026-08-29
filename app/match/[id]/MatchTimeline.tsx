@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { ArrowsRightLeftIcon, VideoCameraIcon } from "@heroicons/react/24/outline";
 import { useLanguage } from "@/app/components/common/LanguageProvider";
+import { isLiveMatchStatus } from "@/app/util/data/matchStatus";
 import type { MatchEventSnapshot, MatchTimelineEvent } from "@/types/matchEvents";
 
 interface MatchTimelineProps {
@@ -282,7 +283,7 @@ export default function MatchTimeline({ snapshot, homeTeam, awayTeam }: MatchTim
 
     if (eventGroups.length === 0) return null;
 
-    const isLive = snapshot.status === "inprogress";
+    const isLive = isLiveMatchStatus(snapshot.status);
 
     return (
         <section className="mb-6 overflow-hidden rounded-2xl border border-gray-800 bg-white dark:bg-gray-900/50">

@@ -10,15 +10,44 @@ import random
 from datetime import datetime
 
 
-def match_status(match):
-    status = match.get('status')
+_MATCH_STATUS_ALIASES = {
+    'cancelled': 'canceled',
+    'notstarted': 'upcoming',
+    'scheduled': 'upcoming',
+}
+
+_MATCH_SCORE_FIELDS = (
+    'home_score',
+    'away_score',
+    'home_score_ht',
+    'away_score_ht',
+    'home_score_et',
+    'away_score_et',
+    'home_score_pen',
+    'away_score_pen',
+    'result',
+    'score',
+    'penalty_score',
+)
+
+
+def normalize_match_status(status):
     if isinstance(status, dict):
         status = status.get('type')
-    return str(status or '').strip().lower()
+    normalized = str(status or '').strip().lower()
+    return _MATCH_STATUS_ALIASES.get(normalized, normalized or 'unknown')
+
+
+def match_status(match):
+    return normalize_match_status(match.get('status'))
 
 
 def is_finished_match(match):
     return match_status(match) == 'finished'
+
+
+def is_inactive_match(match):
+    return match_status(match) in ('postponed', 'canceled')
 
 
 def _first_score_value(score_obj, keys):
@@ -37,7 +66,7 @@ def _first_score_value(score_obj, keys):
 
 
 def extract_match_data(match):
-    status_type = match.get('status', {}).get('type', '')
+    status_type = normalize_match_status(match.get('status'))
     season = match.get('season')
     if isinstance(season, dict):
         season = season.get('name')
@@ -51,7 +80,7 @@ def extract_match_data(match):
     data = {
         'event_id': match.get('id'),
         'start_timestamp': match.get('startTimestamp'),
-        'status': status_type if status_type else None,
+        'status': status_type,
         'date': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%Y-%m-%d'),
         'time': datetime.fromtimestamp(match.get('startTimestamp', 0)).strftime('%H:%M'),
         'round': match.get('roundInfo', {}).get('round'),
@@ -308,15 +337,25 @@ def _has_score(m):
 
 def _status_rank(m):
     status = match_status(m)
+    if status in ('postponed', 'canceled'):
+        return 60
     if status == 'finished':
         return 50
     if status == 'inprogress':
         return 40
-    if status in ('upcoming', 'notstarted'):
+    if status == 'upcoming':
         return 30
-    if status in ('postponed', 'canceled'):
-        return 20
     return 10
+
+
+def _finalize_canonical_match(match):
+    finalized = dict(match)
+    finalized['status'] = match_status(finalized)
+    if is_inactive_match(finalized):
+        for key in _MATCH_SCORE_FIELDS:
+            finalized[key] = None
+        finalized['decided_by_penalties'] = False
+    return finalized
 
 
 def _merge_missing_fields(target, source, include_primary_scores=True):
@@ -347,39 +386,39 @@ def _merge_missing_fields(target, source, include_primary_scores=True):
 
 def _prefer_canonical_match(existing, candidate):
     if existing is None:
-        return candidate
+        return _finalize_canonical_match(candidate)
 
     existing_rank = _status_rank(existing)
     candidate_rank = _status_rank(candidate)
 
     if candidate_rank > existing_rank:
-        return _merge_missing_fields(
+        return _finalize_canonical_match(_merge_missing_fields(
             candidate,
             existing,
             include_primary_scores=not (
                 is_finished_match(candidate) and not is_finished_match(existing)
             ),
-        )
+        ))
     if candidate_rank < existing_rank:
-        return _merge_missing_fields(
+        return _finalize_canonical_match(_merge_missing_fields(
             existing,
             candidate,
             include_primary_scores=not (
                 is_finished_match(existing) and not is_finished_match(candidate)
             ),
-        )
+        ))
 
     existing_has_score = _has_score(existing)
     candidate_has_score = _has_score(candidate)
 
     if existing_has_score and not candidate_has_score:
-        return _merge_missing_fields(existing, candidate)
+        return _finalize_canonical_match(_merge_missing_fields(existing, candidate))
     if candidate_has_score and not existing_has_score:
-        return _merge_missing_fields(candidate, existing)
+        return _finalize_canonical_match(_merge_missing_fields(candidate, existing))
 
     # Same status quality: the newly scraped API row is fresher, but keep any
     # historical stats/odds that are absent from it.
-    return _merge_missing_fields(candidate, existing)
+    return _finalize_canonical_match(_merge_missing_fields(candidate, existing))
 
 
 def merge_and_sort_matches(existing_matches, new_matches):

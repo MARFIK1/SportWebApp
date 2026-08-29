@@ -8,6 +8,7 @@ import { playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus, isUpcomingMatchStatus } from "@/app/util/data/matchStatus";
 
 interface PageProps {
     params: Promise<{ id: string }>;
@@ -61,11 +62,11 @@ export default async function TeamPage({ params }: PageProps) {
     );
 
     const finished = uniqueMatches
-        .filter((m) => m.status === "finished")
+        .filter((m) => isFinishedMatchStatus(m.status))
         .sort((a, b) => b.date.localeCompare(a.date));
 
     const upcoming = uniqueMatches
-        .filter((m) => m.status !== "finished" && m.status !== "postponed")
+        .filter((m) => isUpcomingMatchStatus(m.status))
         .sort((a, b) => a.date.localeCompare(b.date));
 
     const recentMatches = finished.slice(0, 10);

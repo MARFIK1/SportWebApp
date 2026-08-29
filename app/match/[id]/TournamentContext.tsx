@@ -3,6 +3,7 @@ import { ChevronRightIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { computeStandings, type StandingRow } from "@/app/util/data/dataService";
+import { isInactiveMatchStatus, normalizeMatchStatus } from "@/app/util/data/matchStatus";
 import { resolveSofascoreMatchResult, type ResolvedMatchResult } from "@/app/util/predictions/matchResult";
 import {
     buildWorldCupSlotCandidatePairs,
@@ -230,7 +231,7 @@ function compactResultLabel(state: ResolvedMatchResult, t: (key: string) => stri
 
 function formatMatchScore(match: SofascoreMatch, state: ResolvedMatchResult, t: (key: string) => string): string {
     if (state.isFinished) return compactResultLabel(state, t) ?? "vs";
-    if (match.status === "postponed") return t("postponed");
+    if (isInactiveMatchStatus(match.status)) return t(normalizeMatchStatus(match.status) === "canceled" ? "canceled" : "postponed");
     return "vs";
 }
 

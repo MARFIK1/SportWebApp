@@ -291,6 +291,7 @@ class PredictionInputContractTests(unittest.TestCase):
 
     def test_actual_fields_include_settlement_statistics(self):
         fields = _actual_fields_from_match({
+            "status": "finished",
             "result": "H",
             "score": "2-1",
             "total_cards": 5,

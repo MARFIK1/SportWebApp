@@ -5,6 +5,7 @@ import { readJson } from "./fileUtils";
 import { Competition } from "../league/leagueRegistry";
 import { SofascoreMatch, SofascoreMatchFile, SofascoreUpcomingMatch, SofascoreUpcomingFile } from "@/types/sofascore";
 import { deriveRegularScore, resultFromScorePair, scorePairFromValues } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus, isInactiveMatchStatus } from "./matchStatus";
 
 function repoPath(...segments: string[]): string {
     return path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments);
@@ -217,7 +218,7 @@ function isTableMembershipCandidate(match: SofascoreMatch): boolean {
     return (
         Number.isFinite(match.home_team_id) &&
         Number.isFinite(match.away_team_id) &&
-        match.status !== "postponed"
+        !isInactiveMatchStatus(match.status)
     );
 }
 
@@ -289,7 +290,7 @@ export function computeStandings(matches: SofascoreMatch[]): StandingRow[] {
             ),
         }))
         .filter((item): item is { match: SofascoreMatch; score: { home: number; away: number } } =>
-            item.match.status === "finished" && item.score !== null
+            isFinishedMatchStatus(item.match.status) && item.score !== null
         )
         .sort((a, b) => a.match.date.localeCompare(b.match.date));
 

@@ -9,6 +9,7 @@ import { playerImageUrl } from "@/app/util/urls";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
 
 interface PageProps {
     params: Promise<{ id: string }>;
@@ -101,7 +102,7 @@ export default async function PlayerPage({ params }: PageProps) {
         for (const comp of competitions) {
             const matches = loadAllSeasons(comp);
             const teamMatches = matches.filter((m) =>
-                (m.home_team_id === teamId || m.away_team_id === teamId) && m.status === "finished"
+                (m.home_team_id === teamId || m.away_team_id === teamId) && isFinishedMatchStatus(m.status)
             );
             recentMatches.push(...teamMatches);
         }

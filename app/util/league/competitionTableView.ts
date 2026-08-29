@@ -1,6 +1,7 @@
 import type { CompetitionType } from "@/app/util/league/leagueRegistry";
 import { detectTournamentGroups, type TournamentGroup } from "@/app/util/tournament/tournamentGroups";
 import type { SofascoreMatch } from "@/types/sofascore";
+import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
 
 export interface CompetitionTableSections {
     groups: TournamentGroup[] | null;
@@ -16,7 +17,7 @@ export function resolveCompetitionTableSections(
     }
 
     const groupMatches = matches.filter(
-        (match) => match.round != null && match.round <= 10 && match.status === "finished",
+        (match) => match.round != null && match.round <= 10 && isFinishedMatchStatus(match.status),
     );
     const groupEventIds = new Set(groupMatches.map((match) => match.event_id));
     const detectedGroups = detectTournamentGroups(groupMatches, groupEventIds);

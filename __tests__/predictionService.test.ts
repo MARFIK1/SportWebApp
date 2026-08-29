@@ -39,7 +39,7 @@ interface TestPredictionReport {
         start_time: string;
         status: string;
         actual_result: MatchResult;
-        actual_score: null;
+        actual_score: string;
         actual_cards: null;
         actual_corners: null;
         event_id?: number | null;
@@ -51,6 +51,12 @@ interface TestPredictionReport {
 }
 
 function report(date: string, accuracy: Record<string, ModelAccuracy>, matches: Array<{ actual: MatchResult; predictions: Record<string, string> }> = []): TestPredictionReport {
+    const scoreForResult = (result: MatchResult): string => {
+        if (result === "HOME") return "1-0";
+        if (result === "AWAY") return "0-1";
+        return "0-0";
+    };
+
     return {
         date,
         status: "ok",
@@ -74,7 +80,7 @@ function report(date: string, accuracy: Record<string, ModelAccuracy>, matches: 
             start_time: "",
             status: "finished",
             actual_result: m.actual,
-            actual_score: null,
+            actual_score: scoreForResult(m.actual),
             actual_cards: null,
             actual_corners: null,
             referee_name: null,

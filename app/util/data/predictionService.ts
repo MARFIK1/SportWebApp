@@ -9,6 +9,7 @@ import type { MatchEventSnapshot, MatchEventsArtifact, MatchTimelineEvent } from
 import type { MatchLineupPlayer, MatchLineupSide, MatchLineupSnapshot, MatchLineupsArtifact, MatchPlayerOfTheMatch, MatchTopRatedPlayer } from "@/types/matchLineups";
 import { getConsensusConfidence } from "@/app/util/predictions/confidence";
 import { normalizePredictionMatchResult, predictionCorrectness } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus } from "./matchStatus";
 
 type RawPredictionMatch = Omit<PredictionMatch, "predictions"> & {
     predictions: Record<string, ModelPrediction>;
@@ -1068,7 +1069,7 @@ function computeModelAccuracy(matches: PredictionMatch[]): Record<string, ModelA
 }
 
 export function computeConsensusAccuracy(matches: PredictionMatch[]): ModelAccuracy {
-    const finished = matches.filter((m) => m.status === "finished" && m.actual_result);
+    const finished = matches.filter((m) => isFinishedMatchStatus(m.status) && m.actual_result);
     let correct = 0;
 
     for (const match of finished) {

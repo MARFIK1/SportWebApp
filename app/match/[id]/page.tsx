@@ -11,6 +11,7 @@ import TeamLogo from "@/app/components/common/TeamLogo";
 import MatchStatistics from "./MatchStatistics";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import { normalizeReportDate } from "@/app/util/data/dateUtils";
+import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
 import MatchPredictionVariantProvider from "./MatchPredictionVariantProvider";
 import MatchPredictionSidebar from "./MatchPredictionSidebar";
 import MatchHistoryTabs, { type MatchHistoryItem } from "./MatchHistoryTabs";
@@ -591,19 +592,19 @@ export default async function Match({ params, searchParams }: PageProps) {
     for (const comp of competitions) {
         const allMatches = comp.dataPath === competition.dataPath ? competitionMatches : loadAllSeasons(comp);
         competitionFinishedMatches.push(...allMatches.filter((m) =>
-            m.status === "finished" &&
+            isFinishedMatchStatus(m.status) &&
             m.event_id !== eventId &&
             m.date < match.date
         ));
     }
     const teamHistoryMatches = [
         ...loadTeamHistory(match.home_team_id).filter((m) =>
-            m.status === "finished" &&
+            isFinishedMatchStatus(m.status) &&
             m.event_id !== eventId &&
             m.date < match.date
         ),
         ...loadTeamHistory(match.away_team_id).filter((m) =>
-            m.status === "finished" &&
+            isFinishedMatchStatus(m.status) &&
             m.event_id !== eventId &&
             m.date < match.date
         ),

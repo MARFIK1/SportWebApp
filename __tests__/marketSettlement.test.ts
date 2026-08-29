@@ -121,4 +121,18 @@ describe("market settlement", () => {
         });
         expect(result.find(({ key }) => key === "over_1_5")?.actualValue).toBe(2);
     });
+
+    it("does not settle stale values after a match is postponed", () => {
+        const source = match({ status: "postponed" });
+        const result = buildMarketSettlements({
+            match: source,
+            consensus: source.predictions.consensus,
+            marketPredictions: source.market_predictions,
+        });
+
+        expect(result.every(({ status }) => status === "unavailable")).toBe(true);
+        expect(result.every(({ actualOutcome, actualValue }) => (
+            actualOutcome === null && actualValue === null
+        ))).toBe(true);
+    });
 });

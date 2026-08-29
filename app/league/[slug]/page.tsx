@@ -20,6 +20,7 @@ import type { SofascoreMatch } from "@/types/sofascore";
 import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
 
 interface PageProps {
     params: Promise<{ slug: string }>;
@@ -90,7 +91,7 @@ function StandingsTable({ standings, t }: { standings: StandingRow[]; t: (key: s
 
 function MatchScoreBadge({ match, t }: { match: SofascoreMatch; t: (key: string) => string }) {
     const result = resolveSofascoreMatchResult(match, null);
-    if (match.status !== "finished" || !result.regularScore) {
+    if (!isFinishedMatchStatus(match.status) || !result.regularScore) {
         return <span className="text-sm text-gray-400 dark:text-gray-500 px-2">vs</span>;
     }
 
@@ -154,7 +155,7 @@ export default async function LeaguePage({ params, searchParams }: PageProps) {
     }
 
     const finished = displayMatches
-        .filter((m) => m.status === "finished")
+        .filter((m) => isFinishedMatchStatus(m.status))
         .sort((a, b) => b.date.localeCompare(a.date))
         .slice(0, 10);
 

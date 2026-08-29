@@ -11,6 +11,7 @@ import {
 } from "@/app/util/favorites/favorites";
 import { useStoredFavorites } from "@/app/util/favorites/useStoredFavorites";
 import { predictionCorrectness, resolvePredictionMatchResult } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus, isUpcomingMatchStatus } from "@/app/util/data/matchStatus";
 
 interface PredictionsClientProps {
     matches: PredictionMatch[];
@@ -58,8 +59,8 @@ function matchMatchesFavorites(
 function matchPassesViewFilter(match: PredictionMatch, filter: MatchViewFilter): boolean {
     if (filter === "drawWatch") return Boolean(getDrawWatchSignalFromPredictions(match.predictions));
     if (filter === "highConfidence") return isHighConfidenceMatch(match);
-    if (filter === "finished") return match.status === "finished";
-    if (filter === "upcoming") return match.status !== "finished";
+    if (filter === "finished") return isFinishedMatchStatus(match.status);
+    if (filter === "upcoming") return isUpcomingMatchStatus(match.status);
     return true;
 }
 

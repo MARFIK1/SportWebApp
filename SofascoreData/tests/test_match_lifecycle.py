@@ -3,7 +3,11 @@ import os
 import tempfile
 import unittest
 
-from sofascore.utils import get_existing_event_ids, merge_and_sort_matches
+from sofascore.utils import (
+    get_existing_event_ids,
+    merge_and_sort_matches,
+    normalize_match_status,
+)
 
 
 def match(status, home_score=None, away_score=None, **extra):
@@ -21,6 +25,12 @@ def match(status, home_score=None, away_score=None, **extra):
 
 
 class MatchLifecycleTests(unittest.TestCase):
+    def test_status_aliases_use_one_canonical_vocabulary(self):
+        self.assertEqual(normalize_match_status("cancelled"), "canceled")
+        self.assertEqual(normalize_match_status("notstarted"), "upcoming")
+        self.assertEqual(normalize_match_status("scheduled"), "upcoming")
+        self.assertEqual(normalize_match_status(None), "unknown")
+
     def test_live_snapshot_cannot_replace_finished_result(self):
         finished = match("finished", 2, 1)
         live = match("inprogress", 3, 1)
@@ -48,6 +58,31 @@ class MatchLifecycleTests(unittest.TestCase):
         self.assertEqual(merged[0]["status"], "finished")
         self.assertIsNone(merged[0]["home_score"])
         self.assertIsNone(merged[0]["away_score"])
+
+    def test_inactive_snapshot_replaces_stale_final_and_clears_settlement(self):
+        stale_final = match(
+            "finished",
+            2,
+            1,
+            result="H",
+            score="2-1",
+            penalty_score="4-3",
+            decided_by_penalties=True,
+        )
+        canceled = match("cancelled")
+
+        merged = merge_and_sort_matches([stale_final], [canceled])
+
+        self.assertEqual(merged[0]["status"], "canceled")
+        for key in (
+            "home_score",
+            "away_score",
+            "result",
+            "score",
+            "penalty_score",
+        ):
+            self.assertIsNone(merged[0][key])
+        self.assertFalse(merged[0]["decided_by_penalties"])
 
     def test_scored_live_event_is_not_cached_as_finished(self):
         with tempfile.TemporaryDirectory() as raw_dir:

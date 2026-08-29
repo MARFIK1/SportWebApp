@@ -1,6 +1,7 @@
 import Link from "next/link";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
+import { isFinishedMatchStatus, isInactiveMatchStatus, normalizeMatchStatus } from "@/app/util/data/matchStatus";
 import type { StandingRow } from "@/app/util/data/dataService";
 import type { SofascoreMatch } from "@/types/sofascore";
 import {
@@ -86,14 +87,14 @@ function teamRoleLabel(teamId: number, regularTeamIds: Set<number> | undefined, 
 
 function formatPlayoffResult(match: SofascoreMatch, t: (key: string) => string): string {
     const result = resolveSofascoreMatchResult(match, null);
-    if (match.status === "finished" && result.regularScore) {
+    if (isFinishedMatchStatus(match.status) && result.regularScore) {
         const base = `${result.regularScore.home} - ${result.regularScore.away}`;
         if (result.penaltyScore) {
             return `${base} (${t("penalties")} ${result.penaltyScore.home} - ${result.penaltyScore.away})`;
         }
         return base;
     }
-    if (match.status === "postponed") return t("postponed");
+    if (isInactiveMatchStatus(match.status)) return t(normalizeMatchStatus(match.status) === "canceled" ? "canceled" : "postponed");
     return t("not_started");
 }
 
