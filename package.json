@@ -10,10 +10,13 @@
   "scripts": {
     "dev": "next dev --webpack",
     "dev:stable-data": "node scripts/dev-stable-data.mjs",
+    "dev:thesis-demo": "node scripts/dev-thesis-demo.mjs",
     "dev:turbo": "next dev --turbo",
+    "snapshot:thesis-demo": "node scripts/create-thesis-demo.mjs",
     "prebuild": "node scripts/prebuild.mjs",
     "build": "next build",
     "build:prod": "node scripts/build-prod.mjs",
+    "build:thesis-demo": "node scripts/build-thesis-demo.mjs",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",

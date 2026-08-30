@@ -8,9 +8,11 @@ export default defineConfig([
     globalIgnores([
         ".data/**",
         ".data-build/**",
+        ".data-thesis-demo-*/**",
         ".data.stale-*/**",
         ".next/**",
         "next-build/**",
+        "next-build-thesis-demo/**",
         ".venv/**",
         ".vercel/**",
         ".vercel-deploy-staging/**",

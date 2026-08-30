@@ -126,11 +126,11 @@ python predict_today.py 2026-05-15 --update
 python predict_today.py 2026-05-15 --scrape
 ```
 
-`train_models.py` writes Backend v2 experiments under `data/models/experiments/` and never overwrites production artifacts. By default, every candidate is evaluated against the active production artifact on the same temporal holdout. A missing active artifact is a hard failure; `--skip-production-benchmark` exists only for an initial bootstrap. With `--save-models`, candidate files remain inside the experiment directory. Run the dataset audit after feature regeneration; training is blocked when cached feature files contain legacy or mixed builder versions.
+`train_models.py` writes Backend v2 experiments under `data/models/experiments/` and never overwrites production artifacts. By default, every candidate is evaluated against the active production artifact on the same temporal holdout. A missing active artifact is a hard failure; `--skip-production-benchmark` exists only for an initial bootstrap. With `--save-models`, candidate files remain inside the experiment directory. Run the dataset audit after feature regeneration; training is blocked when cached feature files contain legacy or mixed builder versions. Regenerated feature metadata also contains source fingerprints covering generator code, raw history, lineups and player statistics, so sidecar backfills invalidate stale caches. `--data-cutoff` applies an inclusive upper bound before any target cohort is selected, while `--test-start-date` fixes the untouched temporal evaluation window instead of deriving it from `--test-size`. `--model-scope thesis_core` restricts a reproducible thesis benchmark to Logistic Regression, Random Forest, MLP, XGBoost and LightGBM without changing the default production scope.
 
 Classification artifacts keep evaluation and deployment training separate. Benchmark estimators use only the rows before the temporal calibration and decision-policy partitions, and all reported selection metrics come from the untouched test holdout. After model selection and policy fitting are fixed, deployable estimators are refitted on every pre-test row; the LSTM uses the epoch count selected on its earlier chronological validation split. Artifacts store both layers, record their date ranges and row or sequence counts, and inference prefers the deployment refit while retaining a fallback for legacy artifacts. Test rows are never included in either refit, and candidate training fails closed if any deployable estimator cannot be produced.
 
-Backend v2.2 adds the optional `without_odds_lineup` and `with_odds_lineup` variants. They use the `lineup_available` and `lineup_with_odds` feature sets and train only on matches with confirmed, complete starting elevens for both teams. `--variant lineup_both --paired-common-sample` evaluates both lineup variants on the same chronological sample with complete positive opening 1X2 odds. Post-match ratings and awards are excluded from these pre-match features to prevent leakage.
+Backend v2.2 adds the optional `without_odds_lineup` and `with_odds_lineup` variants. They use the `lineup_available` and `lineup_with_odds` feature sets and train only on matches with confirmed, complete starting elevens for both teams. `--paired-common-sample` evaluates variants on identical target-specific cohorts: 1X2 uses 1X2 odds, BTTS uses BTTS odds, and Over 2.5 uses the matching totals market. Targets without matching captured odds remain odds-free instead of borrowing unrelated 1X2 prices. Post-match ratings and awards are excluded from these pre-match features to prevent leakage.
 
 Lineup-aware artifacts are promoted per target. A target is copied into the optional artifact only when it passes the production acceptance gate on the same holdout; rejected targets continue using the active baseline model. At inference time, the lineup artifact is used only when the current match has confirmed complete lineups. Otherwise prediction falls back to the regular `without_odds` or `with_odds` artifact.
 
@@ -216,6 +216,8 @@ git config diff.ipynb.textconv ".venv/Scripts/python.exe -m nbstripout -t"
 | `ADMIN_ACCESS_TOKEN` | alternative admin secret |
 | `SOFASCORE_DATA_DIR` | overrides frontend data directory |
 | `SOFASCORE_REPORTS_DIR` | overrides frontend reports directory |
+| `APP_DATA_CUTOFF` | inclusive hard limit for match and report dates visible in the app |
+| `APP_REFERENCE_DATE` | freezes the app's implicit current date; defaults to `APP_DATA_CUTOFF` |
 | `SOFASCORE_MAX_API_REQUESTS` | caps Sofascore API requests in one Python process |
 | `SOFASCORE_FINISHED_DETAIL_REQUESTS_PER_EVENT` | limits missing detail requests per finished event and run; defaults to `1` |
 | `PREBUILD_REPORT_DAYS_PAST` | controls past report window copied into `.data` |
@@ -223,6 +225,12 @@ git config diff.ipynb.textconv ".venv/Scripts/python.exe -m nbstripout -t"
 | `PREBUILD_COPY_ALL_REPORTS` | copies all reports when set to `1` |
 | `PREBUILD_CLEAN` | cleans `.data` before prebuild when set to `1` |
 | `PREBUILD_LOGS_DIR` | copies automation logs into the production snapshot |
+| `PREBUILD_SOURCE_DATA_DIR` | overrides the raw source used by prebuild |
+| `PREBUILD_SOURCE_REPORTS_DIR` | overrides the report source used by prebuild |
+| `PREBUILD_SOURCE_MODELS_DIR` | overrides model metadata used by prebuild |
+| `PREBUILD_DATA_CUTOFF` | removes matches and report directories after an inclusive date |
+| `PREBUILD_REPORT_START` | excludes report directories before a date |
+| `PREBUILD_INCLUDE_OPERATIONAL_STATUS` | includes current automation status unless set to `0` or `false` |
 | `MODEL_DIAGNOSTICS_DIR` | custom CSV output directory for model diagnostics |
 
 In local development, `/admin` is available without a password only when no admin secret is configured. In production, set `ADMIN_PASSWORD` or `ADMIN_ACCESS_TOKEN`.
@@ -239,6 +247,43 @@ The frontend does not deploy the full raw dataset. `scripts/prebuild.mjs` prepar
 - automation status/log summaries for `/admin`
 
 The app reads `.data/` first and falls back to `SofascoreData/data/` during local development.
+
+## Frozen Thesis Demo
+
+The thesis demo uses the current frontend and all normal match, league, team,
+player, lineup, timeline and analysis views, but freezes both the available
+sports data and the app clock on `2026-07-19`. It is separate from the live
+daily checkout, so later refreshes cannot change the recorded demo.
+
+Create the checksummed demo data package from the sibling
+`SportWebApp-daily-stable` checkout:
+
+```powershell
+npm run snapshot:thesis-demo
+```
+
+The default output is
+`../SportWebApp-thesis-demo-2026-07-19/app-data`. Override source, model or
+output paths when needed:
+
+```powershell
+npm run snapshot:thesis-demo -- `
+  --source-root "..\SportWebApp-daily-stable\SofascoreData" `
+  --models-dir "..\SportWebApp-thesis-2026-07-19\model-runs\accepted" `
+  --output-dir "..\SportWebApp-thesis-demo-2026-07-19\app-data"
+```
+
+Run or build the frozen application:
+
+```powershell
+npm run dev:thesis-demo -- --port 3001
+npm run build:thesis-demo
+```
+
+The export fails if it finds a match, report or accuracy row after the cutoff.
+It records source and app Git commits in `.frozen-snapshot.json` and writes
+`checksums.sha256`. Regenerate the final package from a clean worktree after
+the thesis models are accepted, passing their directory with `--models-dir`.
 
 ## Build And Deploy
 
