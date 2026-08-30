@@ -15,6 +15,7 @@ import {
 import type { MatchResult, ModelAccuracy, PredictionMatch, PredictionReport } from "@/types/predictions";
 
 const mockedFs = fs as jest.Mocked<typeof fs>;
+const originalDataCutoff = process.env.APP_DATA_CUTOFF;
 
 interface TestPredictionReport {
     date: string;
@@ -110,6 +111,20 @@ beforeEach(() => {
         isDirectory: () => true,
         mtimeMs: 1,
     } as fs.Stats);
+});
+
+afterEach(() => {
+    if (originalDataCutoff === undefined) delete process.env.APP_DATA_CUTOFF;
+    else process.env.APP_DATA_CUTOFF = originalDataCutoff;
+});
+
+describe("frozen report boundary", () => {
+    it("does not read a report after the configured cutoff", () => {
+        process.env.APP_DATA_CUTOFF = "2026-07-19";
+
+        expect(loadPredictionReport("2099-01-01")).toBeNull();
+        expect(mockedFs.readFileSync).not.toHaveBeenCalled();
+    });
 });
 
 describe("aggregateAccuracy", () => {

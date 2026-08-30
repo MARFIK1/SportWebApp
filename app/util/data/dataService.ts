@@ -6,6 +6,7 @@ import { Competition } from "../league/leagueRegistry";
 import { SofascoreMatch, SofascoreMatchFile, SofascoreUpcomingMatch, SofascoreUpcomingFile } from "@/types/sofascore";
 import { deriveRegularScore, resultFromScorePair, scorePairFromValues } from "@/app/util/predictions/matchResult";
 import { isFinishedMatchStatus, isInactiveMatchStatus } from "./matchStatus";
+import { isWithinAppDataCutoff } from "./dateUtils";
 
 function repoPath(...segments: string[]): string {
     return path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments);
@@ -67,13 +68,13 @@ function getMatchIndex(competitions: Competition[]): Map<number, { match: Sofasc
 export const loadAllSeasons = cache((competition: Competition): SofascoreMatch[] => {
     const filePath = path.join(DATA_DIR, competition.dataPath, "raw", "all_seasons.json");
     const data = readJson<SofascoreMatchFile>(filePath);
-    return data?.matches ?? [];
+    return (data?.matches ?? []).filter((match) => isWithinAppDataCutoff(match.date));
 });
 
 export function loadSeasonMatches(competition: Competition, seasonFile: string): SofascoreMatch[] {
     const filePath = path.join(DATA_DIR, competition.dataPath, "raw", seasonFile);
     const data = readJson<SofascoreMatchFile>(filePath);
-    return data?.matches ?? [];
+    return (data?.matches ?? []).filter((match) => isWithinAppDataCutoff(match.date));
 }
 
 export function loadUpcomingMatches(competition: Competition): SofascoreUpcomingMatch[] {
@@ -86,7 +87,7 @@ export function loadUpcomingMatches(competition: Competition): SofascoreUpcoming
     for (const file of files) {
         const data = readJson<SofascoreUpcomingFile>(path.join(upcomingDir, file));
         if (data?.matches) {
-            allUpcoming.push(...data.matches);
+            allUpcoming.push(...data.matches.filter((match) => isWithinAppDataCutoff(match.date)));
         }
     }
 
@@ -135,7 +136,8 @@ export const loadTeamHistory = cache((teamId: number): SofascoreMatch[] => {
     const data = readJson<{ matches?: Partial<SofascoreMatch>[] }>(filePath);
     return (data?.matches ?? [])
         .map(normalizeTeamHistoryMatch)
-        .filter((match): match is SofascoreMatch => match !== null);
+        .filter((match): match is SofascoreMatch => match !== null)
+        .filter((match) => isWithinAppDataCutoff(match.date));
 });
 
 function getTeamHistoryIndex(): Map<number, SofascoreMatch> {
@@ -397,7 +399,7 @@ export function loadLineups(competition: Competition, seasonFile: string): Match
     const fileName = "lineups_" + seasonFile;
     const filePath = path.join(lineupsDir, fileName);
     const data = readJson<{ metadata: Record<string, unknown>; lineups: MatchLineup[] }>(filePath);
-    return data?.lineups ?? [];
+    return (data?.lineups ?? []).filter((lineup) => isWithinAppDataCutoff(lineup.date));
 }
 
 export function findMatchInCompetitions(eventId: number, competitions: Competition[]): { match: SofascoreMatch; competition: Competition } | null {

@@ -6,7 +6,7 @@ import { buildMatchLookupMaps, findMatchInCompetitions } from "./util/data/dataS
 import DatePicker from "./components/home/DatePicker";
 import HomeLeagueList from "./components/home/HomeLeagueList";
 import { getServerT } from "./util/i18n/getLocale";
-import { expandYmdDateRange, normalizeReportDate, todayYmd } from "./util/data/dateUtils";
+import { expandYmdDateRange, isWithinAppDataCutoff, normalizeReportDate, todayYmd } from "./util/data/dateUtils";
 import { getMatchConsensusConfidence, isHighConfidenceMatch } from "./util/predictions/confidence";
 import type { PredictionMatch } from "@/types/predictions";
 import { formatScorePair, resolveSofascoreMatchResult } from "./util/predictions/matchResult";
@@ -67,7 +67,7 @@ function getDatePickerDates(dates: string[], todayIso: string): string[] {
     const expandedDates = new Set(reportDates);
     addDailyDateWindow(expandedDates, todayIso);
 
-    return expandYmdDateRange(Array.from(expandedDates));
+    return expandYmdDateRange(Array.from(expandedDates)).filter(isWithinAppDataCutoff);
 }
 
 function hasConfirmedTeams(match: PredictionMatch): boolean {

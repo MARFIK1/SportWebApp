@@ -19,6 +19,31 @@ export function normalizeReportDate(value: unknown): string | null {
     return isValidYmdDate(value) ? value : null;
 }
 
+function configuredYmd(name: "APP_DATA_CUTOFF" | "APP_REFERENCE_DATE"): string | null {
+    const value = process.env[name]?.trim();
+    if (!value) return null;
+    if (!isValidYmdDate(value)) {
+        throw new Error(`${name} must use a valid YYYY-MM-DD date, got: ${value}`);
+    }
+    return value;
+}
+
+export function appDataCutoffYmd(): string | null {
+    return configuredYmd("APP_DATA_CUTOFF");
+}
+
+export function appReferenceDateYmd(): string | null {
+    return configuredYmd("APP_REFERENCE_DATE") ?? appDataCutoffYmd();
+}
+
+export function isWithinAppDataCutoff(value: unknown): boolean {
+    const cutoff = appDataCutoffYmd();
+    if (!cutoff) return true;
+    if (typeof value !== "string") return false;
+    const date = value.slice(0, 10);
+    return isValidYmdDate(date) && date <= cutoff;
+}
+
 export function expandYmdDateRange(dates: string[]): string[] {
     const sortedDates = Array.from(new Set(dates.filter(isValidYmdDate))).sort((a, b) => a.localeCompare(b));
     if (sortedDates.length < 2) return sortedDates;
@@ -34,14 +59,20 @@ export function expandYmdDateRange(dates: string[]): string[] {
     return expandedDates;
 }
 
-export function todayYmd(date: Date = new Date(), timeZone = DEFAULT_REPORT_TIME_ZONE): string {
+export function todayYmd(date?: Date, timeZone = DEFAULT_REPORT_TIME_ZONE): string {
+    if (date === undefined) {
+        const referenceDate = appReferenceDateYmd();
+        if (referenceDate) return referenceDate;
+    }
+
+    const effectiveDate = date ?? new Date();
     try {
         const parts = new Intl.DateTimeFormat("en-CA", {
             timeZone,
             year: "numeric",
             month: "2-digit",
             day: "2-digit",
-        }).formatToParts(date);
+        }).formatToParts(effectiveDate);
 
         const year = parts.find((part) => part.type === "year")?.value;
         const month = parts.find((part) => part.type === "month")?.value;
@@ -52,5 +83,5 @@ export function todayYmd(date: Date = new Date(), timeZone = DEFAULT_REPORT_TIME
         
     }
 
-    return date.toISOString().slice(0, 10);
+    return effectiveDate.toISOString().slice(0, 10);
 }

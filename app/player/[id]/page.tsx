@@ -10,6 +10,7 @@ import { getServerT } from "@/app/util/i18n/getLocale";
 import TeamLogo from "@/app/components/common/TeamLogo";
 import { resolveSofascoreMatchResult } from "@/app/util/predictions/matchResult";
 import { isFinishedMatchStatus } from "@/app/util/data/matchStatus";
+import { todayYmd } from "@/app/util/data/dateUtils";
 
 interface PageProps {
     params: Promise<{ id: string }>;
@@ -22,9 +23,9 @@ const POSITION_KEYS: Record<string, string> = {
     F: "forward",
 };
 
-function calculateAge(dateOfBirth: string): number {
+function calculateAge(dateOfBirth: string, referenceDate: string): number {
     const birth = new Date(dateOfBirth);
-    const now = new Date();
+    const now = new Date(`${referenceDate}T12:00:00Z`);
     let age = now.getFullYear() - birth.getFullYear();
     const monthDiff = now.getMonth() - birth.getMonth();
     if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) {
@@ -84,7 +85,7 @@ export default async function PlayerPage({ params }: PageProps) {
     }
 
     const { player, competitions } = result;
-    const age = player.date_of_birth ? calculateAge(player.date_of_birth) : null;
+    const age = player.date_of_birth ? calculateAge(player.date_of_birth, todayYmd()) : null;
 
     let teamId: number | null = buildTeamIdMap(competitions).get(player.team) ?? null;
 

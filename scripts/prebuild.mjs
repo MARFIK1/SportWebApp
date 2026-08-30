@@ -1,14 +1,31 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import snapshotHelpers from "./lib/prebuild-snapshot.cjs";
+
+const {
+    filterMatchesByCutoff,
+    isYmdWithinBounds,
+    matchYmd,
+    parseOptionalYmd,
+    resolveReportBounds,
+    sanitizeExportMetadata,
+    seasonEndYear,
+    selectLatestPlayerCandidate,
+} = snapshotHelpers;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
-const SOURCE_DATA = path.join(ROOT, "SofascoreData", "data");
-const SOURCE_REPORTS = process.env.SOFASCORE_REPORTS_DIR
-    ? path.resolve(process.env.SOFASCORE_REPORTS_DIR)
+const SOURCE_DATA = process.env.PREBUILD_SOURCE_DATA_DIR
+    ? path.resolve(ROOT, process.env.PREBUILD_SOURCE_DATA_DIR)
+    : path.join(ROOT, "SofascoreData", "data");
+const SOURCE_REPORTS_ENV = process.env.PREBUILD_SOURCE_REPORTS_DIR || process.env.SOFASCORE_REPORTS_DIR;
+const SOURCE_REPORTS = SOURCE_REPORTS_ENV
+    ? path.resolve(ROOT, SOURCE_REPORTS_ENV)
     : path.join(ROOT, "SofascoreData", "reports");
-const SOURCE_MODELS = path.join(ROOT, "SofascoreData", "data", "models");
+const SOURCE_MODELS = process.env.PREBUILD_SOURCE_MODELS_DIR
+    ? path.resolve(ROOT, process.env.PREBUILD_SOURCE_MODELS_DIR)
+    : path.join(SOURCE_DATA, "models");
 const SOURCE_LOGS = process.env.PREBUILD_LOGS_DIR
     ? path.resolve(ROOT, process.env.PREBUILD_LOGS_DIR)
     : path.join(ROOT, "logs");
@@ -18,6 +35,12 @@ const OUT_DIR = process.env.PREBUILD_OUT_DIR
 const MANIFEST_PATH = path.join(OUT_DIR, ".prebuild-manifest.json");
 const LOG_TIME_ZONE = process.env.REPORT_TIME_ZONE || "Europe/Warsaw";
 const ACTIVE_LOG_GRACE_MS = Number(process.env.ADMIN_ACTIVE_LOG_GRACE_MINUTES || 360) * 60 * 1000;
+const DATA_CUTOFF = parseOptionalYmd(process.env.PREBUILD_DATA_CUTOFF, "PREBUILD_DATA_CUTOFF");
+const REPORT_START = parseOptionalYmd(process.env.PREBUILD_REPORT_START, "PREBUILD_REPORT_START");
+
+if (DATA_CUTOFF && REPORT_START && REPORT_START > DATA_CUTOFF) {
+    throw new Error("PREBUILD_REPORT_START must not be later than PREBUILD_DATA_CUTOFF");
+}
 
 const MATCH_FIELDS = new Set([
     "event_id", "home_team", "away_team", "home_team_id", "away_team_id",
@@ -65,6 +88,35 @@ const COMPETITIONS = [
     "international/world_cup", "international/world_cup_qualifiers_europe",
     "international/euro", "international/euro_qualifiers", "international/nations_league",
 ];
+
+function snapshotMetadata(metadata, sourceMatches, retainedMatches, removed) {
+    if (!DATA_CUTOFF) return metadata || {};
+    return {
+        ...(metadata || {}),
+        snapshot_data_cutoff: DATA_CUTOFF,
+        snapshot_source_matches: sourceMatches,
+        snapshot_retained_matches: retainedMatches,
+        snapshot_removed_after_cutoff: removed,
+    };
+}
+
+function selectPlayerFile(playersDir, fileNames, retainedMatches) {
+    if (fileNames.length === 0) return null;
+    if (!DATA_CUTOFF) return fileNames[fileNames.length - 1];
+    if (retainedMatches.length === 0) return null;
+
+    const latestMatchYear = Math.max(...retainedMatches.map((match) => Number(matchYmd(match, playersDir).slice(0, 4))));
+    const candidates = [];
+    for (const fileName of fileNames) {
+        const filePath = path.join(playersDir, fileName);
+        const payload = readJsonIfExists(filePath);
+        const year = seasonEndYear(payload?.metadata?.season ?? fileName);
+        if (year !== null && year <= latestMatchYear) {
+            candidates.push({ fileName, year });
+        }
+    }
+    return selectLatestPlayerCandidate(candidates, latestMatchYear);
+}
 
 function trimMatch(m) {
     const trimmed = {};
@@ -171,7 +223,9 @@ function writeJsonFile(filePath, data) {
 
 function copyUpcomingFiles(srcRawDir, destRawDir) {
     const srcUpcomingDir = path.join(srcRawDir, "upcoming");
-    if (!fs.existsSync(srcUpcomingDir)) return { files: 0, matches: 0, bytes: 0 };
+    if (!fs.existsSync(srcUpcomingDir)) {
+        return { files: 0, matches: 0, bytes: 0, removed: 0, emptyFiles: 0 };
+    }
 
     const destUpcomingDir = path.join(destRawDir, "upcoming");
     ensureDir(destUpcomingDir);
@@ -179,12 +233,21 @@ function copyUpcomingFiles(srcRawDir, destRawDir) {
     let files = 0;
     let matches = 0;
     let bytes = 0;
+    let removed = 0;
+    let emptyFiles = 0;
 
     for (const fileName of fs.readdirSync(srcUpcomingDir).filter((name) => name.endsWith(".json")).sort()) {
         const raw = JSON.parse(fs.readFileSync(path.join(srcUpcomingDir, fileName), "utf-8"));
-        const trimmedMatches = (raw.matches || []).map(trimMatch);
+        const sourceMatches = raw.matches || [];
+        const filtered = filterMatchesByCutoff(sourceMatches, DATA_CUTOFF, path.join(srcUpcomingDir, fileName));
+        const trimmedMatches = filtered.matches.map(trimMatch);
+        removed += filtered.removed;
+        if (DATA_CUTOFF && trimmedMatches.length === 0) {
+            emptyFiles++;
+            continue;
+        }
         const json = JSON.stringify({
-            metadata: raw.metadata || {},
+            metadata: snapshotMetadata(raw.metadata, sourceMatches.length, trimmedMatches.length, filtered.removed),
             matches: trimmedMatches,
         });
         fs.writeFileSync(path.join(destUpcomingDir, fileName), json);
@@ -194,12 +257,14 @@ function copyUpcomingFiles(srcRawDir, destRawDir) {
         bytes += Buffer.byteLength(json);
     }
 
-    return { files, matches, bytes };
+    return { files, matches, bytes, removed, emptyFiles };
 }
 
 function copyTeamHistoryFiles(srcDataDir, destDataDir) {
     const srcTeamHistoryDir = path.join(srcDataDir, "team_history");
-    if (!fs.existsSync(srcTeamHistoryDir)) return { files: 0, matches: 0, bytes: 0 };
+    if (!fs.existsSync(srcTeamHistoryDir)) {
+        return { files: 0, matches: 0, bytes: 0, removed: 0, emptyFiles: 0 };
+    }
 
     const destTeamHistoryDir = path.join(destDataDir, "team_history");
     ensureDir(destTeamHistoryDir);
@@ -207,12 +272,21 @@ function copyTeamHistoryFiles(srcDataDir, destDataDir) {
     let files = 0;
     let matches = 0;
     let bytes = 0;
+    let removed = 0;
+    let emptyFiles = 0;
 
     for (const fileName of fs.readdirSync(srcTeamHistoryDir).filter((name) => name.endsWith(".json")).sort()) {
         const raw = JSON.parse(fs.readFileSync(path.join(srcTeamHistoryDir, fileName), "utf-8"));
-        const trimmedMatches = (raw.matches || []).map(trimMatch);
+        const sourceMatches = raw.matches || [];
+        const filtered = filterMatchesByCutoff(sourceMatches, DATA_CUTOFF, path.join(srcTeamHistoryDir, fileName));
+        const trimmedMatches = filtered.matches.map(trimMatch);
+        removed += filtered.removed;
+        if (DATA_CUTOFF && trimmedMatches.length === 0) {
+            emptyFiles++;
+            continue;
+        }
         const json = JSON.stringify({
-            metadata: raw.metadata || {},
+            metadata: snapshotMetadata(raw.metadata, sourceMatches.length, trimmedMatches.length, filtered.removed),
             matches: trimmedMatches,
         });
         fs.writeFileSync(path.join(destTeamHistoryDir, fileName), json);
@@ -222,7 +296,7 @@ function copyTeamHistoryFiles(srcDataDir, destDataDir) {
         bytes += Buffer.byteLength(json);
     }
 
-    return { files, matches, bytes };
+    return { files, matches, bytes, removed, emptyFiles };
 }
 
 function timeZoneOffsetMs(utcMs, timeZone) {
@@ -421,7 +495,6 @@ function writeOperationalStatus(logDir, outAdminDir) {
     ensureDir(outAdminDir);
     const status = {
         generated_at: new Date().toISOString(),
-        source_logs: logDir,
         daily: newestLogEntry(logDir, "local-daily-refresh-", "daily"),
         weekly: newestLogEntry(logDir, "local-weekly-training-", "weekly"),
         lineup: newestLogEntry(logDir, "local-lineup-refresh-", "lineup"),
@@ -449,32 +522,22 @@ function todayYmd(date = new Date()) {
     return date.toISOString().slice(0, 10);
 }
 
-function addCalendarDaysYmd(ymd, deltaDays) {
-    const [y, m, d] = ymd.split("-").map(Number);
-    const t = Date.UTC(y, m - 1, d);
-    return new Date(t + deltaDays * 864e5).toISOString().slice(0, 10);
-}
-
-function isYmdInWindow(dateStr, minYmd, maxYmd) {
-    return dateStr >= minYmd && (!maxYmd || dateStr <= maxYmd);
-}
-
 function copyReportsWindowed(srcReports, destReports) {
     const copyAll = process.env.PREBUILD_COPY_ALL_REPORTS === "1" || process.env.PREBUILD_COPY_ALL_REPORTS === "true";
     if (!fs.existsSync(srcReports)) return { copied: 0, skipped: 0, total: 0 };
 
-    if (copyAll) {
-        copyDir(srcReports, destReports);
-        const n = fs.readdirSync(srcReports).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).length;
-        return { copied: n, skipped: 0, total: n };
-    }
-
     const past = Math.max(0, parseInt(process.env.PREBUILD_REPORT_DAYS_PAST || "30", 10));
     const futureValue = process.env.PREBUILD_REPORT_DAYS_FUTURE;
     const future = futureValue ? Math.max(0, parseInt(futureValue, 10)) : null;
-    const today = todayYmd();
-    const minYmd = addCalendarDaysYmd(today, -past);
-    const maxYmd = future === null ? null : addCalendarDaysYmd(today, future);
+    const today = DATA_CUTOFF || todayYmd();
+    const { minYmd, maxYmd } = resolveReportBounds({
+        copyAll,
+        past,
+        future,
+        today,
+        cutoff: DATA_CUTOFF,
+        start: REPORT_START,
+    });
 
     ensureDir(destReports);
     let copied = 0;
@@ -482,14 +545,17 @@ function copyReportsWindowed(srcReports, destReports) {
     const entries = fs.readdirSync(srcReports, { withFileTypes: true });
     for (const e of entries) {
         if (!e.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(e.name)) continue;
-        if (!isYmdInWindow(e.name, minYmd, maxYmd)) {
+        if (!isYmdWithinBounds(e.name, minYmd, maxYmd)) {
             skipped++;
             continue;
         }
         copyDir(path.join(srcReports, e.name), path.join(destReports, e.name));
         copied++;
     }
-    console.log("report date range: " + minYmd + " .. " + (maxYmd ?? "open future") + " (" + past + "d back, " + (future === null ? "open future" : future + "d ahead") + ")");
+    console.log(
+        "report date range: " + (minYmd ?? "open past") + " .. " + (maxYmd ?? "open future") +
+        (copyAll ? " (all dates inside hard bounds)" : " (" + past + "d back, " + (future === null ? "open future" : future + "d ahead") + ")")
+    );
     return { copied, skipped, total: copied + skipped };
 }
 
@@ -554,11 +620,14 @@ function copyActiveModelMetadata(sourceModels, outModels) {
             if (!artifactRelative || !pathInside(sourceModels, sourceArtifact) || !fs.existsSync(sourceArtifact)) {
                 throw new Error("active model pointer references a missing or unsafe artifact: " + variant.name);
             }
-            fs.copyFileSync(sourcePointer, path.join(outModels, variant.pointer));
+            writeJsonFile(
+                path.join(outModels, variant.pointer),
+                sanitizeExportMetadata(pointer),
+            );
         }
         const destinationManifest = path.join(outModels, manifestRelative);
         ensureDir(path.dirname(destinationManifest));
-        fs.copyFileSync(sourceManifest, destinationManifest);
+        writeJsonFile(destinationManifest, sanitizeExportMetadata(manifest));
         active[variant.name] = {
             pointer: pointer || null,
             artifact_id: pointer?.artifact_id || manifest.artifact_id || null,
@@ -676,7 +745,6 @@ function buildAccuracyHistory(srcReports) {
 
     return {
         generated_at: new Date().toISOString(),
-        source_reports: srcReports,
         dates: rows,
     };
 }
@@ -711,6 +779,8 @@ let totalMatches = 0;
 let totalPlayers = 0;
 let matchBytes = 0;
 let playerBytes = 0;
+let matchesRemovedAfterCutoff = 0;
+const playerSources = {};
 
 for (const dataPath of COMPETITIONS) {
     const rawDir = path.join(SOURCE_DATA, dataPath, "raw");
@@ -726,16 +796,23 @@ for (const dataPath of COMPETITIONS) {
     ensureDir(outRawDir);
 
     const raw = JSON.parse(fs.readFileSync(allSeasonsPath, "utf-8"));
-    const matches = raw.matches || [];
+    const sourceMatches = raw.matches || [];
+    const filteredMatches = filterMatchesByCutoff(sourceMatches, DATA_CUTOFF, allSeasonsPath);
+    const matches = filteredMatches.matches;
     const trimmed = matches.map(trimMatch);
-    const matchJson = JSON.stringify({ metadata: raw.metadata || {}, matches: trimmed });
+    const matchJson = JSON.stringify({
+        metadata: snapshotMetadata(raw.metadata, sourceMatches.length, trimmed.length, filteredMatches.removed),
+        matches: trimmed,
+    });
     fs.writeFileSync(path.join(outRawDir, "all_seasons.json"), matchJson);
     totalMatches += trimmed.length;
     matchBytes += Buffer.byteLength(matchJson);
+    matchesRemovedAfterCutoff += filteredMatches.removed;
 
     const upcoming = copyUpcomingFiles(rawDir, outRawDir);
     totalMatches += upcoming.matches;
     matchBytes += upcoming.bytes;
+    matchesRemovedAfterCutoff += upcoming.removed;
 
     const playersDir = path.join(SOURCE_DATA, dataPath, "players");
     if (fs.existsSync(playersDir)) {
@@ -744,17 +821,29 @@ for (const dataPath of COMPETITIONS) {
             .sort();
 
         if (playerFiles.length > 0) {
-            const latestFile = playerFiles[playerFiles.length - 1];
-            const playerData = JSON.parse(fs.readFileSync(path.join(playersDir, latestFile), "utf-8"));
-            const teams = playerData.teams || {};
-            const trimmedTeams = {};
-            for (const [teamName, players] of Object.entries(teams)) {
-                trimmedTeams[teamName] = players.map(trimPlayer);
-                totalPlayers += players.length;
+            const selectedFile = selectPlayerFile(playersDir, playerFiles, matches);
+            if (!selectedFile) {
+                console.warn("warning: no player catalog fits the snapshot cutoff for " + dataPath);
+            } else {
+                const playerData = JSON.parse(fs.readFileSync(path.join(playersDir, selectedFile), "utf-8"));
+                const teams = playerData.teams || {};
+                const trimmedTeams = {};
+                for (const [teamName, players] of Object.entries(teams)) {
+                    trimmedTeams[teamName] = players.map(trimPlayer);
+                    totalPlayers += players.length;
+                }
+                const playerJson = JSON.stringify({
+                    metadata: {
+                        ...(playerData.metadata || {}),
+                        snapshot_data_cutoff: DATA_CUTOFF,
+                        snapshot_source_file: selectedFile,
+                    },
+                    teams: trimmedTeams,
+                });
+                fs.writeFileSync(path.join(outBaseDir, "players.json"), playerJson);
+                playerBytes += Buffer.byteLength(playerJson);
+                playerSources[dataPath] = selectedFile;
             }
-            const playerJson = JSON.stringify({ teams: trimmedTeams });
-            fs.writeFileSync(path.join(outBaseDir, "players.json"), playerJson);
-            playerBytes += Buffer.byteLength(playerJson);
         }
     }
 
@@ -768,6 +857,7 @@ console.log("\nteam history:");
 const teamHistory = copyTeamHistoryFiles(SOURCE_DATA, OUT_DIR);
 totalMatches += teamHistory.matches;
 matchBytes += teamHistory.bytes;
+matchesRemovedAfterCutoff += teamHistory.removed;
 if (teamHistory.files > 0) {
     console.log("copied " + teamHistory.files + " team files (" + teamHistory.matches + " matches)");
 } else {
@@ -775,8 +865,10 @@ if (teamHistory.files > 0) {
 }
 
 console.log("\nprediction reports:");
+let reportsSummary = { copied: 0, skipped: 0, total: 0 };
 if (fs.existsSync(SOURCE_REPORTS)) {
-    const { copied, skipped, total } = copyReportsWindowed(SOURCE_REPORTS, path.join(OUT_DIR, "reports"));
+    reportsSummary = copyReportsWindowed(SOURCE_REPORTS, path.join(OUT_DIR, "reports"));
+    const { copied, skipped, total } = reportsSummary;
     console.log("copied " + copied + " date folders (" + skipped + " outside window, " + total + " in source tree)");
 } else {
     console.log("no SofascoreData/reports");
@@ -818,7 +910,7 @@ if (
 }
 
 console.log("\naccuracy history:");
-writeAccuracyHistory(SOURCE_REPORTS, outModelsDir);
+writeAccuracyHistory(path.join(OUT_DIR, "reports"), outModelsDir);
 
 console.log("\nmodel comparison csv:");
 const summaryCsv = path.join(SOURCE_MODELS, "comparison_summary.csv");
@@ -836,14 +928,23 @@ const diagnosticsJson = path.join(SOURCE_MODELS, "model_diagnostics.json");
 if (fs.existsSync(diagnosticsJson)) {
     const outModelsDir = path.join(OUT_DIR, "models");
     ensureDir(outModelsDir);
-    fs.copyFileSync(diagnosticsJson, path.join(outModelsDir, "model_diagnostics.json"));
+    const diagnostics = readJsonIfExists(diagnosticsJson);
+    if (!diagnostics) throw new Error("could not read model_diagnostics.json");
+    writeJsonFile(
+        path.join(outModelsDir, "model_diagnostics.json"),
+        sanitizeExportMetadata(diagnostics),
+    );
     console.log("model_diagnostics.json copied");
 } else {
     console.log("no model_diagnostics.json");
 }
 
 console.log("\noperational status:");
-if (fs.existsSync(SOURCE_LOGS)) {
+const includeOperationalStatus = process.env.PREBUILD_INCLUDE_OPERATIONAL_STATUS !== "0" &&
+    process.env.PREBUILD_INCLUDE_OPERATIONAL_STATUS !== "false";
+if (!includeOperationalStatus) {
+    console.log("omitted by PREBUILD_INCLUDE_OPERATIONAL_STATUS");
+} else if (fs.existsSync(SOURCE_LOGS)) {
     writeOperationalStatus(SOURCE_LOGS, path.join(OUT_DIR, "admin"));
 } else {
     console.log("no logs directory");
@@ -852,9 +953,15 @@ if (fs.existsSync(SOURCE_LOGS)) {
 const totalBytes = matchBytes + playerBytes;
 writeJsonFile(MANIFEST_PATH, {
     generated_at: new Date().toISOString(),
-    source_data: SOURCE_DATA,
-    source_reports: SOURCE_REPORTS,
     clean_output: cleanOutput,
+    snapshot: DATA_CUTOFF ? {
+        mode: "frozen",
+        data_cutoff: DATA_CUTOFF,
+        report_start: REPORT_START,
+        matches_removed_after_cutoff: matchesRemovedAfterCutoff,
+        reports: reportsSummary,
+        player_sources: playerSources,
+    } : null,
     active_model_releases: activeModelReleases,
     prediction_model_contracts: modelReleaseAudit,
     competitions: COMPETITIONS.length,
@@ -870,6 +977,9 @@ console.log("");
 console.log("summary");
 console.log("competitions: " + COMPETITIONS.length);
 console.log("matches: " + totalMatches.toLocaleString("en-US"));
+if (DATA_CUTOFF) {
+    console.log("removed after " + DATA_CUTOFF + ": " + matchesRemovedAfterCutoff.toLocaleString("en-US"));
+}
 console.log("player rows: " + totalPlayers.toLocaleString("en-US"));
 console.log("match json: " + (matchBytes / 1024 / 1024).toFixed(1) + " MB");
 console.log("player json: " + (playerBytes / 1024 / 1024).toFixed(1) + " MB");

@@ -3,7 +3,7 @@ import path from "path";
 import { cache } from "../serverCache";
 import { readJson } from "./fileUtils";
 import { filterReportDatesByWindow } from "./reportWindow";
-import { isValidYmdDate, normalizeReportDate, todayYmd } from "./dateUtils";
+import { isValidYmdDate, isWithinAppDataCutoff, normalizeReportDate, todayYmd } from "./dateUtils";
 import { PredictionReport, AnalysisReport, PredictionMatch, ModelAccuracy, ModelPrediction, ConsensusPrediction, MatchResult } from "@/types/predictions";
 import type { MatchEventSnapshot, MatchEventsArtifact, MatchTimelineEvent } from "@/types/matchEvents";
 import type { MatchLineupPlayer, MatchLineupSide, MatchLineupSnapshot, MatchLineupsArtifact, MatchPlayerOfTheMatch, MatchTopRatedPlayer } from "@/types/matchLineups";
@@ -251,7 +251,9 @@ function repoPath(...segments: string[]): string {
 }
 
 function allowSourceFallback(): boolean {
-    return process.env.NODE_ENV !== "production";
+    return process.env.NODE_ENV !== "production" &&
+        !process.env.SOFASCORE_DATA_DIR &&
+        !process.env.SOFASCORE_REPORTS_DIR;
 }
 
 function normalizePredictionMatch(match: RawPredictionMatch): PredictionMatch {
@@ -289,6 +291,8 @@ function normalizePredictionReport(report: RawPredictionReport | null): Predicti
 function reportDirs(): string[] {
     const env = process.env.SOFASCORE_REPORTS_DIR;
     if (env) return [env];
+    const dataDir = process.env.SOFASCORE_DATA_DIR;
+    if (dataDir) return [path.join(dataDir, "reports")];
     const prebuilt = repoPath(".data", "reports");
     const dirs: string[] = [];
     if (fs.existsSync(prebuilt)) dirs.push(prebuilt);
@@ -310,7 +314,7 @@ function collectReportDates(): string[] {
             continue;
         }
         for (const d of entries) {
-            if (!isValidYmdDate(d)) continue;
+            if (!isValidYmdDate(d) || !isWithinAppDataCutoff(d)) continue;
             try {
                 if (fs.statSync(path.join(dir, d)).isDirectory()) dates.add(d);
             } catch {
@@ -322,10 +326,10 @@ function collectReportDates(): string[] {
 }
 
 function accuracyHistoryPaths(): string[] {
-    const paths: string[] = [];
     if (process.env.SOFASCORE_DATA_DIR) {
-        paths.push(path.join(process.env.SOFASCORE_DATA_DIR, "models", "accuracy_history.json"));
+        return [path.join(process.env.SOFASCORE_DATA_DIR, "models", "accuracy_history.json")];
     }
+    const paths: string[] = [];
     paths.push(repoPath(".data", "models", "accuracy_history.json"));
     if (allowSourceFallback()) {
         paths.push(repoPath("SofascoreData", "data", "models", "accuracy_history.json"));
@@ -334,10 +338,10 @@ function accuracyHistoryPaths(): string[] {
 }
 
 function modelDiagnosticsPaths(): string[] {
-    const paths: string[] = [];
     if (process.env.SOFASCORE_DATA_DIR) {
-        paths.push(path.join(process.env.SOFASCORE_DATA_DIR, "models", "model_diagnostics.json"));
+        return [path.join(process.env.SOFASCORE_DATA_DIR, "models", "model_diagnostics.json")];
     }
+    const paths: string[] = [];
     paths.push(repoPath(".data", "models", "model_diagnostics.json"));
     if (allowSourceFallback()) {
         paths.push(repoPath("SofascoreData", "data", "models", "model_diagnostics.json"));
@@ -353,6 +357,9 @@ function siblingStableLogsDirs(): string[] {
 }
 
 function operationalStatusPaths(): string[] {
+    if (process.env.SOFASCORE_DATA_DIR) {
+        return [path.join(process.env.SOFASCORE_DATA_DIR, "admin", "operational_status.json")];
+    }
     const paths = [repoPath(".data", "admin", "operational_status.json")];
     if (allowSourceFallback()) {
         paths.push(repoPath("logs", "operational_status.json"));
@@ -614,7 +621,8 @@ function readPredictionReportInDateDir(dateDir: string): PredictionReport | null
 }
 
 function safeReportDate(date: string): string | null {
-    return normalizeReportDate(date);
+    const normalized = normalizeReportDate(date);
+    return normalized && isWithinAppDataCutoff(normalized) ? normalized : null;
 }
 
 function predictionReportMtime(dateDir: string): number {
@@ -918,14 +926,7 @@ export const loadPredictionReport = cache((date: string): PredictionReport | nul
     const safeDate = safeReportDate(date);
     if (!safeDate) return null;
 
-    const env = process.env.SOFASCORE_REPORTS_DIR;
-    if (env) {
-        return readPredictionReportInDateDir(path.join(env, safeDate));
-    }
-    const dateDirs = [repoPath(".data", "reports", safeDate)];
-    if (allowSourceFallback()) {
-        dateDirs.push(repoPath("SofascoreData", "reports", safeDate));
-    }
+    const dateDirs = reportDirs().map((dir) => path.join(dir, safeDate));
     const newestDir = newestExistingReportDir(dateDirs);
     return newestDir ? readPredictionReportInDateDir(newestDir) : null;
 });
@@ -934,13 +935,11 @@ export const loadAnalysisReport = cache((date: string): AnalysisReport | null =>
     const safeDate = safeReportDate(date);
     if (!safeDate) return null;
 
-    const env = process.env.SOFASCORE_REPORTS_DIR;
-    if (env) {
-        return readJson<AnalysisReport>(path.join(env, safeDate, "analysis.json"));
+    for (const reportDir of reportDirs()) {
+        const report = readJson<AnalysisReport>(path.join(reportDir, safeDate, "analysis.json"));
+        if (report) return report;
     }
-    const prebuilt = repoPath(".data", "reports", safeDate, "analysis.json");
-    if (!allowSourceFallback()) return readJson<AnalysisReport>(prebuilt);
-    return readJson<AnalysisReport>(prebuilt) ?? readJson<AnalysisReport>(repoPath("SofascoreData", "reports", safeDate, "analysis.json"));
+    return null;
 });
 
 export const listReportDates = cache((): string[] => {
@@ -1100,7 +1099,9 @@ export interface ModelComparisonRow {
 }
 
 export function loadComparisonSummary(): ModelComparisonRow[] {
-    const prebuilt = repoPath(".data", "models", "comparison_summary.csv");
+    const prebuilt = process.env.SOFASCORE_DATA_DIR
+        ? path.join(process.env.SOFASCORE_DATA_DIR, "models", "comparison_summary.csv")
+        : repoPath(".data", "models", "comparison_summary.csv");
     const dev = allowSourceFallback() ? repoPath("SofascoreData", "data", "models", "comparison_summary.csv") : "";
     const filePath = fs.existsSync(prebuilt) ? prebuilt : dev;
     if (!fs.existsSync(filePath)) return [];
