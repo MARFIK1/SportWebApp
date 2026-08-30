@@ -57,7 +57,10 @@ from sofascore.model_release import (
     file_sha256,
     finalize_artifact_manifest,
 )
-from sofascore.temporal_validation import build_temporal_holdout
+from sofascore.temporal_validation import (
+    build_temporal_holdout,
+    build_temporal_holdout_from_cutoff,
+)
 from sofascore.training_report import METRIC_CONTRACT
 import optuna
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -978,6 +981,15 @@ CONSENSUS_WEIGHTS_BY_TARGET = {
     },
 }
 
+MODEL_SCOPES = ('all', 'thesis_core')
+THESIS_CORE_CLASSIFICATION_MODELS = frozenset({
+    'Logistic Regression',
+    'Random Forest',
+    'MLP',
+    'XGBoost',
+    'LightGBM',
+})
+
 TARGET_CONFIGS = {
     'result': {
         'label_col': 'label_result_int',
@@ -1511,6 +1523,17 @@ class UniversalPredictor:
             )
 
         return filtered
+
+    @staticmethod
+    def _required_odds_columns(
+        target: str,
+        odds_requirements: Optional[Dict[str, List[str]]],
+    ) -> List[str]:
+        if not odds_requirements:
+            return []
+        return list(dict.fromkeys(
+            odds_requirements.get('__all__', []) + odds_requirements.get(target, [])
+        ))
         
     def discover_all_competitions(self) -> Dict[str, Dict[str, List[str]]]:
         return discover_feature_competitions(
@@ -1623,7 +1646,14 @@ class UniversalPredictor:
             'SOFASCORE_FEATURE_SET',
             'pre_match_safe',
         )
-        if odds_requirements and configured_feature_set != 'lineup_with_odds':
+        target_odds = self._required_odds_columns(target, odds_requirements)
+        if configured_feature_set == 'lineup_with_odds':
+            feature_set_name = (
+                'lineup_with_odds' if target_odds else 'lineup_available'
+            )
+        elif configured_feature_set == 'odds_available':
+            feature_set_name = 'odds_available' if target_odds else 'pre_match_safe'
+        elif target_odds:
             feature_set_name = 'odds_available'
         else:
             feature_set_name = configured_feature_set
@@ -1652,9 +1682,7 @@ class UniversalPredictor:
         feature_cols = known + added_new_features
 
         if odds_requirements:
-            allowed_odds = set(
-                odds_requirements.get('__all__', []) + odds_requirements.get(target, [])
-            )
+            allowed_odds = set(target_odds)
             dropped_odds = [
                 c for c in feature_cols
                 if c.startswith('odds_') and c not in allowed_odds
@@ -1720,7 +1748,15 @@ class UniversalPredictor:
                          targets: Optional[List[str]] = None,
                          odds_requirements: Optional[Dict[str, List[str]]] = None,
                          optuna_trials: int = 50,
-                         reference_predictor=None) -> Dict:
+                         reference_predictor=None,
+                         test_start_date: Optional[str] = None,
+                         cohort_requirements: Optional[Dict[str, List[str]]] = None,
+                         model_scope: str = 'all') -> Dict:
+        if model_scope not in MODEL_SCOPES:
+            raise ValueError(
+                f"Unknown model scope '{model_scope}'. "
+                f"Choose one of: {', '.join(MODEL_SCOPES)}"
+            )
         if targets is None:
             targets = ['result', 'btts', 'over_2_5', 'over_1_5']
 
@@ -1735,7 +1771,20 @@ class UniversalPredictor:
                 print(f"\n  [SKIP] Target '{target}' - missing column '{label_col}' in data")
                 continue
 
-            target_df = self._filter_positive_odds(df, target, odds_requirements)
+            effective_cohort_requirements = (
+                cohort_requirements
+                if cohort_requirements is not None
+                else odds_requirements
+            )
+            required_cohort_columns = self._required_odds_columns(
+                target,
+                effective_cohort_requirements,
+            )
+            target_df = self._filter_positive_odds(
+                df,
+                target,
+                effective_cohort_requirements,
+            )
             if target_df.empty:
                 print(f"\n  [SKIP] Target '{target}' - no rows after odds completeness filter")
                 continue
@@ -1752,8 +1801,22 @@ class UniversalPredictor:
                 odds_requirements,
                 optuna_trials,
                 reference_predictor,
+                test_start_date,
+                model_scope,
             )
             all_results[target] = results
+            if target in self.training_stats:
+                self.training_stats[target]['cohort'] = {
+                    'policy': (
+                        'complete_positive_target_odds'
+                        if required_cohort_columns
+                        else 'all_target_rows'
+                    ),
+                    'required_columns': required_cohort_columns,
+                    'rows_before': len(df),
+                    'rows': len(target_df),
+                    'rows_removed': len(df) - len(target_df),
+                }
 
         self.trained = True
 
@@ -1928,6 +1991,21 @@ class UniversalPredictor:
         }
 
         return model_configs
+
+    @staticmethod
+    def _apply_model_scope(model_configs: Dict, model_scope: str) -> Dict:
+        if model_scope == 'all':
+            return model_configs
+        if model_scope == 'thesis_core':
+            return {
+                name: config
+                for name, config in model_configs.items()
+                if name in THESIS_CORE_CLASSIFICATION_MODELS
+            }
+        raise ValueError(
+            f"Unknown model scope '{model_scope}'. "
+            f"Choose one of: {', '.join(MODEL_SCOPES)}"
+        )
 
     def _fit_deployment_classification_models(
         self,
@@ -2247,6 +2325,8 @@ class UniversalPredictor:
         odds_requirements: Optional[Dict[str, List[str]]] = None,
         optuna_trials: int = 50,
         reference_predictor=None,
+        test_start_date: Optional[str] = None,
+        model_scope: str = 'all',
     ) -> Dict:
         config = TARGET_CONFIGS[target]
         is_regression = config.get('task') == 'regression'
@@ -2271,19 +2351,33 @@ class UniversalPredictor:
         test_cutoff = None
 
         if dates is not None:
-            temporal_split = build_temporal_holdout(
-                dates,
-                holdout_fraction=test_size,
-                min_train_rows=5,
-                min_holdout_rows=5,
-            )
+            if test_start_date:
+                temporal_split = build_temporal_holdout_from_cutoff(
+                    dates,
+                    cutoff=test_start_date,
+                    min_train_rows=5,
+                    min_holdout_rows=5,
+                )
+                validation_strategy = 'fixed_temporal_window'
+            else:
+                temporal_split = build_temporal_holdout(
+                    dates,
+                    holdout_fraction=test_size,
+                    min_train_rows=5,
+                    min_holdout_rows=5,
+                )
+                validation_strategy = 'global_temporal'
             train_idx = temporal_split.train_index
             test_idx = temporal_split.holdout_index
             X_train, X_test = X.loc[train_idx], X.loc[test_idx]
             y_train, y_test = y.loc[train_idx], y.loc[test_idx]
-            validation_strategy = 'global_temporal'
             test_cutoff = temporal_split.cutoff
-            print(f"\nGlobal temporal split (cutoff={test_cutoff.date()}):")
+            split_label = (
+                "Fixed temporal split"
+                if validation_strategy == 'fixed_temporal_window'
+                else "Global temporal split"
+            )
+            print(f"\n{split_label} (cutoff={test_cutoff.date()}):")
             print(f"    Train: {len(X_train)}, Test: {len(X_test)}")
         else:
             X_train, X_test, y_train, y_test = train_test_split(
@@ -2386,6 +2480,7 @@ class UniversalPredictor:
                 target, config, X_train, X_test, X_train_scaled, X_test_scaled,
                 y_train, y_test, feature_cols, scaler, X, meta, df,
                 validation_strategy, test_cutoff,
+                model_scope,
             )
             self._attach_reference_benchmark(
                 reference_predictor,
@@ -2502,6 +2597,8 @@ class UniversalPredictor:
             target, y_train=y_model_train,
             xgb_params=xgb_tuned, lgb_params=lgb_tuned,
         )
+        model_configs = self._apply_model_scope(model_configs, model_scope)
+        print(f"Model scope: {model_scope} ({', '.join(model_configs)})")
 
         self.models[target] = {}
         results = {}
@@ -2854,7 +2951,7 @@ class UniversalPredictor:
                     (name.lower().replace(' ', '_'), clone(self.models[target][name]['model']))
                 )
 
-        if len(ensemble_estimators) >= 2:
+        if model_scope == 'all' and len(ensemble_estimators) >= 2:
             ensemble_weights = []
             for name in tree_models:
                 if name in self.models[target]:
@@ -2921,7 +3018,7 @@ class UniversalPredictor:
             }
             print(f"    Ensemble: acc={acc_ens:.1%} f1={f1_ens:.1%} [{ens_time:.1f}s, pred={pred_time_ens:.1f}ms]")
 
-        if len(ensemble_estimators) >= 2:
+        if model_scope == 'all' and len(ensemble_estimators) >= 2:
             stacking_estimators = []
             for name in tree_models:
                 if name in self.models[target]:
@@ -2993,7 +3090,7 @@ class UniversalPredictor:
             }
             print(f"    Stacking: acc={acc_stack:.1%} f1={f1_stack:.1%} [{stack_time:.1f}s, pred={pred_time_st:.1f}ms]")
 
-        if HAS_TORCH and not is_regression:
+        if model_scope == 'all' and HAS_TORCH and not is_regression:
             try:
                 lstm = LSTMPredictor(num_classes=config['num_classes'], epochs=50)
                 lstm_meta = dict(meta)
@@ -3139,6 +3236,8 @@ class UniversalPredictor:
             'features': len(feature_cols),
             'feature_names': feature_cols,
             'feature_set': self.feature_sets_by_target.get(target),
+            'model_scope': model_scope,
+            'trained_models': sorted(detailed_metrics),
             'selection': {
                 'metric': selection_metric,
                 'source': selection_source,
@@ -3168,7 +3267,10 @@ class UniversalPredictor:
                     if calibration_cutoff is not None
                     else None
                 ),
-                'strict_temporal_order': validation_strategy == 'global_temporal',
+                'strict_temporal_order': validation_strategy in {
+                    'global_temporal',
+                    'fixed_temporal_window',
+                },
                 'decision_policy_cutoff': (
                     policy_cutoff.isoformat()
                     if policy_cutoff is not None
@@ -3264,7 +3366,7 @@ class UniversalPredictor:
                                   X_train_scaled, X_test_scaled,
                                   y_train, y_test, feature_cols, scaler,
                                   X, meta, df, validation_strategy,
-                                  test_cutoff) -> Dict:
+                                  test_cutoff, model_scope='all') -> Dict:
         model_configs = self._build_regression_configs()
         self.models[target] = {}
         results = {}
@@ -3390,11 +3492,16 @@ class UniversalPredictor:
             'features': len(feature_cols),
             'feature_names': feature_cols,
             'feature_set': self.feature_sets_by_target.get(target),
+            'model_scope': model_scope,
+            'trained_models': sorted(detailed_metrics),
             'validation': {
                 'strategy': validation_strategy,
                 'test_cutoff': test_cutoff.isoformat() if test_cutoff is not None else None,
                 'calibration_cutoff': None,
-                'strict_temporal_order': validation_strategy == 'global_temporal',
+                'strict_temporal_order': validation_strategy in {
+                    'global_temporal',
+                    'fixed_temporal_window',
+                },
             },
             'date_ranges': {
                 'all': _date_range_summary(meta.get('date') if meta else None),

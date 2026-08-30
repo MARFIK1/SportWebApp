@@ -9,6 +9,27 @@ BASE_ODDS_REQUIREMENTS = (
     "odds_draw",
     "odds_away_win",
 )
+ODDS_REQUIREMENTS_BY_TARGET = {
+    "result": (
+        "odds_home_win",
+        "odds_draw",
+        "odds_away_win",
+        "odds_home_prob",
+        "odds_draw_prob",
+        "odds_away_prob",
+        "odds_overround",
+    ),
+    "btts": (
+        "odds_btts_yes",
+        "odds_btts_no",
+        "odds_btts_prob",
+    ),
+    "over_2_5": (
+        "odds_over_2_5",
+        "odds_under_2_5",
+        "odds_over_2_5_prob",
+    ),
+}
 SAMPLE_ID_CANDIDATES = (
     "event_id",
     "match_id",
@@ -24,10 +45,14 @@ SAMPLE_ID_CANDIDATES = (
 
 def build_common_odds_sample(
     dataframe: pd.DataFrame,
+    required_columns=BASE_ODDS_REQUIREMENTS,
 ) -> Tuple[pd.DataFrame, Dict]:
+    required_columns = tuple(dict.fromkeys(required_columns))
+    if not required_columns:
+        raise ValueError("paired common sample requires at least one odds column")
     missing = [
         column
-        for column in BASE_ODDS_REQUIREMENTS
+        for column in required_columns
         if column not in dataframe.columns
     ]
     if missing:
@@ -36,7 +61,7 @@ def build_common_odds_sample(
             + ", ".join(missing)
         )
 
-    odds_values = dataframe[list(BASE_ODDS_REQUIREMENTS)].apply(
+    odds_values = dataframe[list(required_columns)].apply(
         pd.to_numeric,
         errors="coerce",
     )
@@ -52,7 +77,7 @@ def build_common_odds_sample(
     ]
     identity_columns.extend(
         column
-        for column in BASE_ODDS_REQUIREMENTS
+        for column in required_columns
         if column not in identity_columns
     )
     identity_hashes = pd.util.hash_pandas_object(
@@ -65,12 +90,12 @@ def build_common_odds_sample(
     ).hexdigest()
 
     return filtered, {
-        "policy": "complete_positive_base_1x2_odds",
+        "policy": "complete_positive_target_odds",
         "rows_before": len(dataframe),
         "rows": len(filtered),
         "rows_removed": len(dataframe) - len(filtered),
         "coverage": round(float(mask.mean()), 6),
-        "required_columns": list(BASE_ODDS_REQUIREMENTS),
+        "required_columns": list(required_columns),
         "identity_columns": identity_columns,
         "sample_hash": sample_hash,
     }

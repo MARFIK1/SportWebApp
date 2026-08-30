@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Hashable, List
+from typing import Hashable, List, Union
 
 import pandas as pd
 
@@ -11,6 +11,54 @@ class TemporalHoldout:
     cutoff: pd.Timestamp
 
 
+def _parse_dates(dates: pd.Series) -> pd.Series:
+    if not dates.index.is_unique:
+        raise ValueError("date index must be unique")
+
+    parsed = pd.to_datetime(dates, format="mixed", errors="coerce", utc=True)
+    invalid = int(parsed.isna().sum())
+    if invalid:
+        raise ValueError(f"temporal split requires valid dates; invalid rows: {invalid}")
+    return parsed
+
+
+def _parse_cutoff(cutoff: Union[str, pd.Timestamp]) -> pd.Timestamp:
+    parsed = pd.to_datetime(cutoff, errors="coerce", utc=True)
+    if pd.isna(parsed):
+        raise ValueError(f"invalid temporal cutoff: {cutoff}")
+    return pd.Timestamp(parsed)
+
+
+def build_temporal_holdout_from_cutoff(
+    dates: pd.Series,
+    cutoff: Union[str, pd.Timestamp],
+    min_train_rows: int = 5,
+    min_holdout_rows: int = 5,
+) -> TemporalHoldout:
+    parsed = _parse_dates(dates)
+    parsed_cutoff = _parse_cutoff(cutoff)
+    train_index = parsed.index[parsed < parsed_cutoff].tolist()
+    holdout_index = parsed.index[parsed >= parsed_cutoff].tolist()
+
+    if len(train_index) < min_train_rows or len(holdout_index) < min_holdout_rows:
+        raise ValueError(
+            "fixed temporal split does not contain enough rows: "
+            f"train={len(train_index)} (minimum {min_train_rows}), "
+            f"holdout={len(holdout_index)} (minimum {min_holdout_rows})"
+        )
+
+    train_max = parsed.loc[train_index].max()
+    holdout_min = parsed.loc[holdout_index].min()
+    if not train_max < holdout_min:
+        raise ValueError("temporal split invariant failed: train must precede holdout")
+
+    return TemporalHoldout(
+        train_index=train_index,
+        holdout_index=holdout_index,
+        cutoff=parsed_cutoff,
+    )
+
+
 def build_temporal_holdout(
     dates: pd.Series,
     holdout_fraction: float,
@@ -19,13 +67,7 @@ def build_temporal_holdout(
 ) -> TemporalHoldout:
     if not 0 < holdout_fraction < 1:
         raise ValueError("holdout_fraction must be between 0 and 1")
-    if not dates.index.is_unique:
-        raise ValueError("date index must be unique")
-
-    parsed = pd.to_datetime(dates, errors="coerce", utc=True)
-    invalid = int(parsed.isna().sum())
-    if invalid:
-        raise ValueError(f"temporal split requires valid dates; invalid rows: {invalid}")
+    parsed = _parse_dates(dates)
 
     total_rows = len(parsed)
     if total_rows < min_train_rows + min_holdout_rows:

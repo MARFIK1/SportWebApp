@@ -4,7 +4,10 @@ import numpy as np
 import pandas as pd
 
 from sofascore.predictor import _classification_calibration_bins
-from sofascore.paired_benchmark import build_common_odds_sample
+from sofascore.paired_benchmark import (
+    ODDS_REQUIREMENTS_BY_TARGET,
+    build_common_odds_sample,
+)
 from train_models import _build_paired_training_sample
 
 
@@ -42,6 +45,29 @@ class PairedBenchmarkTests(unittest.TestCase):
 
         self.assertEqual(first["sample_hash"], second["sample_hash"])
 
+    def test_target_sample_uses_matching_btts_odds(self):
+        dataframe = pd.DataFrame({
+            "event_id": [1, 2],
+            "date": ["2026-01-01", "2026-01-02"],
+            "odds_btts_yes": [1.9, 0.0],
+            "odds_btts_no": [1.9, 2.0],
+            "odds_btts_prob": [0.5263, 0.0],
+            "odds_home_win": [2.0, 2.0],
+            "odds_draw": [3.0, 3.0],
+            "odds_away_win": [4.0, 4.0],
+        })
+
+        filtered, metadata = build_common_odds_sample(
+            dataframe,
+            required_columns=ODDS_REQUIREMENTS_BY_TARGET["btts"],
+        )
+
+        self.assertEqual(filtered["event_id"].tolist(), [1])
+        self.assertEqual(
+            metadata["required_columns"],
+            list(ODDS_REQUIREMENTS_BY_TARGET["btts"]),
+        )
+
     def test_single_lineup_variant_can_resume_on_paired_sample(self):
         dataframe = pd.DataFrame({
             "event_id": [1, 2, 3],
@@ -51,6 +77,10 @@ class PairedBenchmarkTests(unittest.TestCase):
             "odds_home_win": [2.0, 2.1, None],
             "odds_draw": [3.0, 3.1, 3.2],
             "odds_away_win": [4.0, 4.1, 4.2],
+            "odds_home_prob": [0.5, 0.4762, 0.0],
+            "odds_draw_prob": [0.3333, 0.3226, 0.3125],
+            "odds_away_prob": [0.25, 0.2439, 0.2381],
+            "odds_overround": [1.0833, 1.0427, 0.0],
         })
 
         filtered, metadata, lineup_sample = _build_paired_training_sample(

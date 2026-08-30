@@ -17,11 +17,21 @@ from sofascore.model_release import resolve_active_artifact
 from sofascore.predictor import (
     COMPETITION_TYPES,
     FEATURE_SETS,
+    MODEL_SCOPES,
     TARGET_CONFIGS,
     UniversalPredictor,
 )
 from sofascore.training_report import build_training_comparison, write_training_comparison
-from sofascore.paired_benchmark import BASE_ODDS_REQUIREMENTS, build_common_odds_sample
+from sofascore.paired_benchmark import (
+    BASE_ODDS_REQUIREMENTS,
+    ODDS_REQUIREMENTS_BY_TARGET,
+    build_common_odds_sample,
+)
+from sofascore.training_window import (
+    filter_dataframe_to_cutoff,
+    parse_iso_date,
+    validate_training_window,
+)
 
 
 ALL_TARGETS = tuple(TARGET_CONFIGS)
@@ -77,6 +87,13 @@ def parse_non_negative_int(value: str):
     return parsed
 
 
+def parse_date(value: str):
+    try:
+        return parse_iso_date(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Train Backend v2 football models with temporal validation.",
@@ -90,7 +107,30 @@ def parse_args():
     )
     parser.add_argument("--targets", type=parse_targets, default=list(DEFAULT_TARGETS))
     parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument(
+        "--data-cutoff",
+        type=parse_date,
+        help="Include only matches on or before this YYYY-MM-DD date.",
+    )
+    parser.add_argument(
+        "--test-start-date",
+        type=parse_date,
+        help=(
+            "Use matches before this YYYY-MM-DD date for training and matches "
+            "from this date onward for the untouched temporal test window."
+        ),
+    )
     parser.add_argument("--optuna-trials", type=parse_non_negative_int, default=50)
+    parser.add_argument(
+        "--model-scope",
+        choices=MODEL_SCOPES,
+        default="all",
+        help=(
+            "Select trained estimators. thesis_core keeps Logistic Regression, "
+            "Random Forest, MLP, XGBoost and LightGBM and excludes experimental "
+            "KNN, Ensemble, Stacking and LSTM models."
+        ),
+    )
     parser.add_argument(
         "--feature-set",
         choices=tuple(sorted(FEATURE_SETS)),
@@ -104,7 +144,10 @@ def parse_args():
     parser.add_argument(
         "--paired-common-sample",
         action="store_true",
-        help="Train selected variants on identical rows with complete positive 1X2 odds.",
+        help=(
+            "Train variants on identical per-target cohorts with complete matching odds. "
+            "Targets without matching odds use the full common cohort."
+        ),
     )
     parser.add_argument(
         "--skip-production-benchmark",
@@ -169,7 +212,7 @@ def _filter_confirmed_lineup_rows(dataframe, variant: str):
     return filtered, metadata
 
 
-def _build_paired_training_sample(dataframe, variant: str):
+def _build_paired_training_sample(dataframe, variant: str, target: str = "result"):
     lineup_sample = None
     if variant == "lineup_both" or variant in LINEUP_VARIANTS:
         lineup_variant = (
@@ -180,7 +223,14 @@ def _build_paired_training_sample(dataframe, variant: str):
             lineup_variant,
         )
 
-    dataframe, sample_metadata = build_common_odds_sample(dataframe)
+    required_columns = ODDS_REQUIREMENTS_BY_TARGET.get(
+        target,
+        BASE_ODDS_REQUIREMENTS,
+    )
+    dataframe, sample_metadata = build_common_odds_sample(
+        dataframe,
+        required_columns=required_columns,
+    )
     if lineup_sample:
         sample_metadata = {
             **sample_metadata,
@@ -190,7 +240,7 @@ def _build_paired_training_sample(dataframe, variant: str):
     return dataframe, sample_metadata, lineup_sample
 
 
-def _dataset_summary(df, audit: dict, sample_metadata: dict):
+def _dataset_summary(df, audit: dict, sample_metadata: dict, data_window: dict):
     dates = df.get("date")
     valid_dates = dates.dropna().astype(str) if dates is not None else []
     summary = {
@@ -203,6 +253,7 @@ def _dataset_summary(df, audit: dict, sample_metadata: dict):
         "dataset_builder_version": audit.get("expected_builder_version"),
     }
     summary["sample"] = sample_metadata
+    summary["data_window"] = data_window
     return summary
 
 
@@ -224,6 +275,14 @@ def _print_audit(audit: dict):
 
 def main():
     args = parse_args()
+    try:
+        data_cutoff, test_start_date = validate_training_window(
+            args.data_cutoff,
+            args.test_start_date,
+        )
+    except ValueError as exc:
+        print(f"Invalid training window: {exc}")
+        return 2
     data_dir = args.data_dir.resolve()
     audit = audit_feature_datasets(
         data_dir,
@@ -249,9 +308,30 @@ def main():
     if dataframe.empty:
         print("No finished feature rows found.")
         return 3
+    try:
+        dataframe, data_window = filter_dataframe_to_cutoff(
+            dataframe,
+            data_cutoff,
+        )
+    except ValueError as exc:
+        print(f"Training window failed: {exc}")
+        return 3
+    if data_cutoff:
+        print(
+            "Data cutoff: "
+            f"{data_window['date_min']}..{data_window['date_max']} "
+            f"({data_window['rows']} rows, "
+            f"{data_window['rows_removed_after_cutoff']} removed)"
+        )
+    if test_start_date:
+        print(f"Fixed temporal test window starts: {test_start_date.isoformat()}")
 
     sample_metadata = {
-        "policy": "variant_specific",
+        "policy": (
+            "target_specific_common_odds"
+            if args.paired_common_sample
+            else "variant_specific"
+        ),
         "rows_before": len(dataframe),
         "rows": len(dataframe),
         "rows_removed": 0,
@@ -259,30 +339,24 @@ def main():
         "sample_hash": None,
     }
     if args.paired_common_sample:
-        try:
-            dataframe, sample_metadata, lineup_sample = _build_paired_training_sample(
-                dataframe,
-                args.variant,
-            )
-            if lineup_sample:
-                print(
-                    "Confirmed lineup sample: "
-                    f"{lineup_sample['rows']} / {lineup_sample['rows_before']} rows "
-                    f"({lineup_sample['coverage']:.2%})"
-                )
-        except ValueError as exc:
-            print(f"Paired common sample failed: {exc}")
-            return 3
+        sample_metadata["required_columns_by_target"] = {
+            target: list(columns)
+            for target, columns in ODDS_REQUIREMENTS_BY_TARGET.items()
+            if target in args.targets
+        }
         print(
-            "Paired common sample: "
-            f"{sample_metadata['rows']} / {sample_metadata['rows_before']} rows "
-            f"({sample_metadata['coverage']:.2%}), "
-            f"hash={sample_metadata['sample_hash'][:12]}"
+            "Paired common sample: target-specific odds cohorts will be "
+            "applied inside each training target."
         )
     run_name = datetime.now(timezone.utc).strftime("backend_v2_%Y%m%dT%H%M%SZ")
     output_dir = (args.output_dir or data_dir / "models" / "experiments" / run_name).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    dataset_summary = _dataset_summary(dataframe, audit, sample_metadata)
+    dataset_summary = _dataset_summary(
+        dataframe,
+        audit,
+        sample_metadata,
+        data_window,
+    )
     run_summary = {
         "schema_version": 3,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -291,7 +365,10 @@ def main():
         "targets": args.targets,
         "variants": _variant_names(args.variant),
         "test_size": args.test_size,
+        "data_cutoff": data_cutoff.isoformat() if data_cutoff else None,
+        "test_start_date": test_start_date.isoformat() if test_start_date else None,
         "optuna_trials": args.optuna_trials,
+        "model_scope": args.model_scope,
         "feature_set": args.feature_set or "variant_default",
         "paired_common_sample": args.paired_common_sample,
         "production_benchmark_required": not args.skip_production_benchmark,
@@ -299,7 +376,6 @@ def main():
         "outputs": {},
     }
 
-    odds_columns = [column for column in dataframe.columns if column.startswith("odds_")]
     for variant in _variant_names(args.variant):
         variant_config = VARIANT_CONFIG[variant]
         effective_feature_set = args.feature_set or variant_config["feature_set"]
@@ -324,10 +400,20 @@ def main():
             )
 
         if variant_config["odds_used"]:
-            odds_requirements = {"__all__": list(BASE_ODDS_REQUIREMENTS)}
+            odds_requirements = {
+                target: list(columns)
+                for target, columns in ODDS_REQUIREMENTS_BY_TARGET.items()
+            }
         else:
-            training_frame = training_frame.drop(columns=odds_columns, errors="ignore")
             odds_requirements = None
+        cohort_requirements = (
+            {
+                target: list(columns)
+                for target, columns in ODDS_REQUIREMENTS_BY_TARGET.items()
+            }
+            if args.paired_common_sample
+            else None
+        )
 
         variant_sample_metadata = dict(sample_metadata)
         if lineup_sample:
@@ -336,6 +422,7 @@ def main():
             training_frame,
             audit,
             variant_sample_metadata,
+            data_window,
         )
 
         reference_predictor = None
@@ -362,8 +449,15 @@ def main():
             test_size=args.test_size,
             targets=args.targets,
             odds_requirements=odds_requirements,
+            cohort_requirements=cohort_requirements,
             optuna_trials=args.optuna_trials,
             reference_predictor=reference_predictor,
+            test_start_date=(
+                test_start_date.isoformat()
+                if test_start_date is not None
+                else None
+            ),
+            model_scope=args.model_scope,
         )
         if not results:
             print(f"No targets trained for {variant}.")
@@ -403,11 +497,18 @@ def main():
                 "variant": variant,
                 "targets": sorted(predictor.training_stats),
                 "feature_set": effective_feature_set,
+                "model_scope": args.model_scope,
                 "accepted_targets": acceptance["accepted_targets"],
                 "rejected_targets": acceptance["rejected_targets"],
                 "production_reference": (
                     reference_predictor.get_artifact_contract()
                     if reference_predictor is not None
+                    else None
+                ),
+                "data_window": data_window,
+                "test_start_date": (
+                    test_start_date.isoformat()
+                    if test_start_date is not None
                     else None
                 ),
             },

@@ -2,7 +2,10 @@ import unittest
 
 import pandas as pd
 
-from sofascore.temporal_validation import build_temporal_holdout
+from sofascore.temporal_validation import (
+    build_temporal_holdout,
+    build_temporal_holdout_from_cutoff,
+)
 
 
 class TemporalValidationTests(unittest.TestCase):
@@ -50,6 +53,40 @@ class TemporalValidationTests(unittest.TestCase):
                 dates,
                 holdout_fraction=0.25,
                 min_train_rows=3,
+                min_holdout_rows=2,
+            )
+
+    def test_builds_fixed_holdout_from_requested_date(self):
+        dates = pd.Series(
+            [
+                "2026-03-30",
+                "2026-03-31",
+                "2026-04-01",
+                "2026-04-01",
+                "2026-07-19",
+            ],
+            index=[10, 11, 12, 13, 14],
+        )
+
+        split = build_temporal_holdout_from_cutoff(
+            dates,
+            cutoff="2026-04-01",
+            min_train_rows=2,
+            min_holdout_rows=3,
+        )
+
+        self.assertEqual(split.train_index, [10, 11])
+        self.assertEqual(split.holdout_index, [12, 13, 14])
+        self.assertEqual(split.cutoff.date().isoformat(), "2026-04-01")
+
+    def test_fixed_holdout_rejects_insufficient_test_window(self):
+        dates = pd.Series(["2026-03-30", "2026-03-31", "2026-04-01"])
+
+        with self.assertRaisesRegex(ValueError, "does not contain enough rows"):
+            build_temporal_holdout_from_cutoff(
+                dates,
+                cutoff="2026-04-01",
+                min_train_rows=2,
                 min_holdout_rows=2,
             )
 

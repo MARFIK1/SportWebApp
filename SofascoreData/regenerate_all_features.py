@@ -13,6 +13,7 @@ import json
 import re
 import time
 import argparse
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -32,10 +33,124 @@ from sofascore.features import MLFeatureGenerator
 
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
 DEFAULT_DATA_DIR = os.environ.get('SOFASCORE_DATA_DIR', os.path.join(SCRIPT_DIR, 'data'))
+SOURCE_FINGERPRINT_VERSION = 1
+FEATURE_CODE_FILES = (
+    'regenerate_all_features.py',
+    'sofascore/dataset_builder.py',
+    'sofascore/features.py',
+    'sofascore/utils.py',
+)
 
 
 def create_generator():
     return MLFeatureGenerator(data_manager=None)
+
+
+def _hash_payload(payload):
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+    return hashlib.sha256(serialized.encode('utf-8')).hexdigest()
+
+
+def _file_state(path, root):
+    path = Path(path)
+    stat = path.stat()
+    try:
+        label = path.relative_to(root).as_posix()
+    except ValueError:
+        label = path.name
+    return {
+        'path': label,
+        'size': stat.st_size,
+        'mtime_ns': stat.st_mtime_ns,
+    }
+
+
+def _directory_json_state(directory, root):
+    directory = Path(directory)
+    if not directory.exists():
+        return []
+    return [
+        _file_state(path, root)
+        for path in sorted(directory.rglob('*.json'))
+        if path.is_file()
+    ]
+
+
+def build_feature_code_fingerprint(script_dir=None):
+    root = Path(script_dir or SCRIPT_DIR).resolve()
+    code_files = [root / relative for relative in FEATURE_CODE_FILES]
+    entries = []
+    for path in code_files:
+        if not path.is_file():
+            continue
+        entries.append({
+            'path': path.relative_to(root).as_posix(),
+            'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
+    return {
+        'schema_version': SOURCE_FINGERPRINT_VERSION,
+        'digest': _hash_payload(entries),
+        'files': len(entries),
+    }
+
+
+def build_global_player_stats_fingerprint(data_dir=None):
+    root = Path(data_dir or DEFAULT_DATA_DIR).resolve()
+    files = [
+        _file_state(path, root)
+        for path in sorted((root / 'league').glob('*/*/player_stats/*.json'))
+        if path.is_file()
+    ]
+    return {
+        'schema_version': SOURCE_FINGERPRINT_VERSION,
+        'digest': _hash_payload(files),
+        'files': len(files),
+    }
+
+
+def build_season_source_fingerprint(
+    base_path,
+    raw_dependencies,
+    code_fingerprint=None,
+    external_player_stats_fingerprint=None,
+):
+    root = Path(base_path).resolve()
+    code_fingerprint = code_fingerprint or build_feature_code_fingerprint()
+    payload = {
+        'schema_version': SOURCE_FINGERPRINT_VERSION,
+        'builder_version': DATASET_BUILDER_VERSION,
+        'code': code_fingerprint.get('digest'),
+        'raw': [
+            _file_state(path, root)
+            for path in raw_dependencies
+            if Path(path).is_file()
+        ],
+        'lineups': _directory_json_state(root / 'lineups', root),
+        'player_stats': _directory_json_state(root / 'player_stats', root),
+        'external_player_stats': (
+            external_player_stats_fingerprint.get('digest')
+            if external_player_stats_fingerprint
+            else None
+        ),
+    }
+    return {
+        'schema_version': SOURCE_FINGERPRINT_VERSION,
+        'digest': _hash_payload(payload),
+        'raw_files': len(payload['raw']),
+        'lineup_files': len(payload['lineups']),
+        'player_stats_files': len(payload['player_stats']),
+        'external_player_stats_files': (
+            external_player_stats_fingerprint.get('files', 0)
+            if external_player_stats_fingerprint
+            else 0
+        ),
+        'code_digest': code_fingerprint.get('digest'),
+    }
 
 
 
@@ -193,7 +308,8 @@ def select_current_seasons(season_files, raw_matches_by_file):
     return {loaded_seasons[-1]} if loaded_seasons else set()
 
 
-def is_season_stale(raw_path, features_path, raw_file, comp_name, season):
+def is_season_stale(raw_path, features_path, raw_file, comp_name, season,
+                    expected_source_fingerprint=None):
     raw_file_path = os.path.join(raw_path, raw_file)
     feat_file_path = os.path.join(features_path, f'features_{comp_name}_{season}.json')
 
@@ -205,7 +321,12 @@ def is_season_stale(raw_path, features_path, raw_file, comp_name, season):
     try:
         with open(feat_file_path, 'r', encoding='utf-8') as feature_file:
             metadata = json.load(feature_file).get('metadata', {})
-        return metadata.get('dataset_builder_version') != DATASET_BUILDER_VERSION
+        if metadata.get('dataset_builder_version') != DATASET_BUILDER_VERSION:
+            return True
+        if expected_source_fingerprint is not None:
+            actual = metadata.get('source_fingerprint') or {}
+            return actual.get('digest') != expected_source_fingerprint.get('digest')
+        return False
     except (OSError, ValueError, TypeError):
         return True
 
@@ -225,7 +346,9 @@ def generate_season_features(matches, player_stats, generator, season,
 
 def regenerate_competition_features(comp_type, country, comp_name,
                                     force=False, current_only=False,
-                                    club_stats_index=None):
+                                    club_stats_index=None,
+                                    code_fingerprint=None,
+                                    external_player_stats_fingerprint=None):
     base_path = str(
         competition_features_path(
             Path(DEFAULT_DATA_DIR),
@@ -255,6 +378,21 @@ def regenerate_competition_features(comp_type, country, comp_name,
         raw_matches_by_file[raw_file] = matches
         history_matches.extend(matches)
 
+    code_fingerprint = code_fingerprint or build_feature_code_fingerprint()
+    raw_dependencies = []
+    source_fingerprints = {}
+    for raw_file, season in all_season_files:
+        raw_file_full = os.path.join(raw_path, raw_file)
+        if raw_file not in raw_matches_by_file:
+            continue
+        raw_dependencies.append(raw_file_full)
+        source_fingerprints[(raw_file, season)] = build_season_source_fingerprint(
+            base_path,
+            raw_dependencies,
+            code_fingerprint=code_fingerprint,
+            external_player_stats_fingerprint=external_player_stats_fingerprint,
+        )
+
     selected_seasons = {season for _, season in all_season_files}
     if current_only:
         selected_seasons = select_current_seasons(
@@ -275,12 +413,22 @@ def regenerate_competition_features(comp_type, country, comp_name,
     has_player_stats = False
     invalid_scores_removed = 0
     builder_versions = set()
+    used_source_fingerprints = {}
+    included_seasons = set()
     for raw_file, season in all_season_files:
         feat_file = os.path.join(features_path, f'features_{comp_name}_{season}.json')
+        source_fingerprint = source_fingerprints.get((raw_file, season))
         can_regenerate = not current_only or season in selected_seasons
         needs_regen = can_regenerate and (
             force
-            or is_season_stale(raw_path, features_path, raw_file, comp_name, season)
+            or is_season_stale(
+                raw_path,
+                features_path,
+                raw_file,
+                comp_name,
+                season,
+                expected_source_fingerprint=source_fingerprint,
+            )
         )
 
         if not needs_regen and os.path.exists(feat_file):
@@ -289,8 +437,12 @@ def regenerate_competition_features(comp_type, country, comp_name,
                     cached_data = json.load(feature_file)
                 samples = cached_data.get('samples', [])
                 all_samples.extend(samples)
+                included_seasons.add(season)
                 metadata = cached_data.get('metadata', {})
                 builder_versions.add(metadata.get('dataset_builder_version', 'legacy'))
+                cached_fingerprint = metadata.get('source_fingerprint')
+                if cached_fingerprint:
+                    used_source_fingerprints[season] = cached_fingerprint.get('digest')
                 has_player_stats = has_player_stats or bool(metadata.get('has_player_stats'))
                 invalid_scores_removed += metadata.get('invalid_scores_removed', 0)
                 fin = metadata.get('finished_samples', 0)
@@ -338,6 +490,7 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 'competition': comp_name,
                 'season': season,
                 'dataset_builder_version': DATASET_BUILDER_VERSION,
+                'source_fingerprint': source_fingerprint,
                 'total_samples': len(result.samples),
                 'finished_samples': result.finished_samples,
                 'upcoming_samples': result.pending_samples,
@@ -352,8 +505,11 @@ def regenerate_competition_features(comp_type, country, comp_name,
             json.dump(output_data, feature_file, ensure_ascii=False, indent=2)
 
         all_samples.extend(result.samples)
+        included_seasons.add(season)
         invalid_scores_removed += result.invalid_scores_removed
         builder_versions.add(DATASET_BUILDER_VERSION)
+        if source_fingerprint:
+            used_source_fingerprints[season] = source_fingerprint.get('digest')
         regenerated += 1
         print(
             f"  Season {season}: {result.finished_samples} fin + "
@@ -368,6 +524,16 @@ def regenerate_competition_features(comp_type, country, comp_name,
     )
     total_upcoming = len(all_samples) - total_finished
     source_builder_versions = sorted(builder_versions, key=str)
+    expected_source_fingerprints = {
+        season: fingerprint.get('digest')
+        for (_, season), fingerprint in source_fingerprints.items()
+        if season in included_seasons
+    }
+    source_fingerprint_complete = bool(included_seasons) and all(
+        used_source_fingerprints.get(season)
+        == expected_source_fingerprints.get(season)
+        for season in included_seasons
+    )
     combined_builder_version = (
         DATASET_BUILDER_VERSION
         if builder_versions == {DATASET_BUILDER_VERSION}
@@ -383,6 +549,9 @@ def regenerate_competition_features(comp_type, country, comp_name,
                 'competition': comp_name,
                 'dataset_builder_version': combined_builder_version,
                 'source_builder_versions': source_builder_versions,
+                'source_fingerprint_schema_version': SOURCE_FINGERPRINT_VERSION,
+                'source_fingerprints': used_source_fingerprints,
+                'source_fingerprint_complete': source_fingerprint_complete,
                 'total_samples': len(all_samples),
                 'finished_samples': total_finished,
                 'upcoming_samples': total_upcoming,
@@ -429,6 +598,7 @@ def discover_competitions(comp_type):
 
 
 def main():
+    global DEFAULT_DATA_DIR
     parser = argparse.ArgumentParser(
         description='Regenerate ML features for football matches (incremental).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -440,6 +610,10 @@ Examples:
 """
     )
     parser.add_argument(
+        '--data-dir', type=Path, default=Path(DEFAULT_DATA_DIR),
+        help='Data directory to read and update (defaults to SOFASCORE_DATA_DIR or ./data).'
+    )
+    parser.add_argument(
         '--current', '-c', action='store_true',
         help='Only regenerate current season. Fastest for daily use.'
     )
@@ -448,6 +622,7 @@ Examples:
         help='Force full regeneration of ALL seasons (ignore cache).'
     )
     args = parser.parse_args()
+    DEFAULT_DATA_DIR = str(args.data_dir.resolve())
 
     t_start = time.time()
 
@@ -464,6 +639,8 @@ Examples:
 
     results_by_type = {}
     club_stats_index = None
+    code_fingerprint = build_feature_code_fingerprint()
+    global_player_stats_fingerprint = None
 
     for comp_type in COMPETITION_TYPES:
         print(f"\n{'='*60}")
@@ -474,6 +651,7 @@ Examples:
             print("  Loading club player stats index...")
             club_stats_index = load_all_league_player_stats()
             print(f"  Loaded stats for {len(club_stats_index)} players")
+            global_player_stats_fingerprint = build_global_player_stats_fingerprint()
 
         competitions = discover_competitions(comp_type)
         if not competitions:
@@ -487,7 +665,13 @@ Examples:
                 comp_type, country, comp,
                 force=args.force,
                 current_only=args.current,
-                club_stats_index=club_stats_index if comp_type in ('european', 'international') else None
+                club_stats_index=club_stats_index if comp_type in ('european', 'international') else None,
+                code_fingerprint=code_fingerprint,
+                external_player_stats_fingerprint=(
+                    global_player_stats_fingerprint
+                    if comp_type in ('european', 'international')
+                    else None
+                ),
             )
             if result:
                 results.append({'competition': f'{country}/{comp}', **result})
