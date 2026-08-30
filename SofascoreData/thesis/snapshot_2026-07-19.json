@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "thesis-2026-07-19-v1",
+  "analysis_start": "2026-04-01",
+  "analysis_end": "2026-07-19",
+  "data_cutoff": "2026-07-19",
+  "required_dataset_builder_version": 5,
+  "required_source_fingerprint_version": 1,
+  "notes": "Evaluation reports cover 2026-04-01 through the World Cup final. Historical feature rows before the analysis window remain available as training context."
+}

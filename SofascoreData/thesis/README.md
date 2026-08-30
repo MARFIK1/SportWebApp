@@ -1,0 +1,113 @@
+# Thesis snapshot 2026-07-19
+
+This profile separates the reproducible thesis dataset from the continuously
+updated application. The analysis window is 2026-04-01 through 2026-07-19,
+inclusive. Historical rows before 2026-04-01 remain available as model context,
+while rows after 2026-07-19 are excluded.
+
+The live `main` checkout and `SportWebApp-daily-stable` keep running normally.
+Do not point the daily task at the exported thesis directory.
+
+There are two complementary frozen artifacts:
+
+- the research package created by `create_thesis_snapshot.py`, containing
+  feature datasets and evaluation reports
+- the runnable demo package created by `npm run snapshot:thesis-demo`,
+  containing trimmed frontend data, report sidecars and model metadata
+
+The runnable package uses the current application code but exposes no match or
+report after `2026-07-19`; its implicit current date is frozen to the same day.
+
+## Before export
+
+Feature datasets must use the builder version required by
+`snapshot_2026-07-19.json` and carry a matching source fingerprint. Rebuild the
+daily-stable datasets with the current generator before auditing them:
+
+```powershell
+$workspaceRoot = Split-Path -Parent $PWD.Path
+$stableRoot = (Resolve-Path "..\SportWebApp-daily-stable\SofascoreData").Path
+$snapshotRoot = Join-Path $workspaceRoot "SportWebApp-thesis-2026-07-19"
+
+python SofascoreData/regenerate_all_features.py `
+  --data-dir (Join-Path $stableRoot "data") `
+  --force
+```
+
+Then audit the source without copying files:
+
+```powershell
+python SofascoreData/create_thesis_snapshot.py `
+  --source-root $stableRoot `
+  --audit-only
+```
+
+After rebuilding stale feature datasets, create the immutable data package in a
+directory outside the Git checkout:
+
+```powershell
+python SofascoreData/create_thesis_snapshot.py `
+  --source-root $stableRoot `
+  --output-dir $snapshotRoot
+```
+
+The export contains filtered feature datasets, reports from the analysis
+window, `snapshot_manifest.json`, and `checksums.sha256`. Model artifacts and
+diagnostics are added only after the evaluation run is complete.
+
+## Evaluation training
+
+Use the exported `data` directory and explicit temporal boundaries:
+
+```powershell
+python SofascoreData/train_models.py `
+  --data-dir (Join-Path $snapshotRoot "data") `
+  --data-cutoff 2026-07-19 `
+  --test-start-date 2026-04-01 `
+  --variant both `
+  --targets all `
+  --paired-common-sample `
+  --model-scope thesis_core `
+  --skip-production-benchmark `
+  --save-models `
+  --output-dir (Join-Path $snapshotRoot "model-runs\thesis-core-evaluation")
+```
+
+The untouched 2026-04-01 through 2026-07-19 window is used for evaluation.
+Do not describe a model refitted on that evaluation window as an independently
+evaluated model.
+
+`thesis_core` trains Logistic Regression, Random Forest, MLP, XGBoost and
+LightGBM. KNN, soft voting, stacking and LSTM remain available in the normal
+`all` scope, but are excluded from this primary benchmark so experimental
+meta-model weighting does not blur the comparison of base estimators.
+
+The repository records the exact Python environment in
+`requirements-lock.txt` and the runtime versions in `environment.json`.
+Install the lock only in a dedicated virtual environment.
+
+The offline feature evaluation starts on 2026-04-01. If the source audit warns
+that the first stored daily report is later (currently 2026-04-16), report-based
+application evaluation must use that later availability date unless the missing
+reports are recovered from an archived checkout.
+
+## Runnable application demo
+
+From the application checkout, create and run the frozen frontend package:
+
+```powershell
+npm run snapshot:thesis-demo
+npm run dev:thesis-demo -- --port 3001
+```
+
+After the final thesis model run is accepted, regenerate it with the immutable
+model directory:
+
+```powershell
+npm run snapshot:thesis-demo -- `
+  --models-dir (Join-Path $snapshotRoot "model-runs\accepted")
+```
+
+Commit the demo implementation first, then tag that exact code revision before
+recording. The external data package is intentionally not committed because it
+contains generated reports and large source-derived JSON files.

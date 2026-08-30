@@ -1,0 +1,10 @@
+{
+  "captured_at": "2026-08-30",
+  "python": "3.11.9",
+  "python_implementation": "CPython 64-bit, MSC v.1938",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "node": "24.12.0",
+  "npm": "11.6.2",
+  "python_lock": "requirements-lock.txt",
+  "node_lock": "../../package-lock.json"
+}
