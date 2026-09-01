@@ -68,6 +68,7 @@ python SofascoreData/train_models.py `
   --targets all `
   --paired-common-sample `
   --model-scope thesis_core `
+  --optuna-seed 42 `
   --skip-production-benchmark `
   --save-models `
   --output-dir (Join-Path $snapshotRoot "model-runs\thesis-core-evaluation")
@@ -81,6 +82,8 @@ evaluated model.
 LightGBM. KNN, soft voting, stacking and LSTM remain available in the normal
 `all` scope, but are excluded from this primary benchmark so experimental
 meta-model weighting does not blur the comparison of base estimators.
+The explicit Optuna seed makes repeated hyperparameter searches reproducible
+and is recorded in the training run metadata.
 
 The repository records the exact Python environment in
 `requirements-lock.txt` and the runtime versions in `environment.json`.

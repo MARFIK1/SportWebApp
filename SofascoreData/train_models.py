@@ -122,6 +122,12 @@ def parse_args():
     )
     parser.add_argument("--optuna-trials", type=parse_non_negative_int, default=50)
     parser.add_argument(
+        "--optuna-seed",
+        type=parse_non_negative_int,
+        default=42,
+        help="Seed used by the Optuna samplers (default: 42).",
+    )
+    parser.add_argument(
         "--model-scope",
         choices=MODEL_SCOPES,
         default="all",
@@ -368,6 +374,7 @@ def main():
         "data_cutoff": data_cutoff.isoformat() if data_cutoff else None,
         "test_start_date": test_start_date.isoformat() if test_start_date else None,
         "optuna_trials": args.optuna_trials,
+        "optuna_seed": args.optuna_seed,
         "model_scope": args.model_scope,
         "feature_set": args.feature_set or "variant_default",
         "paired_common_sample": args.paired_common_sample,
@@ -451,6 +458,7 @@ def main():
             odds_requirements=odds_requirements,
             cohort_requirements=cohort_requirements,
             optuna_trials=args.optuna_trials,
+            optuna_seed=args.optuna_seed,
             reference_predictor=reference_predictor,
             test_start_date=(
                 test_start_date.isoformat()

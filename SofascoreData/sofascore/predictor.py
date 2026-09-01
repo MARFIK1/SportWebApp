@@ -72,6 +72,14 @@ except ImportError:
 
 
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
+DEFAULT_OPTUNA_SEED = 42
+
+
+def _create_optuna_study(seed: int):
+    return optuna.create_study(
+        direction='maximize',
+        sampler=optuna.samplers.TPESampler(seed=seed),
+    )
 
 
 def _configure_estimator_for_single_thread_inference(estimator, seen=None):
@@ -1751,7 +1759,8 @@ class UniversalPredictor:
                          reference_predictor=None,
                          test_start_date: Optional[str] = None,
                          cohort_requirements: Optional[Dict[str, List[str]]] = None,
-                         model_scope: str = 'all') -> Dict:
+                         model_scope: str = 'all',
+                         optuna_seed: int = DEFAULT_OPTUNA_SEED) -> Dict:
         if model_scope not in MODEL_SCOPES:
             raise ValueError(
                 f"Unknown model scope '{model_scope}'. "
@@ -1803,6 +1812,7 @@ class UniversalPredictor:
                 reference_predictor,
                 test_start_date,
                 model_scope,
+                optuna_seed,
             )
             all_results[target] = results
             if target in self.training_stats:
@@ -1848,7 +1858,15 @@ class UniversalPredictor:
 
         return all_results
 
-    def _optuna_tune(self, X_train, y_train, sample_weights, target, n_trials=50):
+    def _optuna_tune(
+        self,
+        X_train,
+        y_train,
+        sample_weights,
+        target,
+        n_trials=50,
+        seed=DEFAULT_OPTUNA_SEED,
+    ):
         config = TARGET_CONFIGS[target]
         is_binary = config['task'] == 'binary'
         tscv = TimeSeriesSplit(n_splits=3)
@@ -1880,7 +1898,7 @@ class UniversalPredictor:
                                      params={'sample_weight': sample_weights})
             return scores.mean()
 
-        study = optuna.create_study(direction='maximize')
+        study = _create_optuna_study(seed)
         study.optimize(xgb_objective, n_trials=n_trials, show_progress_bar=False)
         xgb_best = study.best_params
         print(f"Optuna XGBoost: {score_label}={study.best_value:.4f} ({n_trials} trials)")
@@ -1905,7 +1923,7 @@ class UniversalPredictor:
                                      params={'sample_weight': sample_weights})
             return scores.mean()
 
-        study = optuna.create_study(direction='maximize')
+        study = _create_optuna_study(seed)
         study.optimize(lgb_objective, n_trials=n_trials, show_progress_bar=False)
         lgb_best = study.best_params
         print(f"Optuna LightGBM: {score_label}={study.best_value:.4f} ({n_trials} trials)")
@@ -2327,6 +2345,7 @@ class UniversalPredictor:
         reference_predictor=None,
         test_start_date: Optional[str] = None,
         model_scope: str = 'all',
+        optuna_seed: int = DEFAULT_OPTUNA_SEED,
     ) -> Dict:
         config = TARGET_CONFIGS[target]
         is_regression = config.get('task') == 'regression'
@@ -2587,7 +2606,12 @@ class UniversalPredictor:
 
         if optuna_trials > 0:
             xgb_tuned, lgb_tuned = self._optuna_tune(
-                X_model_train, y_model_train, sample_weights_model, target, n_trials=optuna_trials
+                X_model_train,
+                y_model_train,
+                sample_weights_model,
+                target,
+                n_trials=optuna_trials,
+                seed=optuna_seed,
             )
         else:
             print("Optuna tuning skipped; using default tree parameters")
