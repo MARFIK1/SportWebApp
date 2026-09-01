@@ -2,7 +2,11 @@ import json
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
-from sofascore.data_layout import FLAT_COMPETITION_TYPES, competition_features_path
+from sofascore.data_layout import (
+    FLAT_COMPETITION_TYPES,
+    competition_features_path,
+    discover_feature_competitions,
+)
 
 
 def read_json_metadata(path: Path, max_bytes: int = 1024 * 1024) -> Dict:
@@ -87,6 +91,18 @@ def audit_feature_datasets(
 ) -> Dict:
     data_dir = Path(data_dir)
     discovered = discover_raw_competitions(data_dir, competition_types, registry)
+    feature_discovered = discover_feature_competitions(
+        data_dir,
+        competition_types,
+        registry,
+    )
+    for comp_type, countries in feature_discovered.items():
+        discovered_countries = discovered.setdefault(comp_type, {})
+        for country, competitions in countries.items():
+            discovered_competitions = discovered_countries.setdefault(country, [])
+            discovered_countries[country] = sorted(
+                set(discovered_competitions).union(competitions)
+            )
     datasets = []
     issues = []
 

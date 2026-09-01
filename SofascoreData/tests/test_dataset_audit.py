@@ -7,9 +7,10 @@ from sofascore.dataset_audit import audit_feature_datasets, read_json_metadata
 
 
 class DatasetAuditTests(unittest.TestCase):
-    def _write_dataset(self, root: Path, version):
+    def _write_dataset(self, root: Path, version, *, include_raw=True):
         competition = root / "league" / "poland" / "test_league"
-        (competition / "raw").mkdir(parents=True)
+        if include_raw:
+            (competition / "raw").mkdir(parents=True)
         features = competition / "features"
         features.mkdir(parents=True)
         path = features / "features_all_seasons.json"
@@ -35,6 +36,17 @@ class DatasetAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._write_dataset(root, 2)
+
+            audit = audit_feature_datasets(root, 2, ["league"])
+
+            self.assertTrue(audit["valid"])
+            self.assertEqual(audit["dataset_count"], 1)
+            self.assertEqual(audit["total_samples"], 3)
+
+    def test_accepts_feature_only_snapshot_dataset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._write_dataset(root, 2, include_raw=False)
 
             audit = audit_feature_datasets(root, 2, ["league"])
 
