@@ -29,6 +29,7 @@ class ThesisResultsTests(unittest.TestCase):
             "targets": {
                 target: {
                     "task": "binary",
+                    "class_names": {"0": "NO", "1": "YES"},
                     "stats": {
                         "total_matches": 100,
                         "train_matches": 80,
@@ -48,6 +49,7 @@ class ThesisResultsTests(unittest.TestCase):
                                 "accuracy": 0.6,
                                 "macro_f1": 0.56,
                                 "brier_score": 0.48,
+                                "confusion_matrix": [[6, 4], [3, 7]],
                             },
                         },
                         "cv_results": {
@@ -146,6 +148,7 @@ class ThesisResultsTests(unittest.TestCase):
             self.assertEqual([row["target"] for row in rows], ["over_2_5", "result"])
             self.assertEqual(manifest["outputs"]["evaluation_rows"], 2)
             self.assertEqual(manifest["outputs"]["model_rows"], 2)
+            self.assertEqual(manifest["outputs"]["confusion_rows"], 8)
             self.assertEqual(len(promotion_rows), 3)
             fallback_row = next(
                 row for row in promotion_rows
@@ -163,6 +166,7 @@ class ThesisResultsTests(unittest.TestCase):
             self.assertIn("supplemental/run.json", input_sources)
             self.assertEqual(len(input_sources), len(set(input_sources)))
             self.assertNotIn(str(root), exported_text)
+            self.assertTrue((output / "confusion_matrices.csv").exists())
             self.assertTrue((output / "checksums.sha256").exists())
 
     def test_export_rejects_inconsistent_evaluation_windows(self):

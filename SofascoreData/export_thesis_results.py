@@ -33,6 +33,7 @@ def main():
         f"Thesis results exported to {args.output_dir.resolve()}: "
         f"{counts['evaluation_rows']} evaluations, "
         f"{counts['model_rows']} model rows, "
+        f"{counts['confusion_rows']} confusion-matrix cells, "
         f"{counts['promotion_rows']} promotion decisions"
     )
     return 0

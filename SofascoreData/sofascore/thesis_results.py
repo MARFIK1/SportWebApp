@@ -64,6 +64,16 @@ MODEL_FIELDS = (
     "model_size_kb",
 )
 
+CONFUSION_FIELDS = (
+    "source_run",
+    "variant",
+    "target",
+    "model",
+    "actual_class",
+    "predicted_class",
+    "count",
+)
+
 PROMOTION_FIELDS = (
     "variant",
     "target",
@@ -130,10 +140,41 @@ def _gate_values(task: str, metrics: dict[str, Any]) -> tuple[str, Any, Any, Any
     )
 
 
+def _confusion_rows(
+    source_run: str,
+    variant: str,
+    target: str,
+    model: str,
+    class_names: Any,
+    matrix: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(matrix, list):
+        return []
+    labels = class_names if isinstance(class_names, dict) else {}
+    rows: list[dict[str, Any]] = []
+    for actual_index, values in enumerate(matrix):
+        if isinstance(values, str):
+            values = values.split()
+        if not isinstance(values, list):
+            return []
+        for predicted_index, count in enumerate(values):
+            rows.append({
+                "source_run": source_run,
+                "variant": variant,
+                "target": target,
+                "model": model,
+                "actual_class": labels.get(str(actual_index), str(actual_index)),
+                "predicted_class": labels.get(str(predicted_index), str(predicted_index)),
+                "count": count,
+            })
+    return rows
+
+
 def _collect_run(
     run_dir: Path,
 ) -> tuple[
     dict[str, Any],
+    list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[tuple[str, Path]],
@@ -160,6 +201,7 @@ def _collect_run(
     }
     evaluation_rows: list[dict[str, Any]] = []
     model_rows: list[dict[str, Any]] = []
+    confusion_rows: list[dict[str, Any]] = []
     input_records = [(f"{run_dir.name}/run.json", run_path)]
 
     for variant in variants:
@@ -243,8 +285,16 @@ def _collect_run(
                     "cv_std": cv.get("std"),
                     **{field: values.get(field) for field in MODEL_FIELDS[7:]},
                 })
+                confusion_rows.extend(_confusion_rows(
+                    run_dir.name,
+                    str(variant),
+                    target,
+                    model,
+                    target_data.get("class_names"),
+                    values.get("confusion_matrix"),
+                ))
 
-    return provenance, evaluation_rows, model_rows, input_records
+    return provenance, evaluation_rows, model_rows, confusion_rows, input_records
 
 
 def _collect_promotions(
@@ -381,12 +431,19 @@ def export_thesis_results(
     runs: list[dict[str, Any]] = []
     evaluation_rows: list[dict[str, Any]] = []
     model_rows: list[dict[str, Any]] = []
+    confusion_rows: list[dict[str, Any]] = []
     input_records: list[tuple[str, Path]] = []
     seen_targets: set[tuple[str, str]] = set()
     expected_window: tuple[Any, Any] | None = None
 
     for run_dir in run_dirs:
-        provenance, run_evaluations, run_models, run_inputs = _collect_run(run_dir)
+        (
+            provenance,
+            run_evaluations,
+            run_models,
+            run_confusions,
+            run_inputs,
+        ) = _collect_run(run_dir)
         window = (provenance.get("data_cutoff"), provenance.get("test_start_date"))
         if expected_window is None:
             expected_window = window
@@ -402,6 +459,7 @@ def export_thesis_results(
         runs.append(provenance)
         evaluation_rows.extend(run_evaluations)
         model_rows.extend(run_models)
+        confusion_rows.extend(run_confusions)
         input_records.extend(run_inputs)
 
     promotion_rows, promotion_inputs = _collect_promotions(accepted_dir)
@@ -410,15 +468,24 @@ def export_thesis_results(
     model_rows.sort(
         key=lambda row: (str(row["variant"]), str(row["target"]), str(row["model"]))
     )
+    confusion_rows.sort(key=lambda row: (
+        str(row["variant"]),
+        str(row["target"]),
+        str(row["model"]),
+        str(row["actual_class"]),
+        str(row["predicted_class"]),
+    ))
     promotion_rows.sort(key=lambda row: (str(row["variant"]), str(row["target"])))
 
     output_dir.mkdir(parents=True, exist_ok=True)
     evaluation_path = output_dir / "evaluation_summary.csv"
     models_path = output_dir / "model_metrics.csv"
+    confusion_path = output_dir / "confusion_matrices.csv"
     promotions_path = output_dir / "promotion_summary.csv"
     summary_path = output_dir / "README.md"
     _write_csv(evaluation_path, EVALUATION_FIELDS, evaluation_rows)
     _write_csv(models_path, MODEL_FIELDS, model_rows)
+    _write_csv(confusion_path, CONFUSION_FIELDS, confusion_rows)
     _write_csv(promotions_path, PROMOTION_FIELDS, promotion_rows)
     _write_summary(summary_path, runs, evaluation_rows, promotion_rows)
 
@@ -434,6 +501,7 @@ def export_thesis_results(
         "outputs": {
             "evaluation_rows": len(evaluation_rows),
             "model_rows": len(model_rows),
+            "confusion_rows": len(confusion_rows),
             "promotion_rows": len(promotion_rows),
         },
     }
@@ -441,7 +509,14 @@ def export_thesis_results(
     _write_json(manifest_path, manifest)
 
     output_paths = sorted(
-        (evaluation_path, models_path, promotions_path, summary_path, manifest_path),
+        (
+            evaluation_path,
+            models_path,
+            confusion_path,
+            promotions_path,
+            summary_path,
+            manifest_path,
+        ),
         key=lambda item: item.name,
     )
     checksum_lines = [

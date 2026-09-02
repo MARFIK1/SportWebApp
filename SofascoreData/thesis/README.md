@@ -107,9 +107,24 @@ python SofascoreData/export_thesis_results.py `
   --output-dir (Join-Path $snapshotRoot "results")
 ```
 
-The export contains evaluation and per-model CSV tables, the final promotion
-decisions, a readable Markdown summary, input provenance and SHA-256 checksums.
-Absolute source paths are intentionally excluded from these artifacts.
+The export contains evaluation and per-model CSV tables, normalized confusion
+matrices, the final promotion decisions, a readable Markdown summary, input
+provenance and SHA-256 checksums. Absolute source paths are intentionally
+excluded from these artifacts.
+
+Generate publication-ready PNG and SVG figures from that immutable result
+package:
+
+```powershell
+python SofascoreData/export_thesis_figures.py `
+  --results-dir (Join-Path $snapshotRoot "results") `
+  --output-dir (Join-Path $snapshotRoot "figures")
+```
+
+The figure package contains target-level classification and regression
+comparisons, calibration metrics, promotion outcomes and row-normalized
+confusion matrices. Its manifest records the exact hashes of every source CSV
+and generated image without storing machine-specific paths.
 
 ## Runnable application demo
 
