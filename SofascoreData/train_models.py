@@ -12,6 +12,11 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from sofascore.config import COMPETITIONS
 from sofascore.dataset_audit import audit_feature_datasets
 from sofascore.dataset_builder import DATASET_BUILDER_VERSION
+from sofascore.hyperparameter_profile import (
+    build_hyperparameter_profile,
+    load_hyperparameter_profile,
+    write_hyperparameter_profile,
+)
 from sofascore.model_acceptance import build_acceptance_report, write_acceptance_report
 from sofascore.model_release import resolve_active_artifact
 from sofascore.predictor import (
@@ -126,6 +131,14 @@ def parse_args():
         type=parse_non_negative_int,
         default=42,
         help="Seed used by the Optuna samplers (default: 42).",
+    )
+    parser.add_argument(
+        "--hyperparameters-from",
+        type=Path,
+        help=(
+            "Reuse a versioned XGBoost/LightGBM profile instead of tuning. "
+            "This option accepts one model variant per run."
+        ),
     )
     parser.add_argument(
         "--model-scope",
@@ -289,6 +302,67 @@ def main():
     except ValueError as exc:
         print(f"Invalid training window: {exc}")
         return 2
+    variants = _variant_names(args.variant)
+    hyperparameter_profile = None
+    hyperparameters_by_target = None
+    effective_optuna_trials = args.optuna_trials
+    if args.hyperparameters_from:
+        if len(variants) != 1:
+            print(
+                "A frozen hyperparameter profile can be used with exactly one "
+                "variant per training run."
+            )
+            return 2
+        try:
+            hyperparameter_profile = load_hyperparameter_profile(
+                args.hyperparameters_from.resolve()
+            )
+        except ValueError as exc:
+            print(f"Hyperparameter profile failed: {exc}")
+            return 2
+
+        profile_variant = hyperparameter_profile["source"].get("variant")
+        if profile_variant and profile_variant != variants[0]:
+            print(
+                "Hyperparameter profile variant mismatch: "
+                f"expected {variants[0]}, got {profile_variant}."
+            )
+            return 2
+        expected_feature_set = (
+            args.feature_set or VARIANT_CONFIG[variants[0]]["feature_set"]
+        )
+        profile_feature_set = hyperparameter_profile["source"].get("feature_set")
+        if profile_feature_set and profile_feature_set != expected_feature_set:
+            print(
+                "Hyperparameter profile feature-set mismatch: "
+                f"expected {expected_feature_set}, got {profile_feature_set}."
+            )
+            return 2
+
+        requested_classification_targets = {
+            target
+            for target in args.targets
+            if TARGET_CONFIGS[target].get("task") != "regression"
+        }
+        missing_targets = sorted(
+            requested_classification_targets
+            - set(hyperparameter_profile["targets"])
+        )
+        if missing_targets:
+            print(
+                "Hyperparameter profile is missing classification targets: "
+                f"{', '.join(missing_targets)}"
+            )
+            return 2
+        hyperparameters_by_target = hyperparameter_profile["targets"]
+        effective_optuna_trials = 0
+        print(
+            "Frozen hyperparameter profile: "
+            f"{args.hyperparameters_from.resolve()}"
+        )
+        if args.optuna_trials:
+            print("Optuna trials ignored because a frozen profile was supplied.")
+
     data_dir = args.data_dir.resolve()
     audit = audit_feature_datasets(
         data_dir,
@@ -369,12 +443,21 @@ def main():
         "data_dir": str(data_dir),
         "output_dir": str(output_dir),
         "targets": args.targets,
-        "variants": _variant_names(args.variant),
+        "variants": variants,
         "test_size": args.test_size,
         "data_cutoff": data_cutoff.isoformat() if data_cutoff else None,
         "test_start_date": test_start_date.isoformat() if test_start_date else None,
-        "optuna_trials": args.optuna_trials,
+        "optuna_trials": effective_optuna_trials,
+        "optuna_trials_requested": args.optuna_trials,
         "optuna_seed": args.optuna_seed,
+        "hyperparameter_policy": (
+            "frozen_profile" if hyperparameter_profile is not None else "per_run"
+        ),
+        "hyperparameters_from": (
+            args.hyperparameters_from.name
+            if args.hyperparameters_from is not None
+            else None
+        ),
         "model_scope": args.model_scope,
         "feature_set": args.feature_set or "variant_default",
         "paired_common_sample": args.paired_common_sample,
@@ -383,7 +466,7 @@ def main():
         "outputs": {},
     }
 
-    for variant in _variant_names(args.variant):
+    for variant in variants:
         variant_config = VARIANT_CONFIG[variant]
         effective_feature_set = args.feature_set or variant_config["feature_set"]
         os.environ["SOFASCORE_FEATURE_SET"] = effective_feature_set
@@ -457,8 +540,9 @@ def main():
             targets=args.targets,
             odds_requirements=odds_requirements,
             cohort_requirements=cohort_requirements,
-            optuna_trials=args.optuna_trials,
+            optuna_trials=effective_optuna_trials,
             optuna_seed=args.optuna_seed,
+            hyperparameters_by_target=hyperparameters_by_target,
             reference_predictor=reference_predictor,
             test_start_date=(
                 test_start_date.isoformat()
@@ -473,6 +557,39 @@ def main():
 
         metrics_path = variant_dir / "training_metrics.json"
         predictor.export_metrics_json(str(metrics_path))
+        profile_path = None
+        if any(
+            TARGET_CONFIGS[target].get("task") != "regression"
+            for target in predictor.training_stats
+        ):
+            output_profile = build_hyperparameter_profile(
+                predictor.training_stats,
+                source={
+                    "variant": variant,
+                    "feature_set": effective_feature_set,
+                    "model_scope": args.model_scope,
+                    "policy": (
+                        "frozen_profile"
+                        if hyperparameter_profile is not None
+                        else (
+                            "optuna_pre_holdout"
+                            if effective_optuna_trials > 0
+                            else "defaults"
+                        )
+                    ),
+                    "data_cutoff": (
+                        data_cutoff.isoformat() if data_cutoff else None
+                    ),
+                    "test_start_date": (
+                        test_start_date.isoformat() if test_start_date else None
+                    ),
+                    "optuna_seed": args.optuna_seed,
+                },
+            )
+            profile_path = write_hyperparameter_profile(
+                output_profile,
+                variant_dir / "hyperparameters.json",
+            )
         reference_manifest_path = Path(f"{reference_path}.manifest.json")
         comparison = build_training_comparison(
             predictor.training_stats,
@@ -523,6 +640,7 @@ def main():
         }
         variant_output = {
             "training_metrics": str(metrics_path),
+            "hyperparameters": profile_path,
             "comparison": comparison_paths,
             "acceptance": acceptance_path,
             "production_artifact": str(reference_path),

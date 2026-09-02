@@ -1760,7 +1760,8 @@ class UniversalPredictor:
                          test_start_date: Optional[str] = None,
                          cohort_requirements: Optional[Dict[str, List[str]]] = None,
                          model_scope: str = 'all',
-                         optuna_seed: int = DEFAULT_OPTUNA_SEED) -> Dict:
+                         optuna_seed: int = DEFAULT_OPTUNA_SEED,
+                         hyperparameters_by_target: Optional[Dict[str, Dict]] = None) -> Dict:
         if model_scope not in MODEL_SCOPES:
             raise ValueError(
                 f"Unknown model scope '{model_scope}'. "
@@ -1813,6 +1814,7 @@ class UniversalPredictor:
                 test_start_date,
                 model_scope,
                 optuna_seed,
+                (hyperparameters_by_target or {}).get(target),
             )
             all_results[target] = results
             if target in self.training_stats:
@@ -2057,8 +2059,11 @@ class UniversalPredictor:
             'date_range': deployment_range,
             'test_rows': int(len(X_test)),
             'test_excluded': True,
+            'evaluation_layer': 'deployment_refit',
             'models': {},
+            'consensus': {},
         }
+        deployment_probabilities_by_model = {}
 
         print(
             f"\nRefitting deployment estimators on all {len(X_deployment_train)} "
@@ -2169,8 +2174,13 @@ class UniversalPredictor:
                             'status': 'not_supported',
                             'rows': 0,
                         },
+                        'test_metrics': deployment_metrics,
                         'benchmark': benchmark_metadata,
                     }
+                    if len(deployment_probabilities) == len(X_test):
+                        deployment_probabilities_by_model[name] = (
+                            deployment_probabilities
+                        )
                     model_data['deployment_model'] = deployment_model
                     model_data['deployment_metrics'] = deployment_metrics
                     model_data['deployment_metadata'] = metadata
@@ -2296,8 +2306,10 @@ class UniversalPredictor:
                     'test_excluded': True,
                     'decision_policy': 'reused_pre_test_policy' if decision_policy else 'none',
                     'probability_calibration': calibration_metadata,
+                    'test_metrics': deployment_metrics,
                     'benchmark': benchmark_metadata,
                 }
+                deployment_probabilities_by_model[name] = deployment_probabilities
                 model_data['deployment_model'] = deployment_model
                 model_data['deployment_metrics'] = deployment_metrics
                 model_data['deployment_metadata'] = metadata
@@ -2333,6 +2345,52 @@ class UniversalPredictor:
             raise RuntimeError(
                 "deployment refit failed for: " + ", ".join(failed_models)
             )
+
+        consensus_probabilities = weighted_average_probabilities(
+            deployment_probabilities_by_model,
+            self._get_consensus_weights(target),
+        )
+        if consensus_probabilities is not None:
+            consensus_policy = self.decision_policies.get(target)
+            for label, policy in (
+                ('Consensus Argmax', None),
+                ('Consensus Policy', consensus_policy),
+            ):
+                if label == 'Consensus Policy' and policy is None:
+                    continue
+                predictions = apply_decision_policy(
+                    consensus_probabilities,
+                    policy,
+                    class_labels,
+                )
+                probability_metrics = _classification_eval_metrics(
+                    y_test,
+                    predictions,
+                    consensus_probabilities,
+                    class_labels,
+                )
+                summary['consensus'][label] = {
+                    'accuracy': round(float(accuracy_score(y_test, predictions)), 4),
+                    'precision': round(float(precision_score(
+                        y_test,
+                        predictions,
+                        average=avg_method,
+                        zero_division=0,
+                    )), 4),
+                    'recall': round(float(recall_score(
+                        y_test,
+                        predictions,
+                        average=avg_method,
+                        zero_division=0,
+                    )), 4),
+                    'f1': round(float(f1_score(
+                        y_test,
+                        predictions,
+                        average=avg_method,
+                        zero_division=0,
+                    )), 4),
+                    **probability_metrics,
+                }
         return summary
 
     def _train_target(
@@ -2346,6 +2404,7 @@ class UniversalPredictor:
         test_start_date: Optional[str] = None,
         model_scope: str = 'all',
         optuna_seed: int = DEFAULT_OPTUNA_SEED,
+        fixed_hyperparameters: Optional[Dict[str, Dict]] = None,
     ) -> Dict:
         config = TARGET_CONFIGS[target]
         is_regression = config.get('task') == 'regression'
@@ -2604,7 +2663,12 @@ class UniversalPredictor:
         if model_train_dates is not None:
             print("Chronological order enforced for tuning and meta-model training")
 
-        if optuna_trials > 0:
+        if fixed_hyperparameters is not None:
+            xgb_tuned = dict(fixed_hyperparameters.get('xgboost', {}))
+            lgb_tuned = dict(fixed_hyperparameters.get('lightgbm', {}))
+            hyperparameter_policy = 'frozen_profile'
+            print("Using frozen XGBoost and LightGBM hyperparameter profile")
+        elif optuna_trials > 0:
             xgb_tuned, lgb_tuned = self._optuna_tune(
                 X_model_train,
                 y_model_train,
@@ -2613,9 +2677,11 @@ class UniversalPredictor:
                 n_trials=optuna_trials,
                 seed=optuna_seed,
             )
+            hyperparameter_policy = 'optuna_pre_holdout'
         else:
             print("Optuna tuning skipped; using default tree parameters")
             xgb_tuned, lgb_tuned = {}, {}
+            hyperparameter_policy = 'defaults'
 
         model_configs = self._build_model_configs(
             target, y_train=y_model_train,
@@ -3262,6 +3328,17 @@ class UniversalPredictor:
             'feature_set': self.feature_sets_by_target.get(target),
             'model_scope': model_scope,
             'trained_models': sorted(detailed_metrics),
+            'hyperparameters': {
+                'policy': hyperparameter_policy,
+                'optuna_trials': (
+                    int(optuna_trials)
+                    if hyperparameter_policy == 'optuna_pre_holdout'
+                    else 0
+                ),
+                'optuna_seed': int(optuna_seed),
+                'xgboost': xgb_tuned,
+                'lightgbm': lgb_tuned,
+            },
             'selection': {
                 'metric': selection_metric,
                 'source': selection_source,

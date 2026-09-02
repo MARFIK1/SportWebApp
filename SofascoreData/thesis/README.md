@@ -94,6 +94,47 @@ that the first stored daily report is later (currently 2026-04-16), report-based
 application evaluation must use that later availability date unless the missing
 reports are recovered from an archived checkout.
 
+## Weekly walk-forward evaluation
+
+Keep the fixed 2026-04-01 through 2026-07-19 holdout above as the primary,
+directly comparable benchmark. Use the walk-forward run as a complementary
+production simulation: each release is trained through the day before its test
+week, so April results can inform May models and no future result can inform an
+earlier prediction.
+
+The first fold predicts 2026-04-01 through 2026-04-05 from data ending on
+2026-03-31. Later folds cover complete Monday-Sunday weeks; the final fold is
+2026-07-13 through 2026-07-19. XGBoost and LightGBM are tuned only in the first
+pre-holdout training window. Their versioned profile is then frozen for all
+later folds, while estimator weights are refitted on the expanding data window.
+
+Inspect all generated commands without training:
+
+```powershell
+python SofascoreData/run_walk_forward_backtest.py `
+  --data-dir (Join-Path $snapshotRoot "data") `
+  --output-dir (Join-Path $snapshotRoot "model-runs\walk-forward-weekly") `
+  --variant both `
+  --targets all `
+  --model-scope all `
+  --first-fold-optuna-trials 50 `
+  --dry-run
+```
+
+Remove `--dry-run` to execute. The runner is resumable: rerunning the same
+command skips completed jobs and continues at the first incomplete fold. Use
+`--max-folds 1` for a first-fold smoke run. By default it retains metrics,
+hyperparameter profiles and manifests but not serialized models; a full set of
+two-variant model artifacts would require tens of gigabytes. Add
+`--save-models` only when those historical binaries are needed.
+
+Outputs include `walk_forward_run.json`, pooled `walk_forward_summary.json` and
+`walk_forward_metrics.csv`. Classification confusion matrices are summed before
+macro F1 and balanced accuracy are recomputed. Brier score and log loss are
+weighted by evaluated rows. Fold-weighted ECE and R2 remain descriptive and are
+labelled as such. This process never rewrites the frozen daily reports or the
+runnable thesis demo.
+
 ## Evaluation result export
 
 After promotion, export the final tables and provenance without manually copying

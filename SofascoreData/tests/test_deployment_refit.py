@@ -94,6 +94,11 @@ class DeploymentRefitTests(unittest.TestCase):
         self.assertTrue(summary["test_excluded"])
         self.assertEqual(summary["date_range"]["max"], "2025-01-08")
         self.assertEqual(model_data["deployment_metadata"]["status"], "refit")
+        self.assertIn(
+            "confusion_matrix",
+            summary["models"]["Logistic Regression"]["test_metrics"],
+        )
+        self.assertIn("Consensus Argmax", summary["consensus"])
         self.assertEqual(
             model_data["deployment_metadata"]["benchmark"]["rows"],
             len(benchmark_rows),
