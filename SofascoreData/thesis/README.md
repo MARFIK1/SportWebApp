@@ -94,6 +94,23 @@ that the first stored daily report is later (currently 2026-04-16), report-based
 application evaluation must use that later availability date unless the missing
 reports are recovered from an archived checkout.
 
+## Evaluation result export
+
+After promotion, export the final tables and provenance without manually copying
+metrics from console output:
+
+```powershell
+python SofascoreData/export_thesis_results.py `
+  --primary-run (Join-Path $snapshotRoot "model-runs\thesis-core-evaluation-seed42") `
+  --supplemental-run (Join-Path $snapshotRoot "model-runs\supplemental-over-2-5-without-odds") `
+  --accepted-dir (Join-Path $snapshotRoot "model-runs\accepted") `
+  --output-dir (Join-Path $snapshotRoot "results")
+```
+
+The export contains evaluation and per-model CSV tables, the final promotion
+decisions, a readable Markdown summary, input provenance and SHA-256 checksums.
+Absolute source paths are intentionally excluded from these artifacts.
+
 ## Runnable application demo
 
 From the application checkout, create and run the frozen frontend package:
