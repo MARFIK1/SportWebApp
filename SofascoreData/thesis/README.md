@@ -124,7 +124,10 @@ python SofascoreData/export_thesis_figures.py `
 The figure package contains target-level classification and regression
 comparisons, calibration metrics, promotion outcomes and row-normalized
 confusion matrices. Its manifest records the exact hashes of every source CSV
-and generated image without storing machine-specific paths.
+and generated image without storing machine-specific paths. Direct odds-impact
+and paired-calibration figures include only targets whose `with_odds`
+evaluation actually used an odds-enabled feature set; fallback evaluations on
+`pre_match_safe` features are not presented as evidence about odds.
 
 ## Runnable application demo
 
