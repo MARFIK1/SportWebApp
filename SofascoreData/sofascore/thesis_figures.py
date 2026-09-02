@@ -180,18 +180,31 @@ def _candidate_lookup(
     }
 
 
+def _uses_odds(row: dict[str, str]) -> bool:
+    return "odds" in row.get("feature_set", "").lower()
+
+
+def _odds_comparison_targets(
+    evaluations: list[dict[str, str]],
+    task: str = "classification",
+) -> list[str]:
+    lookup = _candidate_lookup(evaluations)
+    return sorted({
+        target
+        for variant, target in lookup
+        if variant == "without_odds"
+        and ("with_odds", target) in lookup
+        and lookup[(variant, target)].get("task") == task
+        and _uses_odds(lookup[("with_odds", target)])
+    }, key=_target_sort_key)
+
+
 def _plot_odds_impact(
     evaluations: list[dict[str, str]],
     manifest: dict[str, Any],
 ) -> plt.Figure:
     lookup = _candidate_lookup(evaluations)
-    targets = sorted({
-        target
-        for variant, target in lookup
-        if variant == "without_odds"
-        and ("with_odds", target) in lookup
-        and lookup[(variant, target)].get("task") == "classification"
-    }, key=_target_sort_key)
+    targets = _odds_comparison_targets(evaluations)
     differences = []
     labels = []
     for target in targets:
@@ -203,7 +216,7 @@ def _plot_odds_impact(
         differences.append(with_odds - without)
 
     fig, ax = plt.subplots(
-        figsize=(9, max(4.2, len(labels) * 0.48 + 1.8)),
+        figsize=(9, max(3.2, len(labels) * 0.58 + 1.8)),
         layout="constrained",
     )
     positions = np.arange(len(labels))
@@ -213,7 +226,10 @@ def _plot_odds_impact(
     ax.set_yticks(positions, labels)
     ax.invert_yaxis()
     ax.set_xlabel("Change in macro F1 after adding odds")
-    ax.set_title("Impact of betting odds on classification performance", loc="left")
+    ax.set_title(
+        "Impact of betting odds on paired odds-enabled targets",
+        loc="left",
+    )
     _format_axis(ax, axis="x")
     for position, value in zip(positions, differences):
         offset = 3 if value >= 0 else -3
@@ -247,8 +263,11 @@ def _plot_classification_markets(
     fig, ax = plt.subplots(figsize=(11, 5.8), layout="constrained")
     for index, variant in enumerate(VARIANTS):
         values = [
-            _number(lookup.get((variant, target), {}).get("gate_candidate_score"))
+            _number(row.get("gate_candidate_score"))
+            if variant != "with_odds" or _uses_odds(row)
+            else None
             for target in targets
+            for row in [lookup.get((variant, target), {})]
         ]
         heights = [value if value is not None else np.nan for value in values]
         ax.bar(
@@ -263,6 +282,16 @@ def _plot_classification_markets(
     ax.set_ylim(0, 0.7)
     ax.set_title("Classification market performance", loc="left")
     ax.legend(ncol=2, loc="upper left")
+    ax.text(
+        1,
+        0.99,
+        "No blue bar: no odds-enabled evaluation",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        color=GRAY,
+        fontsize=8,
+    )
     _format_axis(ax)
     _add_footer(fig, manifest)
     return fig
@@ -280,26 +309,46 @@ def _plot_regression_targets(
     }, key=_target_sort_key)
     positions = np.arange(len(targets))
     width = 0.18
-    series = (
+    series = [
         ("without_odds", "gate_baseline", "Baseline, without odds", "#B8C1CC"),
         ("without_odds", "gate_candidate_score", "Candidate, without odds", GREEN),
-        ("with_odds", "gate_baseline", "Baseline, with odds", "#8FA9CB"),
-        ("with_odds", "gate_candidate_score", "Candidate, with odds", BLUE),
-    )
+    ]
+    if any(
+        _uses_odds(lookup.get(("with_odds", target), {}))
+        for target in targets
+    ):
+        series.extend((
+            ("with_odds", "gate_baseline", "Baseline, with odds", "#8FA9CB"),
+            ("with_odds", "gate_candidate_score", "Candidate, with odds", BLUE),
+        ))
     fig, ax = plt.subplots(figsize=(9, 5.4), layout="constrained")
     for index, (variant, field, label, color) in enumerate(series):
         values = [
-            _number(lookup.get((variant, target), {}).get(field))
+            _number(row.get(field))
+            if variant != "with_odds" or _uses_odds(row)
+            else None
             for target in targets
+            for row in [lookup.get((variant, target), {})]
         ]
         heights = [value if value is not None else np.nan for value in values]
-        ax.bar(
-            positions + (index - 1.5) * width,
+        bars = ax.bar(
+            positions + (index - (len(series) - 1) / 2) * width,
             heights,
             width,
             label=label,
             color=color,
         )
+        for bar, value in zip(bars, heights):
+            if np.isnan(value):
+                continue
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                f"{value:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
     ax.set_xticks(positions, [_label_target(target) for target in targets])
     ax.set_ylabel("Mean absolute error (lower is better)")
     ax.set_title("Regression target performance", loc="left")
@@ -352,7 +401,8 @@ def _plot_calibration(
     evaluations: list[dict[str, str]],
     manifest: dict[str, Any],
 ) -> plt.Figure:
-    classification = [row for row in evaluations if row.get("task") == "classification"]
+    lookup = _candidate_lookup(evaluations)
+    targets = _odds_comparison_targets(evaluations)
     metrics = (
         ("brier_score", "Brier score"),
         ("log_loss", "Log loss"),
@@ -364,8 +414,8 @@ def _plot_calibration(
         for variant in VARIANTS:
             values = [
                 value
-                for row in classification
-                if row.get("variant") == variant
+                for target in targets
+                for row in [lookup.get((variant, target), {})]
                 for value in [_number(row.get(field))]
                 if value is not None
             ]
@@ -377,7 +427,7 @@ def _plot_calibration(
             width=0.62,
         )
         ax.set_title(label)
-        ax.set_ylabel("Mean across classification targets")
+        ax.set_ylabel("Mean across paired targets")
         ax.tick_params(axis="x", rotation=15)
         _format_axis(ax)
         for bar, value in zip(bars, means):
@@ -391,7 +441,11 @@ def _plot_calibration(
                 va="bottom",
                 fontsize=8,
             )
-    fig.suptitle("Probability calibration metrics (lower is better)", x=0.01, ha="left")
+    fig.suptitle(
+        "Paired calibration on odds-enabled targets (lower is better)",
+        x=0.01,
+        ha="left",
+    )
     _add_footer(fig, manifest)
     return fig
 
@@ -414,7 +468,11 @@ def _plot_promotions(
     ax.bar(positions, fallback, bottom=accepted, color=GRAY, width=0.58, label="Baseline fallback")
     ax.set_xticks(positions, [VARIANT_LABELS[variant] for variant in VARIANTS])
     ax.set_ylabel("Number of prediction targets")
-    ax.set_title("Final model package decisions", loc="left")
+    ax.set_title(
+        "Final model package decisions\n"
+        "Fallback includes targets without a deployable odds-enabled evaluation",
+        loc="left",
+    )
     ax.legend(ncol=2, loc="upper right")
     _format_axis(ax)
     for position, (accepted_count, fallback_count) in enumerate(zip(accepted, fallback)):
@@ -556,6 +614,9 @@ def generate_thesis_figures(results_dir: Path, output_dir: Path) -> dict[str, An
         "schema_version": 1,
         "data_cutoff": results_manifest.get("data_cutoff"),
         "test_start_date": results_manifest.get("test_start_date"),
+        "comparison_scope": {
+            "odds_enabled_targets": _odds_comparison_targets(evaluations),
+        },
         "sources": [
             {"name": name, "sha256": _sha256(results_dir / name)}
             for name in RESULT_FILES

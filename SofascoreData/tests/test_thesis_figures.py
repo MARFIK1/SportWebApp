@@ -26,6 +26,9 @@ class ThesisFiguresTests(unittest.TestCase):
                     "variant": variant,
                     "target": target,
                     "task": "classification",
+                    "feature_set": (
+                        "odds_available" if variant == "with_odds" else "pre_match_safe"
+                    ),
                     "gate_candidate": "Consensus Policy",
                     "gate_candidate_score": score + shift,
                     "gate_baseline": 0.30,
@@ -37,6 +40,7 @@ class ThesisFiguresTests(unittest.TestCase):
                 "variant": variant,
                 "target": "total_goals",
                 "task": "regression",
+                "feature_set": "pre_match_safe",
                 "gate_candidate": "Random Forest",
                 "gate_candidate_score": 1.30 - shift,
                 "gate_baseline": 1.36,
@@ -102,6 +106,10 @@ class ThesisFiguresTests(unittest.TestCase):
             manifest = generate_thesis_figures(results, output)
 
             self.assertEqual(len(manifest["figures"]), 7)
+            self.assertEqual(
+                manifest["comparison_scope"]["odds_enabled_targets"],
+                ["result", "btts"],
+            )
             images = sorted([
                 *output.glob("*.png"),
                 *output.glob("*.svg"),
