@@ -161,6 +161,14 @@ def parse_args():
     parser.add_argument("--audit-only", action="store_true")
     parser.add_argument("--save-models", action="store_true")
     parser.add_argument(
+        "--export-holdout-predictions",
+        action="store_true",
+        help=(
+            "Write compact per-match out-of-sample predictions for research "
+            "and report reconstruction."
+        ),
+    )
+    parser.add_argument(
         "--paired-common-sample",
         action="store_true",
         help=(
@@ -550,6 +558,7 @@ def main():
                 else None
             ),
             model_scope=args.model_scope,
+            capture_holdout_predictions=args.export_holdout_predictions,
         )
         if not results:
             print(f"No targets trained for {variant}.")
@@ -557,6 +566,16 @@ def main():
 
         metrics_path = variant_dir / "training_metrics.json"
         predictor.export_metrics_json(str(metrics_path))
+        prediction_export = None
+        if args.export_holdout_predictions:
+            prediction_export = predictor.export_holdout_predictions_jsonl(
+                str(variant_dir / "holdout_predictions.jsonl"),
+                metadata={
+                    "variant": variant,
+                    "feature_set": effective_feature_set,
+                    "model_scope": args.model_scope,
+                },
+            )
         profile_path = None
         if any(
             TARGET_CONFIGS[target].get("task") != "regression"
@@ -648,6 +667,8 @@ def main():
             "feature_set": effective_feature_set,
             "dataset": variant_dataset_summary,
         }
+        if prediction_export is not None:
+            variant_output["holdout_predictions"] = prediction_export
 
         if args.save_models:
             model_path = variant_dir / _model_filename(variant)

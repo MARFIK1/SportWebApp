@@ -8,6 +8,7 @@ from run_walk_forward_backtest import (
     build_training_command,
     validate_fold_metrics,
     validate_paired_job,
+    validate_prediction_export,
 )
 from sofascore.walk_forward import (
     aggregate_walk_forward_metrics,
@@ -65,7 +66,69 @@ class WalkForwardFoldTests(unittest.TestCase):
             "2026-04-12",
         )
         self.assertIn("--paired-common-sample", command)
+        self.assertIn("--export-holdout-predictions", command)
         self.assertNotIn("--save-models", command)
+
+    def test_prediction_export_gate_requires_complete_fold_rows(self):
+        fold = build_weekly_folds("2026-04-01", "2026-04-05")[0]
+        model_names = {
+            "Logistic Regression",
+            "Random Forest",
+            "MLP",
+            "XGBoost",
+            "LightGBM",
+            "Consensus Argmax",
+            "Consensus Policy",
+        }
+        record = {
+            "schema_version": 1,
+            "variant": "without_odds",
+            "target": "result",
+            "task": "multiclass",
+            "row_index": 10,
+            "event_id": 100,
+            "date": "2026-04-03",
+            "actual": 0,
+            "predictions": {
+                name: {"available": True, "prediction": 0}
+                for name in model_names
+            },
+        }
+        metrics = {
+            "targets": {
+                "result": {"stats": {"test_matches": 1}},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "holdout_predictions.jsonl"
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            self.assertEqual(
+                validate_prediction_export(
+                    path,
+                    metrics,
+                    ["result"],
+                    "thesis_core",
+                    fold,
+                    "without_odds",
+                ),
+                [],
+            )
+
+            record["date"] = "2026-04-06"
+            record["predictions"].pop("Random Forest")
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            errors = validate_prediction_export(
+                path,
+                metrics,
+                ["result"],
+                "thesis_core",
+                fold,
+                "without_odds",
+            )
+
+        self.assertTrue(any("outside the fold" in error for error in errors))
+        self.assertTrue(any("Random Forest" in error for error in errors))
 
     def test_quality_gate_rejects_missing_model_and_test_based_selection(self):
         fold = build_weekly_folds("2026-04-01", "2026-04-05")[0]

@@ -83,6 +83,15 @@ class RegressionMetricTests(unittest.TestCase):
         X_test = pd.DataFrame({"feature": [4.0, 5.0]}, index=[4, 5])
         X = pd.concat([X_train, X_test])
 
+        source = pd.DataFrame(
+            {
+                "event_id": range(6),
+                "date": pd.date_range("2025-01-01", periods=6).strftime("%Y-%m-%d"),
+                "home_team": [f"Home {index}" for index in range(6)],
+                "away_team": [f"Away {index}" for index in range(6)],
+            },
+            index=range(6),
+        )
         results = predictor._train_regression_models(
             "total_goals",
             {},
@@ -96,15 +105,22 @@ class RegressionMetricTests(unittest.TestCase):
             StandardScaler(),
             X,
             None,
-            pd.DataFrame(),
+            source,
             "global_temporal",
             None,
+            capture_holdout_predictions=True,
         )
 
         self.assertIn("Dummy", results)
         self.assertEqual(
             predictor.models["total_goals"]["Dummy"]["task"],
             "regression",
+        )
+        predictions = predictor.holdout_predictions["total_goals"]
+        self.assertEqual([row["event_id"] for row in predictions], [4, 5])
+        self.assertEqual(
+            predictions[0]["predictions"]["Selected Model"]["source_model"],
+            "Dummy",
         )
 
 

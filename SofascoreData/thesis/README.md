@@ -128,12 +128,16 @@ hyperparameter profiles and manifests but not serialized models; a full set of
 two-variant model artifacts would require tens of gigabytes. Add
 `--save-models` only when those historical binaries are needed.
 
-Outputs include `walk_forward_run.json`, pooled `walk_forward_summary.json` and
-`walk_forward_metrics.csv`. Classification confusion matrices are summed before
-macro F1 and balanced accuracy are recomputed. Brier score and log loss are
-weighted by evaluated rows. Fold-weighted ECE and R2 remain descriptive and are
-labelled as such. This process never rewrites the frozen daily reports or the
-runnable thesis demo.
+Outputs include `walk_forward_run.json`, pooled `walk_forward_summary.json`,
+`walk_forward_metrics.csv`, one `holdout_predictions.jsonl` file per fold and
+the checksummed `walk_forward_predictions.json` index. Each JSONL row identifies
+the match and stores its actual value plus out-of-sample model and consensus
+predictions. These compact records can later produce separate leakage-safe demo
+reports without retaining tens of gigabytes of serialized weekly models.
+Classification confusion matrices are summed before macro F1 and balanced
+accuracy are recomputed. Brier score and log loss are weighted by evaluated
+rows. Fold-weighted ECE and R2 remain descriptive and are labelled as such. The
+evaluation never rewrites the frozen source reports or the runnable thesis demo.
 
 ## Evaluation result export
 

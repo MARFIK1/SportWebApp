@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,6 +42,15 @@ class DeploymentRefitTests(unittest.TestCase):
             index=[200, 201],
         )
         self.y_test = pd.Series([0, 1], index=self.X_test.index)
+        self.test_context = pd.DataFrame(
+            {
+                "event_id": [9001, 9002],
+                "date": ["2025-02-01", "2025-02-02"],
+                "home_team": ["Home A", "Home B"],
+                "away_team": ["Away A", "Away B"],
+            },
+            index=self.X_test.index,
+        )
 
     def test_deployment_refit_uses_all_pretest_rows_and_survives_round_trip(self):
         benchmark_rows = self.X_train.iloc[:4]
@@ -83,6 +93,8 @@ class DeploymentRefitTests(unittest.TestCase):
             y_test=self.y_test,
             class_labels=[0, 1],
             avg_method="binary",
+            source_df=self.test_context,
+            capture_holdout_predictions=True,
         )
 
         model_data = predictor.models["btts"]["Logistic Regression"]
@@ -108,6 +120,20 @@ class DeploymentRefitTests(unittest.TestCase):
         self.assertFalse(np.allclose(deployment_scaler.mean_, self.X_test.mean().values))
         np.testing.assert_allclose(benchmark_model.coef_, benchmark_coefficients)
         self.assertTrue(deployment_model.calibrators)
+        prediction_rows = predictor.holdout_predictions["btts"]
+        self.assertEqual(len(prediction_rows), len(self.X_test))
+        self.assertEqual(prediction_rows[0]["event_id"], 9001)
+        self.assertEqual(prediction_rows[0]["actual_label"], "NO")
+        self.assertIn("Logistic Regression", prediction_rows[0]["predictions"])
+        self.assertIn("Consensus Argmax", prediction_rows[0]["predictions"])
+        self.assertAlmostEqual(
+            sum(
+                prediction_rows[0]["predictions"]["Consensus Argmax"][
+                    "probabilities"
+                ].values()
+            ),
+            1.0,
+        )
 
         resolved_model, resolved_frame, is_deployment = (
             _resolve_classification_prediction_model(
@@ -130,6 +156,17 @@ class DeploymentRefitTests(unittest.TestCase):
             restored.predict_proba(self.X_test),
             expected_probabilities,
         )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "holdout_predictions.jsonl"
+            exported = predictor.export_holdout_predictions_jsonl(
+                str(output),
+                metadata={"variant": "without_odds"},
+            )
+            rows = [json.loads(line) for line in output.read_text().splitlines()]
+        self.assertEqual(exported["rows"], 2)
+        self.assertEqual(rows[0]["variant"], "without_odds")
+        self.assertEqual(rows[0]["schema_version"], 1)
 
     def test_resolver_keeps_legacy_scaled_artifacts_compatible(self):
         scaler = StandardScaler().fit(self.X_train)

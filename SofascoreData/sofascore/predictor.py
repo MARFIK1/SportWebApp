@@ -675,6 +675,110 @@ def _json_safe(value):
     return value
 
 
+HOLDOUT_IDENTITY_COLUMNS = (
+    'event_id', 'match_id', 'date', 'home_team', 'away_team',
+    'home_team_id', 'away_team_id', 'comp_type', 'country', 'competition',
+)
+
+
+def _prediction_scalar(value):
+    if isinstance(value, (np.integer, int)):
+        return int(value)
+    if isinstance(value, (np.floating, float)):
+        numeric = float(value)
+        if not np.isfinite(numeric):
+            return None
+        return int(numeric) if numeric.is_integer() else numeric
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _build_holdout_prediction_rows(
+    source_df: pd.DataFrame,
+    holdout_index,
+    y_test,
+    target: str,
+) -> List[Dict]:
+    config = TARGET_CONFIGS[target]
+    class_names = config.get('class_names', {})
+    rows = []
+    for position, index in enumerate(holdout_index):
+        source_row = None
+        if source_df is not None and index in source_df.index:
+            source_row = source_df.loc[index]
+            if isinstance(source_row, pd.DataFrame):
+                source_row = source_row.iloc[0]
+
+        actual = y_test.loc[index] if hasattr(y_test, 'loc') else y_test[position]
+        actual = _prediction_scalar(actual)
+        row = {
+            'schema_version': 1,
+            'row_index': _prediction_scalar(index),
+            'target': target,
+            'task': config.get('task', 'unknown'),
+            'actual': actual,
+            'predictions': {},
+        }
+        if actual in class_names:
+            row['actual_label'] = class_names[actual]
+        if source_row is not None:
+            for column in HOLDOUT_IDENTITY_COLUMNS:
+                if column in source_row.index:
+                    row[column] = _prediction_scalar(source_row[column])
+        rows.append(row)
+    return rows
+
+
+def _attach_classification_predictions(
+    rows: List[Dict],
+    model_name: str,
+    positions,
+    predictions,
+    probabilities,
+    class_labels: List[int],
+    class_names: Dict,
+) -> None:
+    for output_position, prediction, probability_row in zip(
+        positions,
+        predictions,
+        probabilities,
+    ):
+        prediction = _prediction_scalar(prediction)
+        rows[int(output_position)]['predictions'][model_name] = {
+            'available': True,
+            'prediction': prediction,
+            'prediction_label': class_names.get(prediction),
+            'probabilities': {
+                class_names.get(label, str(label)): round(float(probability), 8)
+                for label, probability in zip(class_labels, probability_row)
+            },
+        }
+
+
+def _attach_regression_predictions(
+    rows: List[Dict],
+    model_name: str,
+    predictions,
+    source_model: Optional[str] = None,
+) -> None:
+    for row, prediction in zip(rows, predictions):
+        payload = {
+            'available': True,
+            'prediction': round(float(prediction), 8),
+        }
+        if source_model:
+            payload['source_model'] = source_model
+        row['predictions'][model_name] = payload
+
+
 def _holdout_fingerprint(df: pd.DataFrame, holdout_index, y, target: str) -> str:
     identity_columns = [
         column
@@ -1079,6 +1183,7 @@ class UniversalPredictor:
         self.artifact_metadata = {}
         self.artifact_manifest = {}
         self.artifact_path = None
+        self.holdout_predictions = {}
 
     def _get_consensus_weights(self, target: str) -> Dict[str, float]:
         target_weights = CONSENSUS_WEIGHTS_BY_TARGET.get(target, {})
@@ -1761,7 +1866,8 @@ class UniversalPredictor:
                          cohort_requirements: Optional[Dict[str, List[str]]] = None,
                          model_scope: str = 'all',
                          optuna_seed: int = DEFAULT_OPTUNA_SEED,
-                         hyperparameters_by_target: Optional[Dict[str, Dict]] = None) -> Dict:
+                         hyperparameters_by_target: Optional[Dict[str, Dict]] = None,
+                         capture_holdout_predictions: bool = False) -> Dict:
         if model_scope not in MODEL_SCOPES:
             raise ValueError(
                 f"Unknown model scope '{model_scope}'. "
@@ -1815,6 +1921,7 @@ class UniversalPredictor:
                 model_scope,
                 optuna_seed,
                 (hyperparameters_by_target or {}).get(target),
+                capture_holdout_predictions,
             )
             all_results[target] = results
             if target in self.training_stats:
@@ -2042,6 +2149,8 @@ class UniversalPredictor:
         class_labels: List[int],
         avg_method: str,
         lstm_meta: Optional[Dict] = None,
+        source_df: Optional[pd.DataFrame] = None,
+        capture_holdout_predictions: bool = False,
     ) -> Dict:
         """Refit deployable estimators on every row before the untouched test holdout."""
         X_deployment_train, y_deployment_train, deployment_weights, deployment_dates = (
@@ -2064,6 +2173,17 @@ class UniversalPredictor:
             'consensus': {},
         }
         deployment_probabilities_by_model = {}
+        class_names = TARGET_CONFIGS[target].get('class_names', {})
+        prediction_rows = (
+            _build_holdout_prediction_rows(
+                source_df,
+                X_test.index,
+                y_test,
+                target,
+            )
+            if capture_holdout_predictions
+            else []
+        )
 
         print(
             f"\nRefitting deployment estimators on all {len(X_deployment_train)} "
@@ -2180,6 +2300,16 @@ class UniversalPredictor:
                     if len(deployment_probabilities) == len(X_test):
                         deployment_probabilities_by_model[name] = (
                             deployment_probabilities
+                        )
+                    if prediction_rows:
+                        _attach_classification_predictions(
+                            prediction_rows,
+                            name,
+                            np.flatnonzero(valid_test),
+                            deployment_predictions,
+                            deployment_probabilities,
+                            class_labels,
+                            class_names,
                         )
                     model_data['deployment_model'] = deployment_model
                     model_data['deployment_metrics'] = deployment_metrics
@@ -2310,6 +2440,16 @@ class UniversalPredictor:
                     'benchmark': benchmark_metadata,
                 }
                 deployment_probabilities_by_model[name] = deployment_probabilities
+                if prediction_rows:
+                    _attach_classification_predictions(
+                        prediction_rows,
+                        name,
+                        range(len(X_test)),
+                        deployment_predictions,
+                        deployment_probabilities,
+                        class_labels,
+                        class_names,
+                    )
                 model_data['deployment_model'] = deployment_model
                 model_data['deployment_metrics'] = deployment_metrics
                 model_data['deployment_metadata'] = metadata
@@ -2391,6 +2531,23 @@ class UniversalPredictor:
                     )), 4),
                     **probability_metrics,
                 }
+                if prediction_rows:
+                    _attach_classification_predictions(
+                        prediction_rows,
+                        label,
+                        range(len(X_test)),
+                        predictions,
+                        consensus_probabilities,
+                        class_labels,
+                        class_names,
+                    )
+        if prediction_rows:
+            expected_names = set(summary['models']) | set(summary['consensus'])
+            for row in prediction_rows:
+                for name in expected_names:
+                    row['predictions'].setdefault(name, {'available': False})
+            self.holdout_predictions[target] = prediction_rows
+            summary['prediction_rows'] = len(prediction_rows)
         return summary
 
     def _train_target(
@@ -2405,6 +2562,7 @@ class UniversalPredictor:
         model_scope: str = 'all',
         optuna_seed: int = DEFAULT_OPTUNA_SEED,
         fixed_hyperparameters: Optional[Dict[str, Dict]] = None,
+        capture_holdout_predictions: bool = False,
     ) -> Dict:
         config = TARGET_CONFIGS[target]
         is_regression = config.get('task') == 'regression'
@@ -2559,6 +2717,7 @@ class UniversalPredictor:
                 y_train, y_test, feature_cols, scaler, X, meta, df,
                 validation_strategy, test_cutoff,
                 model_scope,
+                capture_holdout_predictions,
             )
             self._attach_reference_benchmark(
                 reference_predictor,
@@ -3296,6 +3455,8 @@ class UniversalPredictor:
             class_labels=class_labels,
             avg_method=avg_method,
             lstm_meta=lstm_deployment_meta,
+            source_df=df,
+            capture_holdout_predictions=capture_holdout_predictions,
         )
 
         test_best, selection_metric, test_best_score = _select_best_classification_model(
@@ -3467,11 +3628,22 @@ class UniversalPredictor:
                                   X_train_scaled, X_test_scaled,
                                   y_train, y_test, feature_cols, scaler,
                                   X, meta, df, validation_strategy,
-                                  test_cutoff, model_scope='all') -> Dict:
+                                  test_cutoff, model_scope='all',
+                                  capture_holdout_predictions=False) -> Dict:
         model_configs = self._build_regression_configs()
         self.models[target] = {}
         results = {}
         detailed_metrics = {}
+        prediction_rows = (
+            _build_holdout_prediction_rows(
+                df,
+                X_test.index,
+                y_test,
+                target,
+            )
+            if capture_holdout_predictions
+            else []
+        )
         regression_baseline = _regression_baseline_metrics(y_train, y_test)
         baseline_metrics = regression_baseline['metrics']
         print(
@@ -3529,6 +3701,12 @@ class UniversalPredictor:
                 'memory_mb': round(mem_delta, 1),
                 'model_size_kb': round(model_size_kb, 1),
             }
+            if prediction_rows:
+                _attach_regression_predictions(
+                    prediction_rows,
+                    name,
+                    y_pred,
+                )
             print(f"    {name}: MAE={mae:.3f} RMSE={rmse:.3f} R2={r2:.3f} "
                   f"[{train_time:.1f}s, pred={predict_time_ms:.1f}ms, {model_size_kb:.0f}KB]")
 
@@ -3586,6 +3764,12 @@ class UniversalPredictor:
             validation_score = None
         best_score = float(results.get(best, 0.0))
         baseline_score = float(baseline_metrics['mae'])
+        if prediction_rows and best in self.models[target]:
+            for row in prediction_rows:
+                selected = dict(row['predictions'][best])
+                selected['source_model'] = best
+                row['predictions']['Selected Model'] = selected
+            self.holdout_predictions[target] = prediction_rows
         self.training_stats[target] = {
             'total_matches': len(X),
             'train_matches': len(X_train),
@@ -4482,6 +4666,52 @@ class UniversalPredictor:
 
         print(f"\nMetrics exported to: {output_path}")
         return output_path
+
+    def export_holdout_predictions_jsonl(
+        self,
+        output_path: str,
+        metadata: Optional[Dict] = None,
+    ) -> Dict:
+        """Write one compact out-of-sample prediction record per match and target."""
+        if not self.holdout_predictions:
+            raise ValueError("No captured holdout predictions are available")
+
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        row_count = 0
+        target_counts = {}
+        try:
+            with temporary_path.open('w', encoding='utf-8', newline='\n') as output:
+                for target in sorted(self.holdout_predictions):
+                    rows = self.holdout_predictions[target]
+                    target_counts[target] = len(rows)
+                    for row in rows:
+                        payload = {
+                            **_json_safe(metadata or {}),
+                            **row,
+                        }
+                        output.write(json.dumps(
+                            payload,
+                            ensure_ascii=False,
+                            separators=(',', ':'),
+                            default=str,
+                        ))
+                        output.write('\n')
+                        row_count += 1
+            os.replace(temporary_path, path)
+        except Exception:
+            temporary_path.unlink(missing_ok=True)
+            raise
+
+        result = {
+            'schema_version': 1,
+            'path': str(path),
+            'rows': row_count,
+            'targets': target_counts,
+        }
+        print(f"Holdout predictions exported to: {path} ({row_count} rows)")
+        return result
 
 
 def quick_predict(data_dir: str, country: str, league: str) -> Dict:

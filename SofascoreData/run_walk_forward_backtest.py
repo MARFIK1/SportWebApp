@@ -25,7 +25,8 @@ from sofascore.walk_forward import (
 from train_models import ALL_TARGETS, VARIANT_CONFIG, _variant_names, parse_targets
 
 
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
+PREDICTION_EXPORT_SCHEMA_VERSION = 1
 DEFAULT_START_DATE = "2026-04-01"
 DEFAULT_END_DATE = "2026-07-19"
 ALL_CLASSIFICATION_MODELS = THESIS_CORE_CLASSIFICATION_MODELS | {
@@ -165,6 +166,7 @@ def _job_paths(output_dir: Path, variant: str, fold_slug: str) -> dict:
     return {
         "job_dir": job_dir,
         "metrics": variant_dir / "training_metrics.json",
+        "predictions": variant_dir / "holdout_predictions.jsonl",
         "hyperparameters": variant_dir / "hyperparameters.json",
         "run": job_dir / "run.json",
         "model": variant_dir / VARIANT_CONFIG[variant]["filename"],
@@ -206,6 +208,7 @@ def build_training_command(
         "--optuna-trials",
         str(0 if hyperparameter_profile is not None else optuna_trials),
         "--skip-production-benchmark",
+        "--export-holdout-predictions",
     ]
     if hyperparameter_profile is not None:
         command.extend(["--hyperparameters-from", str(hyperparameter_profile)])
@@ -274,7 +277,7 @@ def _load_json(path: Path):
 
 
 def _completed_job(paths: dict, save_models: bool) -> bool:
-    required = [paths["run"], paths["metrics"]]
+    required = [paths["run"], paths["metrics"], paths["predictions"]]
     if save_models:
         required.append(paths["model"])
     return all(path.exists() for path in required)
@@ -376,6 +379,125 @@ def validate_fold_metrics(
     return errors
 
 
+def validate_prediction_export(
+    path: Path,
+    metrics_payload: dict,
+    targets: list[str],
+    model_scope: str,
+    fold,
+    variant: str,
+) -> list[str]:
+    errors = []
+    expected_classification_models = (
+        set(THESIS_CORE_CLASSIFICATION_MODELS)
+        if model_scope == "thesis_core"
+        else set(ALL_CLASSIFICATION_MODELS)
+    )
+    target_counts = {target: 0 for target in targets}
+    seen_rows = set()
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return [f"cannot read prediction export: {exc}"]
+
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            errors.append(f"prediction line {line_number} is invalid JSON: {exc}")
+            continue
+
+        target = record.get("target")
+        if target not in target_counts:
+            errors.append(f"prediction line {line_number} has unexpected target {target}")
+            continue
+        target_counts[target] += 1
+
+        if record.get("schema_version") != PREDICTION_EXPORT_SCHEMA_VERSION:
+            errors.append(f"prediction line {line_number} has unsupported schema")
+        if record.get("variant") != variant:
+            errors.append(f"prediction line {line_number} has wrong variant")
+        match_date = str(record.get("date") or "")[:10]
+        if not (
+            fold.test_start.isoformat()
+            <= match_date
+            <= fold.test_end.isoformat()
+        ):
+            errors.append(f"prediction line {line_number} is outside the fold")
+        if record.get("actual") is None:
+            errors.append(f"prediction line {line_number} has no actual value")
+
+        row_key = (target, record.get("event_id"), record.get("row_index"))
+        if row_key in seen_rows:
+            errors.append(f"prediction line {line_number} duplicates a holdout row")
+        seen_rows.add(row_key)
+
+        predictions = record.get("predictions")
+        if not isinstance(predictions, dict):
+            errors.append(f"prediction line {line_number} has no model predictions")
+            continue
+        task = TARGET_CONFIGS[target].get("task")
+        expected_models = (
+            REGRESSION_MODELS | {"Selected Model"}
+            if task == "regression"
+            else expected_classification_models
+            | {"Consensus Argmax", "Consensus Policy"}
+        )
+        missing_models = sorted(expected_models - set(predictions))
+        if missing_models:
+            errors.append(
+                f"prediction line {line_number} is missing: "
+                f"{', '.join(missing_models)}"
+            )
+
+    metrics_targets = metrics_payload.get("targets", {})
+    for target, count in target_counts.items():
+        expected_count = (
+            metrics_targets.get(target, {}).get("stats", {}).get("test_matches")
+        )
+        if not isinstance(expected_count, int) or expected_count <= 0:
+            errors.append(f"{target}: metrics do not declare a positive test row count")
+        elif count != expected_count:
+            errors.append(
+                f"{target}: prediction rows {count} do not match test rows "
+                f"{expected_count}"
+            )
+    return errors
+
+
+def _prediction_export_index(manifest: dict, output_dir: Path) -> dict:
+    exports = []
+    total_rows = 0
+    for job in manifest["jobs"]:
+        if job.get("status") != "completed":
+            continue
+        relative_path = job["artifacts"]["predictions"]
+        path = output_dir / relative_path
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8") as source:
+            rows = sum(1 for line in source if line.strip())
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        total_rows += rows
+        exports.append({
+            "variant": job["variant"],
+            "fold": job["fold"],
+            "path": relative_path,
+            "rows": rows,
+            "sha256": digest,
+        })
+    return {
+        "schema_version": PREDICTION_EXPORT_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "plan_fingerprint": manifest["plan_fingerprint"],
+        "files": exports,
+        "rows": total_rows,
+    }
+
+
 def _aggregate_completed_jobs(manifest: dict, output_dir: Path):
     entries = []
     for job in manifest["jobs"]:
@@ -395,8 +517,19 @@ def _aggregate_completed_jobs(manifest: dict, output_dir: Path):
     summary["complete"] = all(
         job.get("status") == "completed" for job in manifest["jobs"]
     )
+    prediction_index = _prediction_export_index(manifest, output_dir)
+    summary["prediction_exports"] = {
+        "schema_version": prediction_index["schema_version"],
+        "files": len(prediction_index["files"]),
+        "rows": prediction_index["rows"],
+        "index": "walk_forward_predictions.json",
+    }
     _atomic_write_json(output_dir / "walk_forward_summary.json", summary)
     _write_metrics_csv(summary, output_dir / "walk_forward_metrics.csv")
+    _atomic_write_json(
+        output_dir / "walk_forward_predictions.json",
+        prediction_index,
+    )
 
 
 def validate_paired_job(
@@ -477,6 +610,7 @@ def main():
         "model_scope": args.model_scope,
         "paired_common_sample": paired_common_sample,
         "save_models": save_models,
+        "prediction_export": "per_match_jsonl_v1",
     }
     jobs = []
     for variant in variants:
@@ -489,6 +623,9 @@ def main():
                 "artifacts": {
                     "run": str(paths["run"].relative_to(output_dir)),
                     "metrics": str(paths["metrics"].relative_to(output_dir)),
+                    "predictions": str(
+                        paths["predictions"].relative_to(output_dir)
+                    ),
                     "hyperparameters": str(
                         paths["hyperparameters"].relative_to(output_dir)
                     ),
@@ -599,8 +736,9 @@ def main():
                 and job.get("status") == "completed"
                 and _completed_job(paths, save_models)
             ):
+                existing_metrics = _load_json(paths["metrics"])
                 existing_errors = validate_fold_metrics(
-                    _load_json(paths["metrics"]),
+                    existing_metrics,
                     args.targets,
                     args.model_scope,
                     fold,
@@ -615,6 +753,14 @@ def main():
                         )
                     ),
                 )
+                existing_errors.extend(validate_prediction_export(
+                    paths["predictions"],
+                    existing_metrics,
+                    args.targets,
+                    args.model_scope,
+                    fold,
+                    variant,
+                ))
                 if not existing_errors:
                     print(f"[SKIP] {job['id']} already completed")
                     continue
@@ -692,8 +838,9 @@ def main():
                 _atomic_write_json(manifest_path, manifest)
                 _aggregate_completed_jobs(manifest, output_dir)
                 return 4
+            metrics_payload = _load_json(paths["metrics"])
             validation_errors = validate_fold_metrics(
-                _load_json(paths["metrics"]),
+                metrics_payload,
                 args.targets,
                 args.model_scope,
                 fold,
@@ -708,6 +855,14 @@ def main():
                     )
                 ),
             )
+            validation_errors.extend(validate_prediction_export(
+                paths["predictions"],
+                metrics_payload,
+                args.targets,
+                args.model_scope,
+                fold,
+                variant,
+            ))
             if validation_errors:
                 job.update({
                     "status": "failed",
