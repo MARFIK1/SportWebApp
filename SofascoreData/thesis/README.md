@@ -108,25 +108,58 @@ The first fold predicts 2026-04-01 through 2026-04-05 from data ending on
 pre-holdout training window. Their versioned profile is then frozen for all
 later folds, while estimator weights are refitted on the expanding data window.
 
-Inspect all generated commands without training:
+The primary production-style run uses the complete independent no-odds sample.
+This keeps all 11 targets and all nine classification models available through
+the final date even after historical odds coverage ends. Inspect its commands
+without training:
 
 ```powershell
 python SofascoreData/run_walk_forward_backtest.py `
   --data-dir (Join-Path $snapshotRoot "data") `
-  --output-dir (Join-Path $snapshotRoot "model-runs\walk-forward-weekly") `
-  --variant both `
+  --output-dir (Join-Path $snapshotRoot "model-runs\walk-forward-weekly-all9-without-odds-full-seed42") `
+  --variant without_odds `
   --targets all `
   --model-scope all `
   --first-fold-optuna-trials 50 `
+  --independent-samples `
+  --skip-empty-folds `
+  --skip-insufficient-targets `
   --dry-run
 ```
 
 Remove `--dry-run` to execute. The runner is resumable: rerunning the same
 command skips completed jobs and continues at the first incomplete fold. Use
-`--max-folds 1` for a first-fold smoke run. By default it retains metrics,
+`--max-folds 1` for a first-fold smoke run. The snapshot has no feature rows for
+2026-06-01 through 2026-06-07, so that calendar fold is retained in the
+manifest as explicitly skipped; the next fold still trains only through its
+previous-day cutoff. Targets with fewer than five usable labels in an otherwise
+non-empty week are also recorded as unavailable while the other targets keep
+their own out-of-sample predictions. Report target-specific fold counts and
+sample sizes in the thesis rather than treating missing labels as failed
+predictions. By default the runner retains metrics,
 hyperparameter profiles and manifests but not serialized models; a full set of
 two-variant model artifacts would require tens of gigabytes. Add
 `--save-models` only when those historical binaries are needed.
+
+Odds/no-odds comparison is a separate paired experiment limited to the common
+availability window and targets with captured matching odds:
+
+```powershell
+python SofascoreData/run_walk_forward_backtest.py `
+  --data-dir (Join-Path $snapshotRoot "data") `
+  --output-dir (Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-result-btts-seed42") `
+  --start-date 2026-04-01 `
+  --end-date 2026-05-24 `
+  --variant both `
+  --targets result,btts `
+  --model-scope all `
+  --first-fold-optuna-trials 50 `
+  --dry-run
+```
+
+The frozen snapshot contains no matching historical Over 2.5 odds in the study
+window. Do not present an Over 2.5 odds/no-odds comparison until those prices
+are backfilled and the paired cohort is rerun.
 
 Outputs include `walk_forward_run.json`, pooled `walk_forward_summary.json`,
 `walk_forward_metrics.csv`, one `holdout_predictions.jsonl` file per fold and

@@ -6,6 +6,9 @@ from pathlib import Path
 
 from run_walk_forward_backtest import (
     build_training_command,
+    count_fold_feature_rows,
+    count_fold_target_rows,
+    load_feature_samples,
     validate_fold_metrics,
     validate_paired_job,
     validate_prediction_export,
@@ -38,6 +41,82 @@ class WalkForwardFoldTests(unittest.TestCase):
     def test_rejects_reversed_window(self):
         with self.assertRaisesRegex(ValueError, "must not be earlier"):
             build_weekly_folds("2026-07-19", "2026-04-01")
+
+    def test_counts_rows_and_preserves_an_empty_calendar_fold(self):
+        folds = build_weekly_folds("2026-04-01", "2026-04-12")
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            competition_dir = data_dir / "league" / "example"
+            competition_dir.mkdir(parents=True)
+            (competition_dir / "features_all_seasons.json").write_text(
+                json.dumps({
+                    "samples": [
+                        {
+                            "date": "2026-04-01",
+                            "event_id": 1,
+                            "label_result_int": 0,
+                        },
+                        {
+                            "date": "2026-04-05T18:00:00Z",
+                            "event_id": 2,
+                            "label_result_int": 1,
+                        },
+                        {
+                            "date": "2026-03-31",
+                            "event_id": 3,
+                            "label_result_int": 2,
+                        },
+                        {"date": "2026-04-02", "event_id": 4},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            samples = load_feature_samples(data_dir)
+            counts = count_fold_feature_rows(samples, folds)
+
+        self.assertEqual(counts[folds[0].release_id], 2)
+        self.assertEqual(counts[folds[1].release_id], 0)
+
+    def test_counts_target_rows_for_independent_and_paired_cohorts(self):
+        folds = build_weekly_folds("2026-04-01", "2026-04-05")
+        samples = [
+            {
+                "date": "2026-04-01",
+                "label_result_int": 0,
+                "odds_home_win": 2.0,
+                "odds_draw": 3.0,
+                "odds_away_win": 4.0,
+                "odds_home_prob": 0.5,
+                "odds_draw_prob": 0.3,
+                "odds_away_prob": 0.2,
+                "odds_overround": 1.05,
+            },
+            {
+                "date": "2026-04-02",
+                "label_result_int": 1,
+            },
+        ]
+
+        independent = count_fold_target_rows(
+            samples,
+            folds,
+            ["without_odds"],
+            ["result"],
+            False,
+        )
+        paired = count_fold_target_rows(
+            samples,
+            folds,
+            ["without_odds", "with_odds"],
+            ["result"],
+            True,
+        )
+        release_id = folds[0].release_id
+
+        self.assertEqual(independent["without_odds"][release_id]["result"], 2)
+        self.assertEqual(paired["without_odds"][release_id]["result"], 1)
+        self.assertEqual(paired["with_odds"][release_id]["result"], 1)
 
     def test_later_fold_command_reuses_profile_and_disables_tuning(self):
         fold = build_weekly_folds("2026-04-01", "2026-04-12")[1]

@@ -2,10 +2,11 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -17,16 +18,24 @@ from sofascore.predictor import (
     TARGET_CONFIGS,
     THESIS_CORE_CLASSIFICATION_MODELS,
 )
+from sofascore.paired_benchmark import ODDS_REQUIREMENTS_BY_TARGET
 from sofascore.training_window import parse_iso_date
 from sofascore.walk_forward import (
     aggregate_walk_forward_metrics,
     build_weekly_folds,
 )
-from train_models import ALL_TARGETS, VARIANT_CONFIG, _variant_names, parse_targets
+from train_models import (
+    ALL_TARGETS,
+    LINEUP_VARIANTS,
+    VARIANT_CONFIG,
+    _variant_names,
+    parse_targets,
+)
 
 
-MANIFEST_SCHEMA_VERSION = 2
+MANIFEST_SCHEMA_VERSION = 3
 PREDICTION_EXPORT_SCHEMA_VERSION = 1
+MIN_HOLDOUT_ROWS = 5
 DEFAULT_START_DATE = "2026-04-01"
 DEFAULT_END_DATE = "2026-07-19"
 ALL_CLASSIFICATION_MODELS = THESIS_CORE_CLASSIFICATION_MODELS | {
@@ -110,7 +119,26 @@ def parse_args():
     parser.add_argument(
         "--max-folds",
         type=parse_positive_int,
-        help="Execute only the first N folds per variant; useful for a smoke run.",
+        help=(
+            "Execute only the first N calendar folds per variant; useful for a "
+            "smoke run."
+        ),
+    )
+    parser.add_argument(
+        "--skip-empty-folds",
+        action="store_true",
+        help=(
+            "Record calendar folds with no source feature rows as skipped instead "
+            "of rejecting the plan before training."
+        ),
+    )
+    parser.add_argument(
+        "--skip-insufficient-targets",
+        action="store_true",
+        help=(
+            "Run each non-empty fold only for targets with at least five "
+            "eligible holdout rows and record the others as unavailable."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -274,6 +302,126 @@ def _write_metrics_csv(summary: dict, path: Path):
 
 def _load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_feature_samples(data_dir: Path) -> list[dict]:
+    feature_paths = sorted(data_dir.rglob("features_all_seasons.json"))
+    if not feature_paths:
+        raise ValueError(
+            f"no features_all_seasons.json files found under {data_dir}"
+        )
+
+    samples = []
+    for feature_path in feature_paths:
+        try:
+            payload = _load_json(feature_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"cannot inspect feature file {feature_path}: {exc}"
+            ) from exc
+        feature_samples = payload.get("samples", [])
+        if not isinstance(feature_samples, list):
+            raise ValueError(
+                f"feature file {feature_path} has no valid samples list"
+            )
+        samples.extend(
+            sample for sample in feature_samples if isinstance(sample, dict)
+        )
+    return samples
+
+
+def _fold_release_by_date(folds) -> dict[date, str]:
+    date_to_release = {}
+    for fold in folds:
+        cursor = fold.test_start
+        while cursor <= fold.test_end:
+            date_to_release[cursor] = fold.release_id
+            cursor += timedelta(days=1)
+    return date_to_release
+
+
+def _sample_date(sample: dict):
+    raw_date = str(sample.get("date") or "")[:10]
+    try:
+        return date.fromisoformat(raw_date)
+    except ValueError:
+        return None
+
+
+def count_fold_feature_rows(samples: list[dict], folds) -> dict[str, int]:
+    """Count source feature rows in each calendar holdout fold."""
+    date_to_release = _fold_release_by_date(folds)
+
+    counts = {fold.release_id: 0 for fold in folds}
+    for sample in samples:
+        if not _is_present(sample.get("label_result_int")):
+            continue
+        release_id = date_to_release.get(_sample_date(sample))
+        if release_id:
+            counts[release_id] += 1
+    return counts
+
+
+def _is_present(value) -> bool:
+    return value is not None and not (
+        isinstance(value, float) and math.isnan(value)
+    )
+
+
+def _is_positive_number(value) -> bool:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number) and number > 0
+
+
+def count_fold_target_rows(
+    samples: list[dict],
+    folds,
+    variants: list[str],
+    targets: list[str],
+    paired_common_sample: bool,
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Count rows eligible for every variant, fold and prediction target."""
+    date_to_release = _fold_release_by_date(folds)
+    counts = {
+        variant: {
+            fold.release_id: {target: 0 for target in targets}
+            for fold in folds
+        }
+        for variant in variants
+    }
+
+    for sample in samples:
+        if not _is_present(sample.get("label_result_int")):
+            continue
+        release_id = date_to_release.get(_sample_date(sample))
+        if not release_id:
+            continue
+        for variant in variants:
+            if variant in LINEUP_VARIANTS and not _is_positive_number(
+                sample.get("confirmed_lineup_available")
+            ):
+                continue
+            requires_target_odds = (
+                paired_common_sample or VARIANT_CONFIG[variant]["odds_used"]
+            )
+            for target in targets:
+                label_column = TARGET_CONFIGS[target]["label_col"]
+                if not _is_present(sample.get(label_column)):
+                    continue
+                odds_columns = (
+                    ODDS_REQUIREMENTS_BY_TARGET.get(target, ())
+                    if requires_target_odds
+                    else ()
+                )
+                if all(
+                    _is_positive_number(sample.get(column))
+                    for column in odds_columns
+                ):
+                    counts[variant][release_id][target] += 1
+    return counts
 
 
 def _completed_job(paths: dict, save_models: bool) -> bool:
@@ -515,8 +663,29 @@ def _aggregate_completed_jobs(manifest: dict, output_dir: Path):
     summary["generated_at"] = _utc_now()
     summary["plan_fingerprint"] = manifest["plan_fingerprint"]
     summary["complete"] = all(
-        job.get("status") == "completed" for job in manifest["jobs"]
+        job.get("status") in {"completed", "skipped"}
+        for job in manifest["jobs"]
     )
+    summary["skipped_jobs"] = [
+        {
+            "id": job["id"],
+            "fold": job["fold"],
+            "reason": job.get("skip_reason"),
+            "source_rows": job.get("source_rows"),
+        }
+        for job in manifest["jobs"]
+        if job.get("status") == "skipped"
+    ]
+    summary["unavailable_targets"] = [
+        {
+            "job_id": job["id"],
+            "variant": job["variant"],
+            "fold": job["fold"],
+            **target,
+        }
+        for job in manifest["jobs"]
+        for target in job.get("skipped_targets", [])
+    ]
     prediction_index = _prediction_export_index(manifest, output_dir)
     summary["prediction_exports"] = {
         "schema_version": prediction_index["schema_version"],
@@ -596,6 +765,108 @@ def main():
         if TARGET_CONFIGS[target].get("task") != "regression"
     ]
 
+    try:
+        feature_samples = load_feature_samples(data_dir)
+        fold_source_rows = count_fold_feature_rows(feature_samples, folds)
+    except ValueError as exc:
+        print(f"Cannot inspect walk-forward source availability: {exc}")
+        return 2
+    empty_folds = [
+        fold for fold in folds if fold_source_rows[fold.release_id] == 0
+    ]
+    if empty_folds and not args.skip_empty_folds:
+        print("Walk-forward source contains empty calendar folds:")
+        for fold in empty_folds:
+            print(
+                f"  - {fold.release_id}: {fold.test_start.isoformat()}.."
+                f"{fold.test_end.isoformat()} (0 feature rows)"
+            )
+        print(
+            "Use --skip-empty-folds to preserve these folds in the manifest as "
+            "explicitly skipped."
+        )
+        return 2
+    if not any(fold_source_rows.values()):
+        print("Walk-forward source has no feature rows in the evaluation window.")
+        return 2
+    fold_target_rows = count_fold_target_rows(
+        feature_samples,
+        folds,
+        variants,
+        args.targets,
+        paired_common_sample,
+    )
+    insufficient_targets = []
+    for variant in variants:
+        for fold in folds:
+            if fold_source_rows[fold.release_id] == 0:
+                continue
+            for target, rows in fold_target_rows[variant][fold.release_id].items():
+                if rows < MIN_HOLDOUT_ROWS:
+                    insufficient_targets.append({
+                        "variant": variant,
+                        "fold": fold,
+                        "target": target,
+                        "rows": rows,
+                    })
+    if insufficient_targets and not args.skip_insufficient_targets:
+        print(
+            "Walk-forward source contains targets below the minimum holdout "
+            f"size ({MIN_HOLDOUT_ROWS} rows):"
+        )
+        for item in insufficient_targets:
+            print(
+                f"  - {item['variant']} {item['fold'].release_id} "
+                f"{item['target']}: {item['rows']} rows"
+            )
+        print(
+            "Use --skip-insufficient-targets to preserve these omissions in "
+            "the manifest and train the available targets."
+        )
+        return 2
+
+    eligible_targets = {
+        variant: {
+            fold.release_id: [
+                target
+                for target in args.targets
+                if fold_target_rows[variant][fold.release_id][target]
+                >= MIN_HOLDOUT_ROWS
+            ]
+            for fold in folds
+        }
+        for variant in variants
+    }
+    tuning_folds = {}
+    for variant in variants:
+        tuning_fold = next(
+            (
+                fold
+                for fold in folds
+                if eligible_targets[variant][fold.release_id]
+            ),
+            None,
+        )
+        if tuning_fold is None:
+            print(f"No target has an evaluable holdout for {variant}.")
+            return 2
+        missing_profile_targets = sorted(
+            target
+            for target in classification_targets
+            if target not in eligible_targets[variant][tuning_fold.release_id]
+            and any(
+                target in eligible_targets[variant][fold.release_id]
+                for fold in folds
+            )
+        )
+        if missing_profile_targets:
+            print(
+                f"Cannot freeze {variant} hyperparameters because its first "
+                f"evaluable fold lacks: {', '.join(missing_profile_targets)}."
+            )
+            return 2
+        tuning_folds[variant] = tuning_fold
+
     protocol = {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -611,15 +882,43 @@ def main():
         "paired_common_sample": paired_common_sample,
         "save_models": save_models,
         "prediction_export": "per_match_jsonl_v1",
+        "empty_fold_policy": "skip" if args.skip_empty_folds else "reject",
+        "insufficient_target_policy": (
+            "skip" if args.skip_insufficient_targets else "reject"
+        ),
+        "minimum_target_holdout_rows": MIN_HOLDOUT_ROWS,
+        "empty_folds": [fold.release_id for fold in empty_folds],
+        "fold_source_rows": fold_source_rows,
+        "fold_target_rows": fold_target_rows,
+        "hyperparameter_tuning_folds": {
+            variant: fold.release_id
+            for variant, fold in tuning_folds.items()
+        },
     }
     jobs = []
     for variant in variants:
         for fold in folds:
             paths = _job_paths(output_dir, variant, fold.slug)
-            jobs.append({
+            source_rows = fold_source_rows[fold.release_id]
+            job_targets = eligible_targets[variant][fold.release_id]
+            skipped_targets = [
+                {
+                    "target": target,
+                    "rows": fold_target_rows[variant][fold.release_id][target],
+                    "minimum_rows": MIN_HOLDOUT_ROWS,
+                    "reason": "insufficient_holdout_rows",
+                }
+                for target in args.targets
+                if target not in job_targets
+            ]
+            job = {
                 "id": f"{variant}:{fold.release_id}",
                 "variant": variant,
                 "fold": fold.as_dict(),
+                "source_rows": source_rows,
+                "targets": job_targets,
+                "target_rows": fold_target_rows[variant][fold.release_id],
+                "skipped_targets": skipped_targets,
                 "artifacts": {
                     "run": str(paths["run"].relative_to(output_dir)),
                     "metrics": str(paths["metrics"].relative_to(output_dir)),
@@ -631,13 +930,21 @@ def main():
                     ),
                     "model": str(paths["model"].relative_to(output_dir)),
                 },
-                "status": "pending",
-            })
+                "status": "pending" if job_targets else "skipped",
+            }
+            if not job_targets:
+                job["skip_reason"] = (
+                    "no_feature_rows"
+                    if not source_rows
+                    else "no_targets_meet_minimum_holdout"
+                )
+            jobs.append(job)
     fingerprint = _plan_fingerprint(protocol, jobs)
 
     print(
-        f"Walk-forward plan: {len(folds)} folds x {len(variants)} variants "
-        f"= {len(jobs)} jobs",
+        f"Walk-forward plan: {len(folds)} calendar folds x "
+        f"{len(variants)} variants = {len(jobs)} jobs "
+        f"({sum(job['status'] == 'pending' for job in jobs)} executable)",
         flush=True,
     )
     print(
@@ -645,31 +952,53 @@ def main():
         f"(first train cutoff: {folds[0].train_end.isoformat()})"
     )
     print(
-        "Hyperparameters: tuned on fold 1 pre-holdout data, then frozen",
+        "Hyperparameters: tuned on each variant's first evaluable pre-holdout "
+        "window, then frozen",
         flush=True,
     )
+    for fold in empty_folds:
+        print(
+            f"[SKIP EMPTY] {fold.release_id} "
+            f"{fold.test_start.isoformat()}..{fold.test_end.isoformat()} "
+            "has 0 feature rows",
+            flush=True,
+        )
+    for item in insufficient_targets:
+        print(
+            f"[SKIP TARGET] {item['variant']} {item['fold'].release_id} "
+            f"{item['target']} has {item['rows']}/{MIN_HOLDOUT_ROWS} rows",
+            flush=True,
+        )
 
     if args.dry_run:
         for variant in variants:
+            tuning_fold = tuning_folds[variant]
             first_profile = _job_paths(
                 output_dir,
                 variant,
-                folds[0].slug,
+                tuning_fold.slug,
             )["hyperparameters"]
             for fold in folds:
                 if args.max_folds and fold.index > args.max_folds:
                     continue
+                job_targets = eligible_targets[variant][fold.release_id]
+                if not job_targets:
+                    continue
                 paths = _job_paths(output_dir, variant, fold.slug)
                 profile = (
                     first_profile
-                    if classification_targets and fold.index > 1
+                    if any(
+                        target in classification_targets
+                        for target in job_targets
+                    )
+                    and fold != tuning_fold
                     else None
                 )
                 command = build_training_command(
                     data_dir,
                     paths["job_dir"],
                     variant,
-                    args.targets,
+                    job_targets,
                     fold,
                     args.model_scope,
                     args.optuna_seed,
@@ -723,13 +1052,23 @@ def main():
 
     jobs_by_id = {job["id"]: job for job in manifest["jobs"]}
     for variant in variants:
-        first_paths = _job_paths(output_dir, variant, folds[0].slug)
+        tuning_fold = tuning_folds[variant]
+        first_paths = _job_paths(output_dir, variant, tuning_fold.slug)
         frozen_profile = first_paths["hyperparameters"]
         for fold in folds:
             if args.max_folds and fold.index > args.max_folds:
                 continue
             paths = _job_paths(output_dir, variant, fold.slug)
             job = jobs_by_id[f"{variant}:{fold.release_id}"]
+            job_targets = job["targets"]
+            job_classification_targets = [
+                target
+                for target in job_targets
+                if target in classification_targets
+            ]
+
+            if job.get("status") == "skipped":
+                continue
 
             if (
                 not args.force
@@ -739,15 +1078,15 @@ def main():
                 existing_metrics = _load_json(paths["metrics"])
                 existing_errors = validate_fold_metrics(
                     existing_metrics,
-                    args.targets,
+                    job_targets,
                     args.model_scope,
                     fold,
                     (
                         "frozen_profile"
-                        if classification_targets and fold.index > 1
+                        if job_classification_targets and fold != tuning_fold
                         else (
                             "optuna_pre_holdout"
-                            if classification_targets
+                            if job_classification_targets
                             and args.first_fold_optuna_trials > 0
                             else "defaults"
                         )
@@ -756,7 +1095,7 @@ def main():
                 existing_errors.extend(validate_prediction_export(
                     paths["predictions"],
                     existing_metrics,
-                    args.targets,
+                    job_targets,
                     args.model_scope,
                     fold,
                     variant,
@@ -769,7 +1108,11 @@ def main():
                     f"{'; '.join(existing_errors)}"
                 )
 
-            if classification_targets and fold.index > 1 and not frozen_profile.exists():
+            if (
+                job_classification_targets
+                and fold != tuning_fold
+                and not frozen_profile.exists()
+            ):
                 print(
                     f"Cannot run {job['id']}: first-fold hyperparameter profile "
                     f"is missing at {frozen_profile}"
@@ -782,14 +1125,14 @@ def main():
 
             profile = (
                 frozen_profile
-                if classification_targets and fold.index > 1
+                if job_classification_targets and fold != tuning_fold
                 else None
             )
             command = build_training_command(
                 data_dir,
                 paths["job_dir"],
                 variant,
-                args.targets,
+                job_targets,
                 fold,
                 args.model_scope,
                 args.optuna_seed,
@@ -841,15 +1184,15 @@ def main():
             metrics_payload = _load_json(paths["metrics"])
             validation_errors = validate_fold_metrics(
                 metrics_payload,
-                args.targets,
+                job_targets,
                 args.model_scope,
                 fold,
                 (
                     "frozen_profile"
-                    if classification_targets and fold.index > 1
+                    if job_classification_targets and fold != tuning_fold
                     else (
                         "optuna_pre_holdout"
-                        if classification_targets
+                        if job_classification_targets
                         and args.first_fold_optuna_trials > 0
                         else "defaults"
                     )
@@ -858,7 +1201,7 @@ def main():
             validation_errors.extend(validate_prediction_export(
                 paths["predictions"],
                 metrics_payload,
-                args.targets,
+                job_targets,
                 args.model_scope,
                 fold,
                 variant,
@@ -878,7 +1221,11 @@ def main():
                 for error in validation_errors:
                     print(f"  - {error}")
                 return 4
-            if classification_targets and fold.index == 1 and not frozen_profile.exists():
+            if (
+                job_classification_targets
+                and fold == tuning_fold
+                and not frozen_profile.exists()
+            ):
                 job.update({
                     "status": "failed",
                     "finished_at": _utc_now(),
@@ -901,7 +1248,7 @@ def main():
                     manifest,
                     output_dir,
                     job,
-                    args.targets,
+                    job_targets,
                 )
                 if paired_errors:
                     job.update({
@@ -923,9 +1270,13 @@ def main():
     completed_count = sum(
         job.get("status") == "completed" for job in manifest["jobs"]
     )
+    skipped_count = sum(
+        job.get("status") == "skipped" for job in manifest["jobs"]
+    )
+    expected_count = len(manifest["jobs"]) - skipped_count
     print(
-        f"\nWalk-forward artifacts: {completed_count}/{len(manifest['jobs'])} jobs "
-        f"completed in {output_dir}"
+        f"\nWalk-forward artifacts: {completed_count}/{expected_count} executable "
+        f"jobs completed, {skipped_count} jobs skipped in {output_dir}"
     )
     return 0
 
