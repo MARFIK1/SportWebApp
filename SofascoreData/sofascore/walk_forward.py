@@ -149,6 +149,8 @@ def aggregate_walk_forward_metrics(entries: Iterable[Mapping]) -> dict:
                     name: metadata.get("test_metrics", {})
                     for name, metadata in deployment.get("models", {}).items()
                     if isinstance(metadata, Mapping)
+                    and isinstance(metadata.get("test_metrics"), Mapping)
+                    and metadata.get("test_metrics")
                 }
                 evaluated_models.update(deployment.get("consensus", {}))
             for model, metrics in evaluated_models.items():

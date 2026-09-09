@@ -5,6 +5,8 @@ from datetime import date
 from pathlib import Path
 
 from run_walk_forward_backtest import (
+    ALL_CLASSIFICATION_MODELS,
+    LSTM_NO_VALID_TEST_SEQUENCES,
     build_training_command,
     count_fold_feature_rows,
     count_fold_target_rows,
@@ -265,6 +267,117 @@ class WalkForwardFoldTests(unittest.TestCase):
         self.assertTrue(any("Random Forest" in error for error in errors))
         self.assertTrue(any("temporal CV" in error for error in errors))
 
+    def test_quality_gate_accepts_lstm_unavailable_without_test_sequences(self):
+        fold = build_weekly_folds("2026-04-01", "2026-04-05")[0]
+        available_models = ALL_CLASSIFICATION_MODELS - {"LSTM"}
+        payload = {
+            "targets": {
+                "result": {
+                    "stats": {
+                        "trained_models": sorted(available_models),
+                        "unavailable_models": {
+                            "LSTM": {
+                                "reason": LSTM_NO_VALID_TEST_SEQUENCES,
+                                "valid_test_rows": 0,
+                            },
+                        },
+                        "selection": {"source": "temporal_cross_validation"},
+                        "validation": {"strategy": "fixed_temporal_window"},
+                        "date_ranges": {
+                            "test": {"min": "2026-04-01", "max": "2026-04-05"},
+                            "deployment_train": {
+                                "min": "2015-01-01",
+                                "max": "2026-03-31",
+                            },
+                        },
+                        "deployment_refit": {
+                            "status": "completed",
+                            "test_excluded": True,
+                            "models": {
+                                **{
+                                    name: {"test_metrics": {"macro_f1": 0.5}}
+                                    for name in available_models
+                                },
+                                "LSTM": {
+                                    "status": "unavailable",
+                                    "reason": LSTM_NO_VALID_TEST_SEQUENCES,
+                                    "test_sequences": 0,
+                                },
+                            },
+                            "consensus": {
+                                "Consensus Argmax": {"macro_f1": 0.5},
+                                "Consensus Policy": {"macro_f1": 0.5},
+                            },
+                        },
+                        "hyperparameters": {"policy": "defaults"},
+                    },
+                },
+            },
+        }
+
+        self.assertEqual(
+            validate_fold_metrics(
+                payload,
+                ["result"],
+                "all",
+                fold,
+                "defaults",
+            ),
+            [],
+        )
+
+    def test_prediction_gate_accepts_explicitly_unavailable_lstm(self):
+        fold = build_weekly_folds("2026-04-01", "2026-04-05")[0]
+        predictions = {
+            name: {"available": True, "prediction": 0}
+            for name in ALL_CLASSIFICATION_MODELS
+            | {"Consensus Argmax", "Consensus Policy"}
+        }
+        predictions["LSTM"] = {
+            "available": False,
+            "reason": LSTM_NO_VALID_TEST_SEQUENCES,
+        }
+        record = {
+            "schema_version": 1,
+            "variant": "without_odds",
+            "target": "result",
+            "task": "multiclass",
+            "row_index": 10,
+            "event_id": 100,
+            "date": "2026-04-03",
+            "actual": 0,
+            "predictions": predictions,
+        }
+        metrics = {
+            "targets": {
+                "result": {
+                    "stats": {
+                        "test_matches": 1,
+                        "unavailable_models": {
+                            "LSTM": {
+                                "reason": LSTM_NO_VALID_TEST_SEQUENCES,
+                                "valid_test_rows": 0,
+                            },
+                        },
+                    },
+                },
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "holdout_predictions.jsonl"
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            errors = validate_prediction_export(
+                path,
+                metrics,
+                ["result"],
+                "all",
+                fold,
+                "without_odds",
+            )
+
+        self.assertEqual(errors, [])
+
     def test_paired_gate_rejects_different_holdout_fingerprints(self):
         with tempfile.TemporaryDirectory() as temporary:
             output_dir = Path(temporary)
@@ -444,6 +557,26 @@ class WalkForwardAggregationTests(unittest.TestCase):
         self.assertAlmostEqual(regression["mae"], 1.666667)
         self.assertAlmostEqual(regression["rmse"], 1.732051)
         self.assertAlmostEqual(regression["r2_fold_weighted"], 0.3)
+
+    def test_omits_models_without_fold_test_metrics(self):
+        entry = self._entry(
+            1,
+            {"cm": [[8, 2], [1, 9]], "brier": 0.2, "log_loss": 0.5, "ece": 0.1},
+            {"rows": 10, "mae": 1.0, "rmse": 1.0, "r2": 0.5},
+        )
+        entry["metrics"]["targets"]["btts"]["stats"]["deployment_refit"][
+            "models"
+        ]["LSTM"] = {
+            "status": "unavailable",
+            "reason": LSTM_NO_VALID_TEST_SEQUENCES,
+        }
+
+        summary = aggregate_walk_forward_metrics([entry])
+        models = summary["variants"]["without_odds"]["targets"]["btts"][
+            "models"
+        ]
+
+        self.assertNotIn("LSTM", models)
 
 
 if __name__ == "__main__":

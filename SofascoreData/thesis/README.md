@@ -109,8 +109,10 @@ pre-holdout training window. Their versioned profile is then frozen for all
 later folds, while estimator weights are refitted on the expanding data window.
 
 The primary production-style run uses the complete independent no-odds sample.
-This keeps all 11 targets and all nine classification models available through
-the final date even after historical odds coverage ends. Inspect its commands
+This keeps all 11 targets and all nine classification model definitions in scope
+through the final date even after historical odds coverage ends. A target or a
+sequence model that cannot be evaluated in a sparse fold is recorded explicitly
+as unavailable instead of being treated as a prediction. Inspect its commands
 without training:
 
 ```powershell
@@ -134,9 +136,9 @@ command skips completed jobs and continues at the first incomplete fold. Use
 manifest as explicitly skipped; the next fold still trains only through its
 previous-day cutoff. Targets with fewer than five usable labels in an otherwise
 non-empty week are also recorded as unavailable while the other targets keep
-their own out-of-sample predictions. Report target-specific fold counts and
-sample sizes in the thesis rather than treating missing labels as failed
-predictions. By default the runner retains metrics,
+their own out-of-sample predictions. Report target- and model-specific fold
+counts and sample sizes in the thesis rather than treating unavailable labels or
+sequences as failed predictions. By default the runner retains metrics,
 hyperparameter profiles and manifests but not serialized models; a full set of
 two-variant model artifacts would require tens of gigabytes. Add
 `--save-models` only when those historical binaries are needed.

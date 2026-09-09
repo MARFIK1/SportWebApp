@@ -73,6 +73,7 @@ except ImportError:
 
 COMPETITION_TYPES = ['league', 'cups', 'european', 'international']
 DEFAULT_OPTUNA_SEED = 42
+LSTM_NO_VALID_TEST_SEQUENCES = 'no_valid_untouched_test_sequences'
 
 
 def _create_optuna_study(seed: int):
@@ -3433,6 +3434,23 @@ class UniversalPredictor:
                         print(f"LSTM: acc={acc_lstm:.1%} f1={f1_lstm:.1%} "
                               f"[{lstm_time:.1f}s, pred={pred_time_lstm:.1f}ms, "
                               f"{lstm_size_kb:.0f}KB, {valid_te.sum()} seqs]")
+                    else:
+                        unavailable_models['LSTM'] = {
+                            'reason': LSTM_NO_VALID_TEST_SEQUENCES,
+                            'test_rows': int(len(X_test)),
+                            'valid_test_rows': 0,
+                            'benchmark_fitted': True,
+                            'training_sequences': int(
+                                getattr(lstm, '_training_metadata', {}).get(
+                                    'sequences',
+                                    0,
+                                )
+                            ),
+                        }
+                        print(
+                            "LSTM: unavailable on untouched test rows "
+                            "(no complete team-history sequences)"
+                        )
             except Exception as e:
                 print(f"LSTM: error ({e})")
 
@@ -3458,6 +3476,23 @@ class UniversalPredictor:
             source_df=df,
             capture_holdout_predictions=capture_holdout_predictions,
         )
+        for name, availability in unavailable_models.items():
+            deployment_refit_summary['models'][name] = {
+                'status': 'unavailable',
+                'reason': availability['reason'],
+                'test_excluded': True,
+                'test_rows': availability['test_rows'],
+                'test_sequences': availability['valid_test_rows'],
+                'benchmark': {
+                    'status': 'fitted',
+                    'sequences': availability['training_sequences'],
+                },
+            }
+            for row in self.holdout_predictions.get(target, []):
+                row['predictions'][name] = {
+                    'available': False,
+                    'reason': availability['reason'],
+                }
 
         test_best, selection_metric, test_best_score = _select_best_classification_model(
             target,
@@ -3489,6 +3524,7 @@ class UniversalPredictor:
             'feature_set': self.feature_sets_by_target.get(target),
             'model_scope': model_scope,
             'trained_models': sorted(detailed_metrics),
+            'unavailable_models': unavailable_models,
             'hyperparameters': {
                 'policy': hyperparameter_policy,
                 'optuna_trials': (
@@ -3634,6 +3670,7 @@ class UniversalPredictor:
         self.models[target] = {}
         results = {}
         detailed_metrics = {}
+        unavailable_models = {}
         prediction_rows = (
             _build_holdout_prediction_rows(
                 df,

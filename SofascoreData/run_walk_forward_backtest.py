@@ -14,6 +14,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from sofascore.predictor import (
+    LSTM_NO_VALID_TEST_SEQUENCES,
     MODEL_SCOPES,
     TARGET_CONFIGS,
     THESIS_CORE_CLASSIFICATION_MODELS,
@@ -431,6 +432,20 @@ def _completed_job(paths: dict, save_models: bool) -> bool:
     return all(path.exists() for path in required)
 
 
+def _declared_unavailable_models(stats: dict) -> set[str]:
+    unavailable = stats.get("unavailable_models", {})
+    if not isinstance(unavailable, dict):
+        return set()
+    return {
+        name
+        for name, metadata in unavailable.items()
+        if name == "LSTM"
+        and isinstance(metadata, dict)
+        and metadata.get("reason") == LSTM_NO_VALID_TEST_SEQUENCES
+        and metadata.get("valid_test_rows") == 0
+    }
+
+
 def validate_fold_metrics(
     payload: dict,
     targets: list[str],
@@ -457,8 +472,27 @@ def validate_fold_metrics(
             if task == "regression"
             else expected_classification_models
         )
+        unavailable_models = (
+            _declared_unavailable_models(stats)
+            if task != "regression"
+            else set()
+        )
+        declared_unavailable = stats.get("unavailable_models", {})
+        if not isinstance(declared_unavailable, dict):
+            errors.append(f"{target}: unavailable_models is not an object")
+        else:
+            invalid_unavailable = sorted(
+                set(declared_unavailable) - unavailable_models
+            )
+            if invalid_unavailable:
+                errors.append(
+                    f"{target}: invalid unavailable models: "
+                    f"{', '.join(invalid_unavailable)}"
+                )
         trained_models = set(stats.get("trained_models", []))
-        missing_models = sorted(expected_models - trained_models)
+        missing_models = sorted(
+            expected_models - trained_models - unavailable_models
+        )
         if missing_models:
             errors.append(
                 f"{target}: missing trained models: {', '.join(missing_models)}"
@@ -496,7 +530,7 @@ def validate_fold_metrics(
             deployment_models = deployment_refit.get("models", {})
             missing_deployment_metrics = sorted(
                 model
-                for model in expected_classification_models
+                for model in expected_classification_models - unavailable_models
                 if not isinstance(
                     deployment_models.get(model, {}).get("test_metrics"),
                     dict,
@@ -507,6 +541,17 @@ def validate_fold_metrics(
                     f"{target}: missing deployment test metrics: "
                     f"{', '.join(missing_deployment_metrics)}"
                 )
+            for model in sorted(unavailable_models):
+                metadata = deployment_models.get(model, {})
+                if not (
+                    metadata.get("status") == "unavailable"
+                    and metadata.get("reason")
+                    == LSTM_NO_VALID_TEST_SEQUENCES
+                    and metadata.get("test_sequences") == 0
+                ):
+                    errors.append(
+                        f"{target}: invalid deployment unavailability for {model}"
+                    )
             deployment_consensus = deployment_refit.get("consensus", {})
             missing_consensus = sorted(
                 name
@@ -600,6 +645,16 @@ def validate_prediction_export(
                 f"prediction line {line_number} is missing: "
                 f"{', '.join(missing_models)}"
             )
+        target_stats = (
+            metrics_payload.get("targets", {})
+            .get(target, {})
+            .get("stats", {})
+        )
+        for model in _declared_unavailable_models(target_stats):
+            if predictions.get(model, {}).get("available") is not False:
+                errors.append(
+                    f"prediction line {line_number} must mark {model} unavailable"
+                )
 
     metrics_targets = metrics_payload.get("targets", {})
     for target, count in target_counts.items():
