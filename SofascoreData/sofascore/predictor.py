@@ -3340,6 +3340,7 @@ class UniversalPredictor:
             }
             print(f"    Stacking: acc={acc_stack:.1%} f1={f1_stack:.1%} [{stack_time:.1f}s, pred={pred_time_st:.1f}ms]")
 
+        unavailable_models = {}
         if model_scope == 'all' and HAS_TORCH and not is_regression:
             try:
                 lstm = LSTMPredictor(num_classes=config['num_classes'], epochs=50)
@@ -3670,7 +3671,6 @@ class UniversalPredictor:
         self.models[target] = {}
         results = {}
         detailed_metrics = {}
-        unavailable_models = {}
         prediction_rows = (
             _build_holdout_prediction_rows(
                 df,
