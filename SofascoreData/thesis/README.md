@@ -143,21 +143,32 @@ hyperparameter profiles and manifests but not serialized models; a full set of
 two-variant model artifacts would require tens of gigabytes. Add
 `--save-models` only when those historical binaries are needed.
 
-Odds/no-odds comparison is a separate paired experiment limited to the common
-availability window and targets with captured matching odds:
+Odds/no-odds comparison is a separate paired experiment for `result` and
+`btts`. Do not modify the immutable thesis snapshot to extend odds coverage.
+Create a versioned derived dataset instead, retain the raw API response ledger,
+and run the paired variants on identical target-specific rows. The unattended
+pipeline performs the backfill, validates the resulting cohort with a dry run,
+and starts training only when that validation succeeds:
 
 ```powershell
-python SofascoreData/run_walk_forward_backtest.py `
-  --data-dir (Join-Path $snapshotRoot "data") `
-  --output-dir (Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-result-btts-seed42") `
+python SofascoreData/run_backfilled_paired_pipeline.py `
+  --source-snapshot-root $snapshotRoot `
+  --derived-root (Join-Path $snapshotRoot "derived-data\odds-backfilled-result-btts-v1") `
+  --training-output (Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-result-btts-full-backfilled-seed42") `
   --start-date 2026-04-01 `
-  --end-date 2026-05-24 `
-  --variant both `
+  --end-date 2026-07-19 `
   --targets result,btts `
-  --model-scope all `
-  --first-fold-optuna-trials 50 `
-  --dry-run
+  --optuna-trials 50 `
+  --optuna-seed 42
 ```
+
+The reference derived dataset queried 659 incomplete events and enriched 636.
+Complete 1X2 odds cover 1,909 of 1,927 evaluation events (99.07%); complete
+BTTS odds cover 1,892 events (98.18%). The remaining 35 events are retained in
+the provenance manifest rather than imputed. All 15 non-empty temporal folds
+remain evaluable for both targets and variants, yielding 30 completed training
+jobs. The 2026-06-01 through 2026-06-07 fold remains explicitly skipped for
+both variants because the source snapshot contains no feature rows that week.
 
 The frozen snapshot contains no matching historical Over 2.5 odds in the study
 window. Do not present an Over 2.5 odds/no-odds comparison until those prices
@@ -173,6 +184,32 @@ Classification confusion matrices are summed before macro F1 and balanced
 accuracy are recomputed. Brier score and log loss are weighted by evaluated
 rows. Fold-weighted ECE and R2 remain descriptive and are labelled as such. The
 evaluation never rewrites the frozen source reports or the runnable thesis demo.
+
+Export paired inferential results from the per-match prediction ledger:
+
+```powershell
+$pairedRun = Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-result-btts-full-backfilled-seed42"
+$pairedResults = Join-Path $snapshotRoot "results-paired-walk-forward-full"
+$pairedFigures = Join-Path $snapshotRoot "figures-paired-walk-forward-full"
+
+python SofascoreData/export_paired_walk_forward_analysis.py `
+  --run-dir $pairedRun `
+  --output-dir $pairedResults `
+  --bootstrap-iterations 10000 `
+  --bootstrap-seed 42 `
+  --primary-model "Consensus Policy"
+
+python SofascoreData/export_paired_walk_forward_figures.py `
+  --analysis-dir $pairedResults `
+  --output-dir $pairedFigures
+```
+
+The primary uncertainty analysis resamples complete weekly folds rather than
+individual matches. It reports 95% percentile intervals for paired metric
+changes, an exact McNemar test for paired correctness, and Holm-adjusted
+exploratory McNemar p-values across all target-model comparisons. The
+production `Consensus Policy` is the pre-declared primary estimator; all other
+model rows are descriptive secondary analyses.
 
 ## Evaluation result export
 
