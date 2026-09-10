@@ -1174,16 +1174,26 @@ class MLFeatureGenerator:
             features['odds_away_prob'] = 0
             features['odds_overround'] = 0
 
-        odds_over = match.get('odds_over_2_5')
-        odds_under = match.get('odds_under_2_5')
-        if odds_over and odds_under:
-            features['odds_over_2_5'] = odds_over
-            features['odds_under_2_5'] = odds_under
-            features['odds_over_2_5_prob'] = round(1 / odds_over, 4)
-        else:
-            features['odds_over_2_5'] = 0
-            features['odds_under_2_5'] = 0
-            features['odds_over_2_5_prob'] = 0
+        binary_odds_markets = (
+            ('odds_over_1_5', 'odds_under_1_5', 'odds_over_1_5_prob'),
+            ('odds_over_2_5', 'odds_under_2_5', 'odds_over_2_5_prob'),
+            (
+                'odds_cards_over_3_5',
+                'odds_cards_under_3_5',
+                'odds_cards_over_3_5_prob',
+            ),
+        )
+        for over_key, under_key, probability_key in binary_odds_markets:
+            odds_over = match.get(over_key)
+            odds_under = match.get(under_key)
+            if odds_over and odds_under:
+                features[over_key] = odds_over
+                features[under_key] = odds_under
+                features[probability_key] = round(1 / odds_over, 4)
+            else:
+                features[over_key] = 0
+                features[under_key] = 0
+                features[probability_key] = 0
 
         odds_btts_yes = match.get('odds_btts_yes')
         odds_btts_no = match.get('odds_btts_no')

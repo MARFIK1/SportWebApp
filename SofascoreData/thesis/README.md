@@ -143,36 +143,50 @@ hyperparameter profiles and manifests but not serialized models; a full set of
 two-variant model artifacts would require tens of gigabytes. Add
 `--save-models` only when those historical binaries are needed.
 
-Odds/no-odds comparison is a separate paired experiment for `result` and
-`btts`. Do not modify the immutable thesis snapshot to extend odds coverage.
-Create a versioned derived dataset instead, retain the raw API response ledger,
-and run the paired variants on identical target-specific rows. The unattended
-pipeline performs the backfill, validates the resulting cohort with a dry run,
-and starts training only when that validation succeeds:
+The complete odds/no-odds comparison is a separate paired experiment for
+`result`, `btts`, `over_1_5`, `over_2_5` and `cards_over_3_5`. Do not modify the
+immutable thesis snapshot to extend odds or outcome coverage. Create a
+versioned derived dataset instead, retain the raw API response ledger, and run
+the paired variants on identical target-specific rows. For a card-market event
+whose frozen feature row has no final card label, the backfill also archives
+the final Sofascore statistics response and derives the same yellow-card target
+used by the original feature generator. Missing markets and outcomes are never
+imputed.
+
+The unattended pipeline replays the preliminary raw ledger, fetches every
+still-missing requested market, validates the resulting cohort with a dry run,
+and starts training only when every target has at least five paired holdout rows
+in every non-empty calendar fold:
 
 ```powershell
 python SofascoreData/run_backfilled_paired_pipeline.py `
   --source-snapshot-root $snapshotRoot `
-  --derived-root (Join-Path $snapshotRoot "derived-data\odds-backfilled-result-btts-v1") `
-  --training-output (Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-result-btts-full-backfilled-seed42") `
+  --derived-root (Join-Path $snapshotRoot "derived-data\odds-backfilled-five-markets-v1") `
+  --training-output (Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-five-markets-full-backfilled-seed42") `
+  --analysis-output (Join-Path $snapshotRoot "results-paired-walk-forward-five-markets-full") `
+  --figures-output (Join-Path $snapshotRoot "figures-paired-walk-forward-five-markets-full") `
+  --seed-ledger (Join-Path $snapshotRoot "derived-data\odds-backfilled-result-btts-v1\odds_fetch_ledger.jsonl") `
   --start-date 2026-04-01 `
   --end-date 2026-07-19 `
-  --targets result,btts `
+  --targets result,btts,over_1_5,over_2_5,cards_over_3_5 `
   --optuna-trials 50 `
   --optuna-seed 42
 ```
 
-The reference derived dataset queried 659 incomplete events and enriched 636.
-Complete 1X2 odds cover 1,909 of 1,927 evaluation events (99.07%); complete
-BTTS odds cover 1,892 events (98.18%). The remaining 35 events are retained in
-the provenance manifest rather than imputed. All 15 non-empty temporal folds
-remain evaluable for both targets and variants, yielding 30 completed training
-jobs. The 2026-06-01 through 2026-06-07 fold remains explicitly skipped for
-both variants because the source snapshot contains no feature rows that week.
+The earlier `odds-backfilled-result-btts-v1` run is preliminary and is not the
+complete odds-impact release. It queried 659 events and established 1X2
+coverage of 1,909/1,927 and BTTS coverage of 1,892/1,927. Replaying its raw
+responses with the corrected market parser recovers 617 Over 1.5, 635 Over 2.5
+and 122 card-line prices before the complete fetch begins. Final coverage must
+come from `derived_snapshot_manifest.json`; unresolved events remain listed in
+provenance rather than being fabricated.
 
-The frozen snapshot contains no matching historical Over 2.5 odds in the study
-window. Do not present an Over 2.5 odds/no-odds comparison until those prices
-are backfilled and the paired cohort is rerun.
+The 2026-06-01 through 2026-06-07 calendar fold remains explicitly skipped for
+both variants because the immutable source snapshot contains no feature rows
+that week. The other 15 folds must contain all five targets in both variants;
+the pipeline aborts before training instead of silently omitting an
+insufficient target. A complete run therefore has 30 fold-variant jobs and 150
+paired target-fold evaluations.
 
 Outputs include `walk_forward_run.json`, pooled `walk_forward_summary.json`,
 `walk_forward_metrics.csv`, one `holdout_predictions.jsonl` file per fold and
@@ -188,9 +202,9 @@ evaluation never rewrites the frozen source reports or the runnable thesis demo.
 Export paired inferential results from the per-match prediction ledger:
 
 ```powershell
-$pairedRun = Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-result-btts-full-backfilled-seed42"
-$pairedResults = Join-Path $snapshotRoot "results-paired-walk-forward-full"
-$pairedFigures = Join-Path $snapshotRoot "figures-paired-walk-forward-full"
+$pairedRun = Join-Path $snapshotRoot "model-runs\walk-forward-weekly-paired-five-markets-full-backfilled-seed42"
+$pairedResults = Join-Path $snapshotRoot "results-paired-walk-forward-five-markets-full"
+$pairedFigures = Join-Path $snapshotRoot "figures-paired-walk-forward-five-markets-full"
 
 python SofascoreData/export_paired_walk_forward_analysis.py `
   --run-dir $pairedRun `

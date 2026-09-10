@@ -59,6 +59,17 @@ PAIRED_VARIANTS = {
 }
 
 
+def _effective_target_feature_set(variant: str, target: str) -> str:
+    configured = VARIANT_CONFIG[variant]["feature_set"]
+    if target in ODDS_REQUIREMENTS_BY_TARGET:
+        return configured
+    if configured == "odds_available":
+        return "pre_match_safe"
+    if configured == "lineup_with_odds":
+        return "lineup_available"
+    return configured
+
+
 def parse_non_negative_int(value: str):
     try:
         parsed = int(value)
@@ -452,6 +463,8 @@ def validate_fold_metrics(
     model_scope: str,
     fold,
     expected_hyperparameter_policy: str,
+    variant: str | None = None,
+    require_paired_odds_cohort: bool = False,
 ) -> list[str]:
     errors = []
     target_payloads = payload.get("targets", {})
@@ -466,6 +479,22 @@ def validate_fold_metrics(
             errors.append(f"missing metrics for target {target}")
             continue
         stats = target_payload.get("stats", {})
+        if variant is not None:
+            expected_feature_set = _effective_target_feature_set(variant, target)
+            if stats.get("feature_set") != expected_feature_set:
+                errors.append(
+                    f"{target}: expected feature set {expected_feature_set}, "
+                    f"got {stats.get('feature_set')}"
+                )
+        if require_paired_odds_cohort and target in ODDS_REQUIREMENTS_BY_TARGET:
+            expected_requirements = list(
+                ODDS_REQUIREMENTS_BY_TARGET.get(target, ())
+            )
+            cohort = stats.get("cohort", {})
+            if cohort.get("required_columns") != expected_requirements:
+                errors.append(
+                    f"{target}: paired cohort does not require its exact odds columns"
+                )
         task = TARGET_CONFIGS[target].get("task")
         expected_models = (
             REGRESSION_MODELS
@@ -613,6 +642,12 @@ def validate_prediction_export(
             errors.append(f"prediction line {line_number} has unsupported schema")
         if record.get("variant") != variant:
             errors.append(f"prediction line {line_number} has wrong variant")
+        expected_feature_set = _effective_target_feature_set(variant, target)
+        if record.get("feature_set") != expected_feature_set:
+            errors.append(
+                f"prediction line {line_number} has feature set "
+                f"{record.get('feature_set')}, expected {expected_feature_set}"
+            )
         match_date = str(record.get("date") or "")[:10]
         if not (
             fold.test_start.isoformat()
@@ -1146,6 +1181,8 @@ def main():
                             else "defaults"
                         )
                     ),
+                    variant,
+                    paired_common_sample,
                 )
                 existing_errors.extend(validate_prediction_export(
                     paths["predictions"],
@@ -1252,6 +1289,8 @@ def main():
                         else "defaults"
                     )
                 ),
+                variant,
+                paired_common_sample,
             )
             validation_errors.extend(validate_prediction_export(
                 paths["predictions"],

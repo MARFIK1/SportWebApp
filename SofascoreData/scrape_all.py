@@ -48,8 +48,10 @@ DEFAULT_SEASONS = 1
 FULL_HISTORY_SEASONS = 5
 ODDS_FIELDS = [
     'odds_home_win', 'odds_draw', 'odds_away_win',
+    'odds_over_1_5', 'odds_under_1_5',
     'odds_over_2_5', 'odds_under_2_5',
     'odds_btts_yes', 'odds_btts_no',
+    'odds_cards_over_3_5', 'odds_cards_under_3_5',
 ]
 ODDS_REQUEST_DELAY = 1.5
 ODDS_BATCH_SIZE = 25

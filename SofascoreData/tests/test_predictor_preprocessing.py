@@ -116,6 +116,8 @@ class PredictorPreprocessingTests(unittest.TestCase):
             "label_result_int": [0, 1],
             "label_btts": [1, 0],
             "label_over_1_5": [1, 1],
+            "label_over_2_5": [0, 1],
+            "label_cards_over_3_5": [1, 0],
             "odds_home_win": [2.0, 2.1],
             "odds_draw": [3.0, 3.1],
             "odds_away_win": [4.0, 4.1],
@@ -126,6 +128,15 @@ class PredictorPreprocessingTests(unittest.TestCase):
             "odds_btts_yes": [1.8, 1.9],
             "odds_btts_no": [2.0, 1.9],
             "odds_btts_prob": [0.5556, 0.5263],
+            "odds_over_1_5": [1.2, 1.3],
+            "odds_under_1_5": [4.5, 4.0],
+            "odds_over_1_5_prob": [0.8333, 0.7692],
+            "odds_over_2_5": [1.8, 1.9],
+            "odds_under_2_5": [2.0, 1.9],
+            "odds_over_2_5_prob": [0.5556, 0.5263],
+            "odds_cards_over_3_5": [1.6, 1.7],
+            "odds_cards_under_3_5": [2.2, 2.1],
+            "odds_cards_over_3_5_prob": [0.625, 0.5882],
         })
         predictor = UniversalPredictor("data")
         requirements = {
@@ -149,15 +160,25 @@ class PredictorPreprocessingTests(unittest.TestCase):
                 "over_1_5",
                 requirements,
             )
+            cards_x, _, cards_meta = predictor.prepare_data(
+                frame,
+                "cards_over_3_5",
+                requirements,
+            )
 
         self.assertIn("odds_home_win", result_x.columns)
         self.assertNotIn("odds_btts_yes", result_x.columns)
         self.assertIn("odds_btts_yes", btts_x.columns)
         self.assertNotIn("odds_home_win", btts_x.columns)
-        self.assertFalse(any(column.startswith("odds_") for column in over_x.columns))
+        self.assertIn("odds_over_1_5", over_x.columns)
+        self.assertNotIn("odds_over_2_5", over_x.columns)
+        self.assertNotIn("odds_home_win", over_x.columns)
+        self.assertIn("odds_cards_over_3_5", cards_x.columns)
+        self.assertNotIn("odds_btts_yes", cards_x.columns)
         self.assertEqual(result_meta["feature_set_name"], "odds_available")
         self.assertEqual(btts_meta["feature_set_name"], "odds_available")
-        self.assertEqual(over_meta["feature_set_name"], "pre_match_safe")
+        self.assertEqual(over_meta["feature_set_name"], "odds_available")
+        self.assertEqual(cards_meta["feature_set_name"], "odds_available")
 
     def test_thesis_core_scope_excludes_experimental_models(self):
         predictor = UniversalPredictor("data")

@@ -24,10 +24,20 @@ ODDS_REQUIREMENTS_BY_TARGET = {
         "odds_btts_no",
         "odds_btts_prob",
     ),
+    "over_1_5": (
+        "odds_over_1_5",
+        "odds_under_1_5",
+        "odds_over_1_5_prob",
+    ),
     "over_2_5": (
         "odds_over_2_5",
         "odds_under_2_5",
         "odds_over_2_5_prob",
+    ),
+    "cards_over_3_5": (
+        "odds_cards_over_3_5",
+        "odds_cards_under_3_5",
+        "odds_cards_over_3_5_prob",
     ),
 }
 SAMPLE_ID_CANDIDATES = (

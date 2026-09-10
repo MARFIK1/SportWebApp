@@ -183,16 +183,22 @@ def _fractional_to_decimal(frac_str):
 
 
 def extract_odds(markets_data):
-    """Extract 1X2, Over/Under 2.5 and BTTS odds from Sofascore markets response."""
+    """Extract supported full-time market odds from a Sofascore response."""
     result = {}
     if not markets_data:
         return result
 
     for market in markets_data:
         market_name = (market.get('marketName') or market.get('name') or '').lower()
+        market_group = (market.get('marketGroup') or '').lower()
+        market_id = str(market.get('marketId') or '')
+        choice_group = str(market.get('choiceGroup') or '').strip().replace(',', '.')
         choices = market.get('choices', [])
 
-        if 'full time' in market_name or market.get('marketId') == 1:
+        if market.get('isLive') is True:
+            continue
+
+        if 'full time' in market_name or market_id == '1':
             for c in choices:
                 name = str(c.get('name', '')).strip()
                 frac = c.get('fractionalValue') or c.get('odds')
@@ -203,7 +209,40 @@ def extract_odds(markets_data):
                 elif name == '2':
                     result['odds_away_win'] = _fractional_to_decimal(frac) if '/' in str(frac) else _safe_float(frac)
 
-        elif ('over' in market_name and 'under' in market_name and '2.5' in market_name) or market.get('marketId') == 2:
+        elif (
+            market_id == '9'
+            or market_name == 'match goals'
+            or market_group == 'match goals'
+        ) and choice_group in {'1.5', '2.5'}:
+            line = choice_group.replace('.', '_')
+            for c in choices:
+                name = str(c.get('name', '')).lower()
+                frac = c.get('fractionalValue') or c.get('odds')
+                val = _fractional_to_decimal(frac) if '/' in str(frac) else _safe_float(frac)
+                if 'over' in name:
+                    result[f'odds_over_{line}'] = val
+                elif 'under' in name:
+                    result[f'odds_under_{line}'] = val
+
+        elif (
+            market_id == '20'
+            or 'card' in market_name
+            or 'card' in market_group
+        ) and choice_group == '3.5':
+            for c in choices:
+                name = str(c.get('name', '')).lower()
+                frac = c.get('fractionalValue') or c.get('odds')
+                val = _fractional_to_decimal(frac) if '/' in str(frac) else _safe_float(frac)
+                if 'over' in name:
+                    result['odds_cards_over_3_5'] = val
+                elif 'under' in name:
+                    result['odds_cards_under_3_5'] = val
+
+        elif (
+            'over' in market_name
+            and 'under' in market_name
+            and '2.5' in market_name
+        ):
             for c in choices:
                 name = str(c.get('name', '')).lower()
                 frac = c.get('fractionalValue') or c.get('odds')
@@ -213,7 +252,7 @@ def extract_odds(markets_data):
                 elif 'under' in name:
                     result['odds_under_2_5'] = val
 
-        elif 'both' in market_name and 'score' in market_name:
+        elif ('both' in market_name and 'score' in market_name) or market_id == '5':
             for c in choices:
                 name = str(c.get('name', '')).lower()
                 frac = c.get('fractionalValue') or c.get('odds')

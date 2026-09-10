@@ -120,6 +120,37 @@ class WalkForwardFoldTests(unittest.TestCase):
         self.assertEqual(paired["without_odds"][release_id]["result"], 1)
         self.assertEqual(paired["with_odds"][release_id]["result"], 1)
 
+    def test_quality_gate_rejects_silent_odds_feature_fallback(self):
+        fold = build_weekly_folds("2026-04-01", "2026-04-05")[0]
+        payload = {
+            "targets": {
+                "over_1_5": {
+                    "stats": {
+                        "feature_set": "pre_match_safe",
+                        "cohort": {
+                            "required_columns": [
+                                "odds_over_1_5",
+                                "odds_under_1_5",
+                                "odds_over_1_5_prob",
+                            ],
+                        },
+                    },
+                },
+            },
+        }
+
+        errors = validate_fold_metrics(
+            payload,
+            ["over_1_5"],
+            "all",
+            fold,
+            "defaults",
+            variant="with_odds",
+            require_paired_odds_cohort=True,
+        )
+
+        self.assertTrue(any("expected feature set odds_available" in e for e in errors))
+
     def test_later_fold_command_reuses_profile_and_disables_tuning(self):
         fold = build_weekly_folds("2026-04-01", "2026-04-12")[1]
         command = build_training_command(
@@ -164,6 +195,7 @@ class WalkForwardFoldTests(unittest.TestCase):
         record = {
             "schema_version": 1,
             "variant": "without_odds",
+            "feature_set": "pre_match_safe",
             "target": "result",
             "task": "multiclass",
             "row_index": 10,
@@ -340,6 +372,7 @@ class WalkForwardFoldTests(unittest.TestCase):
         record = {
             "schema_version": 1,
             "variant": "without_odds",
+            "feature_set": "pre_match_safe",
             "target": "result",
             "task": "multiclass",
             "row_index": 10,

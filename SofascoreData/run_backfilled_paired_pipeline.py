@@ -52,11 +52,20 @@ def parse_args():
     parser.add_argument("--source-snapshot-root", type=Path, required=True)
     parser.add_argument("--derived-root", type=Path, required=True)
     parser.add_argument("--training-output", type=Path, required=True)
+    parser.add_argument("--analysis-output", type=Path)
+    parser.add_argument("--figures-output", type=Path)
     parser.add_argument("--start-date", default="2026-04-01")
     parser.add_argument("--end-date", default="2026-07-19")
-    parser.add_argument("--targets", default="result,btts")
+    parser.add_argument(
+        "--targets",
+        default="result,btts,over_1_5,over_2_5,cards_over_3_5",
+    )
+    parser.add_argument("--seed-ledger", type=Path)
     parser.add_argument("--optuna-trials", type=int, default=50)
     parser.add_argument("--optuna-seed", type=int, default=42)
+    parser.add_argument("--bootstrap-iterations", type=int, default=10000)
+    parser.add_argument("--bootstrap-seed", type=int, default=42)
+    parser.add_argument("--primary-model", default="Consensus Policy")
     parser.add_argument("--backfill-retries", type=int, default=3)
     parser.add_argument("--retry-wait-seconds", type=int, default=300)
     return parser.parse_args()
@@ -67,6 +76,16 @@ def main() -> int:
     source_snapshot_root = args.source_snapshot_root.resolve()
     derived_root = args.derived_root.resolve()
     training_output = args.training_output.resolve()
+    analysis_output = (
+        args.analysis_output.resolve()
+        if args.analysis_output
+        else source_snapshot_root / "results-paired-walk-forward-five-markets-full"
+    )
+    figures_output = (
+        args.figures_output.resolve()
+        if args.figures_output
+        else source_snapshot_root / "figures-paired-walk-forward-five-markets-full"
+    )
     status_path = derived_root / "pipeline_status.json"
     log_path = derived_root / "overnight_pipeline.log"
     python = str(Path(sys.executable).resolve())
@@ -90,6 +109,8 @@ def main() -> int:
         "--targets",
         args.targets,
     ]
+    if args.seed_ledger:
+        backfill_command.extend(["--seed-ledger", str(args.seed_ledger.resolve())])
 
     backfill_code = None
     for attempt in range(1, args.backfill_retries + 1):
@@ -198,11 +219,79 @@ def main() -> int:
         )
         return 6
 
+    analysis_command = [
+        python,
+        "-u",
+        str(SCRIPT_DIR / "export_paired_walk_forward_analysis.py"),
+        "--run-dir",
+        str(training_output),
+        "--output-dir",
+        str(analysis_output),
+        "--bootstrap-iterations",
+        str(args.bootstrap_iterations),
+        "--bootstrap-seed",
+        str(args.bootstrap_seed),
+        "--primary-model",
+        args.primary_model,
+    ]
+    _write_status(
+        status_path,
+        "analysis_running",
+        training_output=str(training_output),
+        analysis_output=str(analysis_output),
+        log=log_path.name,
+    )
+    analysis_code = _run_logged(analysis_command, log_path)
+    analysis_manifest = analysis_output / "paired_analysis_manifest.json"
+    if analysis_code != 0 or not analysis_manifest.is_file():
+        _write_status(
+            status_path,
+            "failed",
+            stage="analysis",
+            exit_code=analysis_code,
+            analysis_output=str(analysis_output),
+            log=log_path.name,
+        )
+        return int(analysis_code or 7)
+
+    figures_command = [
+        python,
+        "-u",
+        str(SCRIPT_DIR / "export_paired_walk_forward_figures.py"),
+        "--analysis-dir",
+        str(analysis_output),
+        "--output-dir",
+        str(figures_output),
+    ]
+    _write_status(
+        status_path,
+        "figures_running",
+        analysis_output=str(analysis_output),
+        figures_output=str(figures_output),
+        log=log_path.name,
+    )
+    figures_code = _run_logged(figures_command, log_path)
+    figures_manifest = figures_output / "figures_manifest.json"
+    if figures_code != 0 or not figures_manifest.is_file():
+        _write_status(
+            status_path,
+            "failed",
+            stage="figures",
+            exit_code=figures_code,
+            figures_output=str(figures_output),
+            log=log_path.name,
+        )
+        return int(figures_code or 8)
+
     _write_status(
         status_path,
         "completed",
         training_output=str(training_output),
         summary=str(summary_path),
+        analysis_output=str(analysis_output),
+        analysis_manifest=str(analysis_manifest),
+        figures_output=str(figures_output),
+        figures_manifest=str(figures_manifest),
         log=log_path.name,
     )
     return 0

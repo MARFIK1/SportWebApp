@@ -15,6 +15,14 @@ from sofascore.paired_walk_forward_figures import (
 
 
 class PairedWalkForwardAnalysisTests(unittest.TestCase):
+    COMPLETE_TARGETS = (
+        "result",
+        "btts",
+        "over_1_5",
+        "over_2_5",
+        "cards_over_3_5",
+    )
+
     @staticmethod
     def _sha256(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -216,6 +224,42 @@ class PairedWalkForwardAnalysisTests(unittest.TestCase):
                     root / "analysis",
                     bootstrap_iterations=100,
                 )
+
+    def test_figure_export_supports_all_five_complete_targets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = self._write_run(root)
+            analysis = root / "analysis"
+            figures = root / "figures"
+            export_paired_walk_forward_analysis(
+                run_dir,
+                analysis,
+                bootstrap_iterations=100,
+                bootstrap_seed=42,
+            )
+
+            for filename in (
+                "paired_model_comparison.csv",
+                "paired_primary_comparison.csv",
+                "paired_fold_metrics.csv",
+            ):
+                path = analysis / filename
+                with path.open(encoding="utf-8", newline="") as handle:
+                    reader = csv.DictReader(handle)
+                    fieldnames = reader.fieldnames
+                    source_rows = list(reader)
+                expanded = []
+                for target in self.COMPLETE_TARGETS:
+                    expanded.extend({**row, "target": target} for row in source_rows)
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(expanded)
+
+            manifest = generate_paired_walk_forward_figures(analysis, figures)
+
+            self.assertEqual(len(manifest["figures"]), 3)
+            self.assertTrue(all(path.stat().st_size > 1000 for path in figures.glob("*.png")))
 
 
 if __name__ == "__main__":

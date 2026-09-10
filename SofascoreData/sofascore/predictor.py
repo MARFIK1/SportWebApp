@@ -1021,8 +1021,11 @@ FEATURE_COLUMNS = [
     'odds_home_win', 'odds_draw', 'odds_away_win',
     'odds_home_prob', 'odds_draw_prob', 'odds_away_prob',
     'odds_overround',
+    'odds_over_1_5', 'odds_under_1_5', 'odds_over_1_5_prob',
     'odds_over_2_5', 'odds_under_2_5', 'odds_over_2_5_prob',
     'odds_btts_yes', 'odds_btts_no', 'odds_btts_prob',
+    'odds_cards_over_3_5', 'odds_cards_under_3_5',
+    'odds_cards_over_3_5_prob',
 ]
 
 LIVE_UNSAFE_FEATURE_TOKENS = (

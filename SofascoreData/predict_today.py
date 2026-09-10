@@ -73,8 +73,10 @@ MATCH_LINEUPS_FILENAME = 'match_lineups.json'
 MATCH_LINEUPS_SCHEMA_VERSION = 1
 BASE_ODDS_KEYS = ['odds_home_win', 'odds_draw', 'odds_away_win']
 OPTIONAL_ODDS_KEYS = [
+    'odds_over_1_5', 'odds_under_1_5',
     'odds_over_2_5', 'odds_under_2_5',
     'odds_btts_yes', 'odds_btts_no',
+    'odds_cards_over_3_5', 'odds_cards_under_3_5',
 ]
 ODDS_KEYS = BASE_ODDS_KEYS + OPTIONAL_ODDS_KEYS
 ODDS_FEATURE_SOURCE_REQUIREMENTS = {
@@ -85,12 +87,24 @@ ODDS_FEATURE_SOURCE_REQUIREMENTS = {
     'odds_draw_prob': BASE_ODDS_KEYS,
     'odds_away_prob': BASE_ODDS_KEYS,
     'odds_overround': BASE_ODDS_KEYS,
+    'odds_over_1_5': ['odds_over_1_5', 'odds_under_1_5'],
+    'odds_under_1_5': ['odds_over_1_5', 'odds_under_1_5'],
+    'odds_over_1_5_prob': ['odds_over_1_5', 'odds_under_1_5'],
     'odds_over_2_5': ['odds_over_2_5', 'odds_under_2_5'],
     'odds_under_2_5': ['odds_over_2_5', 'odds_under_2_5'],
     'odds_over_2_5_prob': ['odds_over_2_5', 'odds_under_2_5'],
     'odds_btts_yes': ['odds_btts_yes', 'odds_btts_no'],
     'odds_btts_no': ['odds_btts_yes', 'odds_btts_no'],
     'odds_btts_prob': ['odds_btts_yes', 'odds_btts_no'],
+    'odds_cards_over_3_5': [
+        'odds_cards_over_3_5', 'odds_cards_under_3_5',
+    ],
+    'odds_cards_under_3_5': [
+        'odds_cards_over_3_5', 'odds_cards_under_3_5',
+    ],
+    'odds_cards_over_3_5_prob': [
+        'odds_cards_over_3_5', 'odds_cards_under_3_5',
+    ],
 }
 TEAM_HISTORY_DIR = DATA_DIR / 'team_history'
 TEAM_HISTORY_FORCE_REFRESH = (
@@ -2968,9 +2982,7 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
         'away_team_id': match.get('away_team_id'),
         'season': _usable_source_season(match.get('season')),
     }
-    for odds_key in ['odds_home_win', 'odds_draw', 'odds_away_win',
-                     'odds_over_2_5', 'odds_under_2_5',
-                     'odds_btts_yes', 'odds_btts_no']:
+    for odds_key in ODDS_KEYS:
         if _is_positive_odds(match.get(odds_key)):
             upcoming_match[odds_key] = match[odds_key]
 

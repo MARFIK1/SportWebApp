@@ -251,6 +251,28 @@ class DatasetBuilderTests(unittest.TestCase):
         self.assertEqual(sample["home_table_points"], 0)
         self.assertEqual(sample["away_table_points"], 0)
 
+    def test_generator_emits_odds_features_for_every_benchmark_market(self):
+        current = match(
+            52,
+            "2026-02-01",
+            "A",
+            "B",
+            2,
+            1,
+            odds_over_1_5=1.25,
+            odds_under_1_5=4.0,
+            odds_over_2_5=1.8,
+            odds_under_2_5=2.0,
+            odds_cards_over_3_5=1.6,
+            odds_cards_under_3_5=2.2,
+        )
+
+        sample = MLFeatureGenerator().generate_match_features(current, [current])
+
+        self.assertEqual(sample["odds_over_1_5_prob"], 0.8)
+        self.assertEqual(sample["odds_over_2_5_prob"], 0.5556)
+        self.assertEqual(sample["odds_cards_over_3_5_prob"], 0.625)
+
     def test_pending_match_keeps_identity_without_result_labels(self):
         upcoming = match(
             60,

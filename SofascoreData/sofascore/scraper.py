@@ -409,7 +409,7 @@ class SofascoreSeleniumScraper:
         return all_matches
     
     def get_match_odds(self, event_id):
-        """Get pre-match odds for a match (1X2, Over/Under, BTTS)"""
+        """Get all archived pre-match odds markets for a match."""
         data = self.get_api_data(f"/event/{event_id}/odds/1/all")
         return data.get('markets', []) if data and isinstance(data, dict) else None
 

@@ -6,13 +6,55 @@ from pathlib import Path
 
 from backfill_snapshot_odds import (
     collect_event_odds,
+    enrich_sample_card_outcome,
     enrich_sample_odds,
+    extract_card_outcome,
+    load_card_outcomes,
     load_ledger,
     write_derived_dataset,
 )
 
 
 class SnapshotOddsBackfillTests(unittest.TestCase):
+    def test_extracts_and_enriches_card_outcome_from_final_statistics(self):
+        statistics = [{
+            "period": "ALL",
+            "groups": [{
+                "statisticsItems": [{
+                    "key": "yellowCards",
+                    "homeValue": 2,
+                    "awayValue": 3,
+                }],
+            }],
+        }]
+
+        outcome = extract_card_outcome(statistics)
+        sample = {"label_cards_over_3_5": None}
+        changed = enrich_sample_card_outcome(sample, outcome)
+
+        self.assertEqual(outcome, {
+            "label_total_cards": 5,
+            "label_cards_over_3_5": 1,
+            "label_cards_over_4_5": 1,
+        })
+        self.assertEqual(sample["label_total_cards"], 5)
+        self.assertEqual(sample["label_cards_over_3_5"], 1)
+        self.assertIn("label_cards_over_3_5", changed)
+
+    def test_card_outcome_rejects_partial_period_statistics(self):
+        outcome = extract_card_outcome([{
+            "period": "1ST",
+            "groups": [{
+                "statisticsItems": [{
+                    "key": "yellowCards",
+                    "homeValue": 1,
+                    "awayValue": 2,
+                }],
+            }],
+        }])
+
+        self.assertEqual(outcome, {})
+
     def test_enriches_raw_and_derived_odds_without_overwriting_existing(self):
         sample = {
             "odds_home_win": 2.0,
@@ -20,6 +62,12 @@ class SnapshotOddsBackfillTests(unittest.TestCase):
             "odds_away_win": 0,
             "odds_btts_yes": 0,
             "odds_btts_no": 0,
+            "odds_over_1_5": 0,
+            "odds_under_1_5": 0,
+            "odds_over_2_5": 0,
+            "odds_under_2_5": 0,
+            "odds_cards_over_3_5": 0,
+            "odds_cards_under_3_5": 0,
         }
 
         changed = enrich_sample_odds(sample, {
@@ -28,6 +76,12 @@ class SnapshotOddsBackfillTests(unittest.TestCase):
             "odds_away_win": 4.0,
             "odds_btts_yes": 1.8,
             "odds_btts_no": 2.0,
+            "odds_over_1_5": 1.25,
+            "odds_under_1_5": 4.0,
+            "odds_over_2_5": 1.8,
+            "odds_under_2_5": 2.0,
+            "odds_cards_over_3_5": 1.6,
+            "odds_cards_under_3_5": 2.2,
         })
 
         self.assertEqual(sample["odds_home_win"], 2.0)
@@ -35,6 +89,9 @@ class SnapshotOddsBackfillTests(unittest.TestCase):
         self.assertEqual(sample["odds_home_prob"], 0.5)
         self.assertEqual(sample["odds_overround"], 1.0833)
         self.assertEqual(sample["odds_btts_prob"], 0.5556)
+        self.assertEqual(sample["odds_over_1_5_prob"], 0.8)
+        self.assertEqual(sample["odds_over_2_5_prob"], 0.5556)
+        self.assertEqual(sample["odds_cards_over_3_5_prob"], 0.625)
         self.assertIn("odds_overround", changed)
 
     def test_collects_window_events_and_merges_duplicate_odds(self):
@@ -88,6 +145,72 @@ class SnapshotOddsBackfillTests(unittest.TestCase):
             })
             self.assertEqual(attempts["7"], 2)
 
+    def test_ledger_replays_new_markets_from_stored_raw_response(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = Path(temporary) / "ledger.jsonl"
+            ledger.write_text(
+                json.dumps({
+                    "event_id": 8,
+                    "odds": {},
+                    "markets": [{
+                        "marketId": 9,
+                        "marketName": "Match goals",
+                        "choiceGroup": "1.5",
+                        "choices": [
+                            {"name": "Over", "fractionalValue": "1/2"},
+                            {"name": "Under", "fractionalValue": "3/2"},
+                        ],
+                    }, {
+                        "marketId": 20,
+                        "marketName": "Cards in match",
+                        "marketGroup": "Total Cards",
+                        "choiceGroup": "3.5",
+                        "choices": [
+                            {"name": "Over", "fractionalValue": "4/5"},
+                            {"name": "Under", "fractionalValue": "1/1"},
+                        ],
+                    }],
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            odds, attempts = load_ledger(ledger)
+
+            self.assertEqual(odds["8"]["odds_over_1_5"], 1.5)
+            self.assertEqual(odds["8"]["odds_under_1_5"], 2.5)
+            self.assertEqual(odds["8"]["odds_cards_over_3_5"], 1.8)
+            self.assertEqual(odds["8"]["odds_cards_under_3_5"], 2.0)
+            self.assertEqual(attempts["8"], 1)
+
+    def test_ledger_replays_card_outcome_from_stored_statistics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = Path(temporary) / "ledger.jsonl"
+            ledger.write_text(json.dumps({
+                "event_id": 9,
+                "odds_requested": False,
+                "statistics_requested": True,
+                "card_outcome": {},
+                "statistics": [{
+                    "period": "ALL",
+                    "groups": [{
+                        "statisticsItems": [{
+                            "key": "yellowCards",
+                            "homeValue": 1,
+                            "awayValue": 1,
+                        }],
+                    }],
+                }],
+            }) + "\n", encoding="utf-8")
+
+            outcomes, attempts = load_card_outcomes(ledger)
+            odds, odds_attempts = load_ledger(ledger)
+
+            self.assertEqual(outcomes["9"]["label_total_cards"], 2)
+            self.assertEqual(outcomes["9"]["label_cards_over_3_5"], 0)
+            self.assertEqual(attempts["9"], 1)
+            self.assertEqual(odds, {})
+            self.assertEqual(odds_attempts, {})
+
     def test_writes_a_versioned_derived_dataset_and_checksums(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -140,12 +263,19 @@ class SnapshotOddsBackfillTests(unittest.TestCase):
                 "abc123",
                 ledger,
                 request,
+                {"11": {
+                    "label_total_cards": 5,
+                    "label_cards_over_3_5": 1,
+                    "label_cards_over_4_5": 1,
+                }},
             )
 
             written = json.loads(next(
                 (output / "data").rglob("features_all_seasons.json")
             ).read_text(encoding="utf-8"))
             self.assertEqual(written["samples"][0]["odds_home_prob"], 0.5)
+            self.assertEqual(written["samples"][0]["label_total_cards"], 5)
+            self.assertEqual(written["samples"][0]["label_cards_over_3_5"], 1)
             self.assertEqual(manifest["events"]["unresolved"], 0)
             self.assertTrue((output / "checksums.sha256").exists())
 

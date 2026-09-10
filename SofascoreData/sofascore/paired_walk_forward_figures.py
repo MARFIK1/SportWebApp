@@ -28,7 +28,11 @@ VARIANT_LABELS = {
 TARGET_LABELS = {
     "result": "1X2 result",
     "btts": "Both teams to score",
+    "over_1_5": "Over 1.5 goals",
+    "over_2_5": "Over 2.5 goals",
+    "cards_over_3_5": "Over 3.5 cards",
 }
+TARGET_ORDER = tuple(TARGET_LABELS)
 MODEL_ORDER = (
     "Logistic Regression",
     "Random Forest",
@@ -113,6 +117,13 @@ def _model_sort_key(model: str) -> tuple[int, str]:
         return len(MODEL_ORDER), model
 
 
+def _target_sort_key(target: str) -> tuple[int, str]:
+    try:
+        return TARGET_ORDER.index(target), target
+    except ValueError:
+        return len(TARGET_ORDER), target
+
+
 def _format_axis(ax: plt.Axes, axis: str = "x") -> None:
     ax.set_axisbelow(True)
     ax.grid(axis=axis, color=LIGHT_GRAY, linewidth=0.7, alpha=0.7)
@@ -150,19 +161,20 @@ def _plot_macro_f1_forest(
     comparisons: list[dict[str, str]],
     manifest: dict[str, Any],
 ) -> plt.Figure:
-    targets = [
-        target
-        for target in ("result", "btts")
-        if any(row.get("target") == target for row in comparisons)
-    ]
+    targets = sorted(
+        {row.get("target", "") for row in comparisons if row.get("target")},
+        key=_target_sort_key,
+    )
+    columns = 2 if len(targets) > 1 else 1
+    rows_count = max(1, (len(targets) + columns - 1) // columns)
     fig, axes = plt.subplots(
-        1,
-        len(targets),
-        figsize=(12, 7),
+        rows_count,
+        columns,
+        figsize=(14, 4.2 * rows_count),
         sharex=True,
         layout="constrained",
     )
-    axes = np.atleast_1d(axes)
+    axes = np.atleast_1d(axes).ravel()
     for ax, target in zip(axes, targets):
         rows = sorted(
             [row for row in comparisons if row.get("target") == target],
@@ -204,6 +216,8 @@ def _plot_macro_f1_forest(
         ax.set_title(TARGET_LABELS.get(target, target), loc="left")
         ax.set_xlabel("Macro F1 change with odds (percentage points)")
         _format_axis(ax)
+    for ax in axes[len(targets):]:
+        ax.set_visible(False)
     fig.suptitle(
         "Paired effect of odds across models\n"
         "Blue marks the primary model; green/red marks positive/negative change; "
@@ -220,18 +234,18 @@ def _plot_primary_fold_trajectory(
     manifest: dict[str, Any],
 ) -> plt.Figure:
     primary_model = str((manifest.get("method") or {}).get("primary_model"))
-    targets = [
-        target
-        for target in ("result", "btts")
-        if any(
-            row.get("target") == target and row.get("model") == primary_model
+    targets = sorted(
+        {
+            row.get("target", "")
             for row in folds
-        )
-    ]
+            if row.get("target") and row.get("model") == primary_model
+        },
+        key=_target_sort_key,
+    )
     fig, axes = plt.subplots(
         len(targets),
         1,
-        figsize=(11, 7),
+        figsize=(11, max(4.5, 2.5 * len(targets))),
         sharex=True,
         layout="constrained",
     )
@@ -295,10 +309,15 @@ def _plot_primary_probability_effects(
         ("brier_score", "Brier score change"),
         ("log_loss", "Log-loss change"),
     )
-    rows = sorted(primary, key=lambda row: ("result", "btts").index(row["target"]))
+    rows = sorted(primary, key=lambda row: _target_sort_key(row["target"]))
     labels = [TARGET_LABELS.get(row["target"], row["target"]) for row in rows]
     positions = np.arange(len(rows))
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), layout="constrained")
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(11, max(3.6, 0.8 * len(rows) + 2.0)),
+        layout="constrained",
+    )
     for ax, (metric, title) in zip(axes, metrics):
         values = np.asarray([float(row[f"delta_{metric}"]) for row in rows])
         lows = np.asarray([float(row[f"delta_{metric}_ci_low"]) for row in rows])

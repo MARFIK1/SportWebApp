@@ -12,6 +12,27 @@ from train_models import _build_paired_training_sample
 
 
 class PairedBenchmarkTests(unittest.TestCase):
+    def test_all_complete_benchmark_targets_require_their_own_odds(self):
+        self.assertEqual(set(ODDS_REQUIREMENTS_BY_TARGET), {
+            "result",
+            "btts",
+            "over_1_5",
+            "over_2_5",
+            "cards_over_3_5",
+        })
+        self.assertEqual(
+            ODDS_REQUIREMENTS_BY_TARGET["over_1_5"],
+            ("odds_over_1_5", "odds_under_1_5", "odds_over_1_5_prob"),
+        )
+        self.assertEqual(
+            ODDS_REQUIREMENTS_BY_TARGET["cards_over_3_5"],
+            (
+                "odds_cards_over_3_5",
+                "odds_cards_under_3_5",
+                "odds_cards_over_3_5_prob",
+            ),
+        )
+
     def test_common_sample_keeps_only_complete_positive_base_odds(self):
         dataframe = pd.DataFrame({
             "event_id": [1, 2, 3],
