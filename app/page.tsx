@@ -5,7 +5,8 @@ import { getCompetitionDisplayGroup, isFeaturedCompetition, resolveCompetitionBy
 import { buildMatchLookupMaps, findMatchInCompetitions } from "./util/data/dataService";
 import DatePicker from "./components/home/DatePicker";
 import HomeLeagueList from "./components/home/HomeLeagueList";
-import { getServerT } from "./util/i18n/getLocale";
+import { getServerLocale } from "./util/i18n/getLocale";
+import { getCountTranslation, getTranslations } from "./util/i18n/translations";
 import { expandYmdDateRange, isWithinAppDataCutoff, normalizeReportDate, todayYmd } from "./util/data/dateUtils";
 import { getMatchConsensusConfidence, isHighConfidenceMatch } from "./util/predictions/confidence";
 import type { PredictionMatch } from "@/types/predictions";
@@ -100,7 +101,8 @@ export default async function Home({ searchParams }: PageProps) {
 
     const report = selectedDate && dates.includes(selectedDate) ? loadPredictionReport(selectedDate) : null;
 
-    const t = await getServerT();
+    const locale = await getServerLocale();
+    const t = getTranslations(locale);
 
     if (!selectedDate || datePickerDates.length === 0) {
         return (
@@ -175,7 +177,7 @@ export default async function Home({ searchParams }: PageProps) {
                             {selectedDate}
                         </p>
                         <h1 className="mt-1 max-w-3xl text-2xl font-black tracking-tight text-gray-950 dark:text-white sm:mt-3 sm:text-5xl">
-                            {totalMatches} {t("matches_analyzed")}
+                            {totalMatches}{" "}{getCountTranslation(locale, "matches_analyzed", totalMatches)}
                         </h1>
                         <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500 dark:text-gray-400 sm:mt-3 sm:text-base sm:leading-6">
                             {matchSummaryText}

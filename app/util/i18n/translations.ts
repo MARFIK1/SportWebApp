@@ -26,6 +26,7 @@ const translations: Record<Locale, Record<string, string>> = {
         day: "day",
 
         // Home
+        matches_analyzed_one: "match analyzed",
         matches_analyzed: "matches analyzed",
         all_completed: "All matches completed",
         high_confidence: "high-confidence picks",
@@ -419,6 +420,9 @@ const translations: Record<Locale, Record<string, string>> = {
         day: "dzień",
 
         // Home
+        matches_analyzed_one: "mecz przeanalizowany",
+        matches_analyzed_few: "mecze przeanalizowane",
+        matches_analyzed_many: "meczów przeanalizowanych",
         matches_analyzed: "meczów przeanalizowanych",
         all_completed: "Wszystkie mecze zakończone",
         high_confidence: "typów z wysoką pewnością",
@@ -793,6 +797,16 @@ const translations: Record<Locale, Record<string, string>> = {
 export function getTranslations(locale: Locale): (key: string) => string {
     const dict = translations[locale];
     return (key: string) => dict[key] ?? key;
+}
+
+export function getCountTranslation(
+    locale: Locale,
+    key: string,
+    count: number,
+): string {
+    const category = new Intl.PluralRules(locale).select(count);
+    const dict = translations[locale];
+    return dict[`${key}_${category}`] ?? dict[key] ?? key;
 }
 
 export default translations;
