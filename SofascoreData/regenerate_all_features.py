@@ -38,6 +38,8 @@ FEATURE_CODE_FILES = (
     'regenerate_all_features.py',
     'sofascore/dataset_builder.py',
     'sofascore/features.py',
+    'sofascore/card_settlement.py',
+    'sofascore/incidents.py',
     'sofascore/utils.py',
 )
 

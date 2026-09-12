@@ -41,6 +41,7 @@ import tempfile
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from sofascore.config import COMPETITIONS
+from sofascore.card_settlement import CARD_PROFILE_FIELD, card_profile
 from sofascore.data_layout import competition_features_path, discover_feature_competitions
 from sofascore.decision_policy import (
     apply_decision_policy,
@@ -924,6 +925,7 @@ class TemporalStackingClassifier(BaseEstimator, ClassifierMixin):
 
 
 META_COLUMNS = {
+    CARD_PROFILE_FIELD,
     'event_id', 'date', 'time', 'round', 'season', 'home_team', 'away_team',
     'home_team_id', 'away_team_id',
     'comp_type', 'country', 'competition', 'league',
@@ -1189,6 +1191,32 @@ class UniversalPredictor:
         self.artifact_path = None
         self.holdout_predictions = {}
 
+    def get_card_settlement_profile(self, target=None):
+        profiles = self.artifact_metadata.get('card_settlement_profiles', {})
+        if target is not None:
+            return card_profile(profiles.get(target))
+        values = {card_profile(profiles.get(name)) for name in self.models}
+        if len(values) > 1:
+            raise ValueError('Model bundle mixes card settlement profiles')
+        return next(iter(values), card_profile())
+
+    @staticmethod
+    def _frame_card_profile(frame):
+        if CARD_PROFILE_FIELD not in frame.columns or frame.empty:
+            return card_profile()
+        if frame[CARD_PROFILE_FIELD].isna().any():
+            raise ValueError('Missing card settlement profile in a versioned dataset')
+        profiles = {card_profile(value) for value in frame[CARD_PROFILE_FIELD].unique()}
+        if len(profiles) != 1:
+            raise ValueError('Dataset mixes card settlement profiles')
+        return profiles.pop()
+
+    def _check_card_profile(self, profile, target):
+        expected = self.get_card_settlement_profile(target)
+        if card_profile(profile) != expected:
+            raise ValueError(f'Card settlement profile mismatch for {target}: '
+                             f'expected {expected}, received {profile}')
+
     def _get_consensus_weights(self, target: str) -> Dict[str, float]:
         target_weights = CONSENSUS_WEIGHTS_BY_TARGET.get(target, {})
         if not target_weights:
@@ -1337,6 +1365,8 @@ class UniversalPredictor:
         target_models = self.models.get(target, {})
         if not target_models:
             raise ValueError(f"No models available for target '{target}'")
+
+        self._check_card_profile(self._frame_card_profile(source_df), target)
 
         config = TARGET_CONFIGS[target]
         feature_columns = self.feature_columns_by_target.get(
@@ -1755,6 +1785,8 @@ class UniversalPredictor:
         if label_col not in df.columns:
             raise ValueError(f"Missing '{label_col}' column for target '{target}'")
 
+        settlement_profile = self._frame_card_profile(df.loc[df[label_col].notna()])
+
         skip = META_COLUMNS | LABEL_COLUMNS
         numeric_cols = df.select_dtypes(include='number').columns.tolist()
         discovered = [c for c in numeric_cols if c not in skip]
@@ -1858,6 +1890,7 @@ class UniversalPredictor:
         for col in group_cols:
             meta[col] = df_clean[col]
         meta['feature_set_name'] = feature_set_name
+        meta[CARD_PROFILE_FIELD] = settlement_profile
 
         return X, y, meta
     
@@ -2706,6 +2739,7 @@ class UniversalPredictor:
 
         self.feature_columns_by_target[target] = feature_cols
         self.feature_sets_by_target[target] = feature_set_name
+        self.artifact_metadata.setdefault('card_settlement_profiles', {})[target] = meta[CARD_PROFILE_FIELD]
         self.feature_profiles_by_target[target] = _build_feature_profile(
             X_train.loc[calibration_fit_idx]
         )
@@ -3520,6 +3554,7 @@ class UniversalPredictor:
         baseline_score = float(baseline_metrics.get(selection_metric, 0.0))
         self.training_stats[target] = {
             'class_labels': class_labels,
+            CARD_PROFILE_FIELD: self.get_card_settlement_profile(target),
             'total_matches': len(X),
             'train_matches': len(X_train),
             'test_matches': len(X_test),
@@ -3812,6 +3847,7 @@ class UniversalPredictor:
             self.holdout_predictions[target] = prediction_rows
         self.training_stats[target] = {
             'total_matches': len(X),
+            CARD_PROFILE_FIELD: self.get_card_settlement_profile(target),
             'train_matches': len(X_train),
             'test_matches': len(X_test),
             'features': len(feature_cols),
@@ -3877,6 +3913,7 @@ class UniversalPredictor:
                              f"Available: {list(target_models.keys())}")
 
         model_data = target_models[model_name]
+        self._check_card_profile(features.get(CARD_PROFILE_FIELD), target)
         model = model_data['model']
         config = TARGET_CONFIGS[target]
 
@@ -3896,6 +3933,7 @@ class UniversalPredictor:
                 'model': model_name,
                 'task': 'regression',
                 'input_quality': input_quality,
+                CARD_PROFILE_FIELD: self.get_card_settlement_profile(target),
             }
 
         class_names = config['class_names']
@@ -3933,6 +3971,7 @@ class UniversalPredictor:
                     else 'benchmark_legacy'
                 ),
                 'input_quality': input_quality,
+                CARD_PROFILE_FIELD: self.get_card_settlement_profile(target),
             }
             return result
 
@@ -3973,6 +4012,7 @@ class UniversalPredictor:
             ),
             'decision_policy_applied': decision_policy is not None,
             'input_quality': input_quality,
+            CARD_PROFILE_FIELD: self.get_card_settlement_profile(target),
         }
 
         if proba is not None:
@@ -4025,6 +4065,7 @@ class UniversalPredictor:
                 'strategy': 'best_temporal_mae' if selected_model else 'mean_fallback',
                 'model': selected_model,
                 'input_quality': input_quality,
+                CARD_PROFILE_FIELD: self.get_card_settlement_profile(target),
             }
             return predictions
 
@@ -4094,6 +4135,7 @@ class UniversalPredictor:
             'avg_probabilities': avg_probabilities,
             'decision_policy_applied': bool(self.decision_policies.get(target)),
             'input_quality': input_quality,
+            CARD_PROFILE_FIELD: self.get_card_settlement_profile(target),
         }
 
         return predictions

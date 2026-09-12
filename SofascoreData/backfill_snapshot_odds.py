@@ -68,9 +68,15 @@ def _non_negative_integer(value) -> int | None:
 def _normalized_card_outcome(payload: dict | None) -> dict:
     if not isinstance(payload, dict):
         return {}
+    from sofascore.card_settlement import CARD_PROFILE_FIELD, card_profile
+    profile_fields = (
+        {CARD_PROFILE_FIELD: card_profile(payload[CARD_PROFILE_FIELD])}
+        if CARD_PROFILE_FIELD in payload else {}
+    )
     total = _non_negative_integer(payload.get("label_total_cards"))
     if total is not None:
         return {
+            **profile_fields,
             "label_total_cards": total,
             "label_cards_over_3_5": int(total > 3),
             "label_cards_over_4_5": int(total > 4),
@@ -80,10 +86,14 @@ def _normalized_card_outcome(payload: dict | None) -> dict:
         value = _non_negative_integer(payload.get(field))
         if value in (0, 1):
             result[field] = value
-    return result
+    return {**profile_fields, **result} if result else {}
 
 
-def extract_card_outcome(statistics: list[dict] | None) -> dict:
+def extract_card_outcome(statistics: list[dict] | None, *, match=None, profile=None) -> dict:
+    from sofascore.card_settlement import LEGACY_CARD_PROFILE, card_labels, card_profile, settle_match_cards
+    if card_profile(profile) != LEGACY_CARD_PROFILE:
+        settlement = settle_match_cards(match or {}, profile)
+        return card_labels(settlement) if settlement['status'] == 'complete' else {}
     full_match_statistics = [
         period
         for period in statistics or []
@@ -209,8 +219,14 @@ def enrich_sample_card_outcome(
     outcome: dict,
     overwrite: bool = False,
 ) -> set[str]:
+    from sofascore.card_settlement import CARD_PROFILE_FIELD, card_profile
+    normalized = _normalized_card_outcome(outcome)
+    if not normalized:
+        return set()
+    if card_profile(sample.get(CARD_PROFILE_FIELD)) != card_profile(normalized.get(CARD_PROFILE_FIELD)):
+        raise ValueError('Cannot backfill card labels across settlement profiles; regenerate features explicitly')
     changed = set()
-    for field, value in _normalized_card_outcome(outcome).items():
+    for field, value in normalized.items():
         if overwrite or sample.get(field) is None:
             if sample.get(field) != value:
                 sample[field] = value

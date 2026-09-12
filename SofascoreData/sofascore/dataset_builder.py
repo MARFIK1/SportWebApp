@@ -5,7 +5,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 from .utils import is_finished_match
 
 
-DATASET_BUILDER_VERSION = 5
+DATASET_BUILDER_VERSION = 6
 
 
 @dataclass(frozen=True)

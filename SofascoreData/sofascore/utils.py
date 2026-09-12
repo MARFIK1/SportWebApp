@@ -306,7 +306,10 @@ def scrape_full_match_data(scraper, match, delay=0.5):
     incidents = scraper.get_match_incidents(event_id)
     if _api_access_stopped(scraper):
         return None
-    if incidents:
+    if isinstance(incidents, list) and all(isinstance(event, dict) for event in incidents):
+        from .incidents import normalize_match_incidents
+        data['match_events'] = normalize_match_incidents(incidents)
+        data['match_events_collected'] = True
         data['home_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and i.get('isHome'))
         data['away_yellow_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'yellow' and not i.get('isHome'))
         data['home_red_cards_calc'] = sum(1 for i in incidents if i.get('incidentType') == 'card' and i.get('incidentClass') == 'red' and i.get('isHome'))

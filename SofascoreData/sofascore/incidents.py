@@ -75,7 +75,7 @@ def normalize_match_incidents(incidents) -> List[Dict]:
             if incident.get("addedTime") is not None
             else incident.get("added_time")
         )
-        raw_is_home = incident.get("isHome")
+        raw_is_home = incident.get("isHome", incident.get("is_home"))
         is_home = raw_is_home if isinstance(raw_is_home, bool) else None
         event_id = incident.get("id")
         if event_id in (None, ""):
@@ -86,6 +86,8 @@ def normalize_match_incidents(incidents) -> List[Dict]:
             "type": _normalized_source_type(incident),
             "source_type": source_type,
         }
+        if incident.get('id') in (None, ''):
+            event['id_is_generated'] = True
         _optional_field(event, "source_class", source_class)
         _optional_field(event, "minute", minute)
         _optional_field(event, "added_time", added_time)
@@ -100,6 +102,17 @@ def normalize_match_incidents(incidents) -> List[Dict]:
         _optional_field(event, "home_score", _integer(incident.get("homeScore")))
         _optional_field(event, "away_score", _integer(incident.get("awayScore")))
         _optional_field(event, "length", _integer(incident.get("length")))
+        for target, sources in {
+            'on_pitch': ('on_pitch', 'isOnPitch'),
+            'is_coach': ('is_coach', 'isCoach'),
+            'is_bench': ('is_bench', 'isBench'),
+            'is_post_match': ('is_post_match', 'isPostMatch'),
+            'rescinded': ('rescinded', 'isRescinded'),
+        }.items():
+            for source in sources:
+                if isinstance(incident.get(source), bool):
+                    event[target] = incident[source]
+                    break
         event["_source_index"] = index
         normalized.append(event)
 

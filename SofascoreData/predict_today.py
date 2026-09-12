@@ -40,6 +40,9 @@ MODELS_DIR = Path(os.environ.get('SOFASCORE_MODELS_DIR', DATA_DIR / 'models')).r
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from sofascore.features import MLFeatureGenerator
+from sofascore.card_settlement import (
+    CARD_PROFILE_FIELD, LEGACY_CARD_PROFILE, PL_CARD_PROFILE, card_profile, settle_match_cards,
+)
 from sofascore.incidents import normalize_match_incidents
 from sofascore.lineups import normalize_match_lineups
 from sofascore.utils import is_finished_match, is_inactive_match, match_status
@@ -609,7 +612,7 @@ def _incident_class_key(incident: Dict) -> str:
 
 
 def _apply_match_incidents(match: Dict, incidents) -> bool:
-    if incidents is None:
+    if not isinstance(incidents, list) or any(not isinstance(event, dict) for event in incidents):
         return False
 
     before = tuple(match.get(key) for key in (
@@ -959,7 +962,11 @@ def _merge_source_match(existing: Optional[Dict], candidate: Dict) -> Dict:
 
     if winner.get('features') is None and loser.get('features') is not None:
         winner['features'] = loser['features']
-    for key in ('total_cards', 'total_corners', 'referee_name', 'start_time', 'start_timestamp', 'date', 'season'):
+    if winner.get('total_cards') is None and loser.get('total_cards') is not None:
+        winner['total_cards'] = loser['total_cards']
+        winner[CARD_PROFILE_FIELD] = card_profile(loser.get(CARD_PROFILE_FIELD))
+        winner['card_totals_by_profile'] = copy.deepcopy(loser.get('card_totals_by_profile', {}))
+    for key in ('total_corners', 'referee_name', 'start_time', 'start_timestamp', 'date', 'season'):
         if winner.get(key) in (None, '') and loser.get(key) not in (None, ''):
             winner[key] = loser[key]
     _copy_positive_odds(winner, loser, overwrite=False)
@@ -999,12 +1006,9 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
     else:
         status = 'upcoming'
 
-    total_cards = None
+    card_settlement = settle_match_cards(match)
+    total_cards = card_settlement['total']
     total_corners = None
-    hy = match.get('home_yellow_cards_calc')
-    ay = match.get('away_yellow_cards_calc')
-    if hy is not None and ay is not None:
-        total_cards = int(hy) + int(ay)
     hc = match.get('home_cornerkicks')
     ac = match.get('away_cornerkicks')
     if hc is not None and ac is not None:
@@ -1030,6 +1034,13 @@ def _raw_match_to_match_data(match: Dict, comp_type: str, country: str, comp_nam
         'season': _usable_source_season(match.get('season')) or _usable_source_season(source_season),
         'features': None,
         'total_cards': None if is_inactive_match(match) else total_cards,
+        CARD_PROFILE_FIELD: PL_CARD_PROFILE,
+        'card_totals_by_profile': {
+            PL_CARD_PROFILE: total_cards,
+            LEGACY_CARD_PROFILE: settle_match_cards(match, LEGACY_CARD_PROFILE)['total'],
+        } if status == 'finished' else {},
+        'card_settlement_status': card_settlement['status'],
+        'card_settlement_reason': card_settlement['reason'],
         'total_corners': None if is_inactive_match(match) else total_corners,
         'referee_name': match.get('referee_name'),
         'match_events': match.get('match_events') if isinstance(match.get('match_events'), list) else [],
@@ -2969,8 +2980,9 @@ def _history_for_feature_generation(match: Dict, competition_history: List[Dict]
 
 def compute_features_for_upcoming(match: dict, historical_matches: list,
                                   lineups=None, club_stats_index=None,
-                                  team_history_matches=None) -> dict:
-    fg = MLFeatureGenerator()
+                                  team_history_matches=None,
+                                  card_settlement_profile=LEGACY_CARD_PROFILE) -> dict:
+    fg = MLFeatureGenerator(card_settlement_profile=card_settlement_profile)
 
     upcoming_match = {
         'event_id': match.get('event_id'),
@@ -2999,8 +3011,18 @@ def compute_features_for_upcoming(match: dict, historical_matches: list,
     return features
 
 
-def _should_compute_fresh_features(match: Dict) -> bool:
+def _predictor_card_profile(predictor) -> str:
+    metadata = getattr(predictor, 'artifact_metadata', {})
+    profiles = metadata.get('card_settlement_profiles', {}) if isinstance(metadata, dict) else {}
+    values = {card_profile(profiles.get(target)) for target in predictor.models}
+    if len(values) > 1:
+        raise ValueError('Model bundle mixes card settlement profiles')
+    return next(iter(values), LEGACY_CARD_PROFILE)
+
+
+def _should_compute_fresh_features(match: Dict, profile=LEGACY_CARD_PROFILE) -> bool:
     return (
+        card_profile((match.get('features') or {}).get(CARD_PROFILE_FIELD)) != profile or
         match.get('status') == 'upcoming' or
         match.get('features') is None or
         match.get('comp_type') == 'international'
@@ -3836,6 +3858,7 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
                 continue
             target_models[model_name] = {
                 'prediction': pred_data.get('prediction'),
+                CARD_PROFILE_FIELD: card_profile(pred_data.get(CARD_PROFILE_FIELD)),
                 'confidence': pred_data.get('confidence'),
                 'probabilities': pred_data.get('probabilities', {}),
             }
@@ -3844,6 +3867,7 @@ def _serialize_prediction_bundle(preds: Dict, market_predictions: Dict, actual_r
             'models': target_models,
             'consensus': {
                 'prediction': target_cons.get('prediction'),
+                CARD_PROFILE_FIELD: card_profile(target_cons.get(CARD_PROFILE_FIELD)),
                 'agreement': target_cons.get('agreement'),
                 'agreement_pct': target_cons.get('agreement_pct'),
                 'avg_probabilities': target_cons.get('avg_probabilities', {}),
@@ -4054,7 +4078,8 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
             club_stats_index,
         )
 
-        if _should_compute_fresh_features(match) or confirmed_lineup_features:
+        profile = _predictor_card_profile(predictor)
+        if _should_compute_fresh_features(match, profile) or confirmed_lineup_features:
             team_history = _team_history_for_match(
                 match,
                 historical_cache[cache_key],
@@ -4070,7 +4095,8 @@ def _predict_variant_for_matches(matches: List[Dict], variant_name: str, predict
                 historical_cache[cache_key],
                 lineups=match_lineups,
                 club_stats_index=club_stats_index,
-                team_history_matches=feature_history)
+                team_history_matches=feature_history,
+                card_settlement_profile=profile)
         else:
             features = _features_with_source_odds(match['features'], match)
 
@@ -4495,20 +4521,22 @@ def predict_matches(matches: list, predictors: Dict[str, object]) -> list:
             club_stats_index,
         )
 
-        if _should_compute_fresh_features(match) or confirmed_lineup_features:
-            features = compute_features_for_upcoming(
-                match, historical_cache[cache_key],
-                lineups=match_lineups, club_stats_index=club_stats_index,
-                team_history_matches=feature_history)
-        else:
-            features = _features_with_source_odds(match['features'], match)
-        
-        if features is None:
-            print(f"    [SKIP] No features")
-            continue
-        
+        features_by_profile = {}
         prediction_variants = {}
         for variant_name, predictor in predictors.items():
+            profile = _predictor_card_profile(predictor)
+            if profile not in features_by_profile:
+                if _should_compute_fresh_features(match, profile) or confirmed_lineup_features:
+                    features_by_profile[profile] = compute_features_for_upcoming(
+                        match, historical_cache[cache_key],
+                        lineups=match_lineups, club_stats_index=club_stats_index,
+                        team_history_matches=feature_history,
+                        card_settlement_profile=profile)
+                else:
+                    features_by_profile[profile] = _features_with_source_odds(match['features'], match)
+            features = features_by_profile[profile]
+            if features is None:
+                continue
             variant_uses_odds = MODEL_VARIANT_CONFIG.get(variant_name, {}).get('odds_used', False)
             target_bundle = _predict_variant_targets(
                 features,
@@ -5078,7 +5106,7 @@ def _actual_fields_from_match(m: Dict) -> Dict:
         }
 
     actual_result = map_result_to_label(m['result']) if m.get('result') else None
-    return {
+    fields = {
         'actual_result': actual_result,
         'actual_score': m.get('score'),
         'actual_penalty_score': m.get('penalty_score'),
@@ -5086,6 +5114,11 @@ def _actual_fields_from_match(m: Dict) -> Dict:
         'actual_cards': m.get('total_cards'),
         'actual_corners': m.get('total_corners'),
     }
+    if CARD_PROFILE_FIELD in m:
+        fields['actual_cards_profile'] = card_profile(m[CARD_PROFILE_FIELD])
+    if 'card_totals_by_profile' in m:
+        fields['actual_cards_by_profile'] = copy.deepcopy(m['card_totals_by_profile'])
+    return fields
 
 
 _REPORT_SETTLEMENT_FIELDS = (
@@ -5095,6 +5128,8 @@ _REPORT_SETTLEMENT_FIELDS = (
     'actual_normal_time_score',
     'actual_extra_time_score',
     'actual_cards',
+    'actual_cards_profile',
+    'actual_cards_by_profile',
     'actual_corners',
 )
 
@@ -5130,7 +5165,7 @@ def _apply_actual_fields_to_report_match(match_entry: Dict, m: Dict) -> Optional
     match_entry['actual_score'] = fields.get('actual_score')
     match_entry['actual_penalty_score'] = fields.get('actual_penalty_score')
     match_entry['decided_by_penalties'] = fields.get('decided_by_penalties', False)
-    for key in ('actual_cards', 'actual_corners'):
+    for key in ('actual_cards', 'actual_corners', 'actual_cards_profile', 'actual_cards_by_profile'):
         match_entry[key] = fields.get(key)
 
     actual_result = fields.get('actual_result')

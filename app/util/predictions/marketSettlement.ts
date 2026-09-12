@@ -42,6 +42,18 @@ function finiteNumber(value: number | null | undefined): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function cardsForMarket(match: PredictionMatch, market: MarketPrediction | undefined): number | null {
+    const profile = market?.consensus.card_settlement_profile ?? "yellow_only_v1";
+    if (!["yellow_only_v1", "pl_total_cards_1_2_3_v1"].includes(profile)) return null;
+    const byProfile = match.actual_cards_by_profile;
+    if (byProfile && Object.prototype.hasOwnProperty.call(byProfile, profile)) {
+        return finiteNumber(byProfile[profile]);
+    }
+    return (match.actual_cards_profile ?? "yellow_only_v1") === profile
+        ? finiteNumber(match.actual_cards)
+        : null;
+}
+
 function selectedProbability(
     prediction: string | null,
     probabilities: Record<string, number> | undefined,
@@ -116,7 +128,7 @@ export function buildMarketSettlements({
     const actualOver15 = totalGoals == null ? null : totalGoals > 1.5 ? "OVER" : "UNDER";
     const actualOver25 = totalGoals == null ? null : totalGoals > 2.5 ? "OVER" : "UNDER";
     const actualCorners = isFinished ? finiteNumber(match.actual_corners) : null;
-    const actualCards = isFinished ? finiteNumber(match.actual_cards) : null;
+    const actualCards = isFinished ? cardsForMarket(match, marketPredictions?.cards_over_3_5) : null;
 
     return [
         settlement(

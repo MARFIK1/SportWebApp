@@ -3,6 +3,7 @@ from typing import Dict, Iterable, Mapping, Tuple
 
 from sofascore.model_acceptance import build_acceptance_report
 from sofascore.model_release import predictor_artifact_contract
+from sofascore.card_settlement import card_profile
 
 BASELINE_VARIANT_BY_VARIANT = {
     "without_odds_lineup": "without_odds",
@@ -18,6 +19,9 @@ def _declared_variant(candidate) -> str | None:
 
 
 def _copy_target(baseline, candidate, target: str) -> None:
+    metadata = getattr(candidate, 'artifact_metadata', {}) or {}
+    profile = card_profile(metadata.get('card_settlement_profiles', {}).get(target))
+    baseline.artifact_metadata.setdefault('card_settlement_profiles', {})[target] = profile
     baseline.models[target] = candidate.models[target]
     baseline.scalers[target] = candidate.scalers[target]
     baseline.feature_columns_by_target[target] = candidate.feature_columns_by_target[target]

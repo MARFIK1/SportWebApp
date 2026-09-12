@@ -332,6 +332,8 @@ export function normalizePredictionMatchResult(match: PredictionMatch): Predicti
         home_score_et: inactive ? null : match.home_score_et,
         away_score_et: inactive ? null : match.away_score_et,
         actual_cards: inactive ? null : match.actual_cards,
+        actual_cards_by_profile: inactive ? null : match.actual_cards_by_profile,
+        actual_cards_profile: inactive ? null : match.actual_cards_profile,
         actual_corners: inactive ? null : match.actual_corners,
         decided_by_penalties: state.decidedByPenalties,
         predictions,

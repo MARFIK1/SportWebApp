@@ -47,6 +47,7 @@ export interface MarketModelPrediction {
 }
 
 export interface MarketConsensus {
+    card_settlement_profile?: string;
     prediction: string | number | null;
     agreement: string | null;
     agreement_pct: number | null;
@@ -146,6 +147,8 @@ export interface PredictionMatch {
     away_score_et?: number | string | null;
     decided_by_penalties?: boolean | null;
     actual_cards: number | null;
+    actual_cards_profile?: string | null;
+    actual_cards_by_profile?: Record<string, number | null> | null;
     actual_corners: number | null;
     referee_name: string | null;
     predictions: Record<string, ModelPrediction> & { consensus: ConsensusPrediction };

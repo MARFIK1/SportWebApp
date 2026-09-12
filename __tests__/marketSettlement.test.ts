@@ -65,6 +65,29 @@ function match(overrides: Partial<PredictionMatch> = {}): PredictionMatch {
 }
 
 describe("market settlement", () => {
+    it("does not compare a PL card prediction to legacy yellows", () => {
+        const source = match();
+        source.market_predictions!.cards_over_3_5!.consensus.card_settlement_profile = "pl_total_cards_1_2_3_v1";
+        const result = buildMarketSettlements({ match: source, marketPredictions: source.market_predictions });
+        expect(result.find(({ key }) => key === "cards_over_3_5")?.status).toBe("unavailable");
+    });
+
+    it("uses the profile-specific actual without rewriting a legacy prediction", () => {
+        const source = match({
+            actual_cards: 5,
+            actual_cards_profile: "pl_total_cards_1_2_3_v1",
+            actual_cards_by_profile: { yellow_only_v1: 3, pl_total_cards_1_2_3_v1: 5 },
+        });
+        const old = buildMarketSettlements({ match: source, marketPredictions: source.market_predictions });
+        expect(old.find(({ key }) => key === "cards_over_3_5")).toMatchObject({ actualValue: 3, status: "correct" });
+        source.market_predictions!.cards_over_3_5!.consensus.card_settlement_profile = "pl_total_cards_1_2_3_v1";
+        const current = buildMarketSettlements({ match: source, marketPredictions: source.market_predictions });
+        expect(current.find(({ key }) => key === "cards_over_3_5")).toMatchObject({ actualValue: 5, status: "incorrect" });
+        source.actual_cards_by_profile!.pl_total_cards_1_2_3_v1 = null;
+        const missing = buildMarketSettlements({ match: source, marketPredictions: source.market_predictions });
+        expect(missing.find(({ key }) => key === "cards_over_3_5")?.status).toBe("unavailable");
+    });
+
     it("settles 1X2, goals, corners and cards against final values", () => {
         const source = match();
         const result = buildMarketSettlements({

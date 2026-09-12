@@ -4,12 +4,13 @@ ML Feature Generator for football match prediction.
 
 from datetime import datetime, timedelta
 from collections import defaultdict
+from .card_settlement import PL_CARD_PROFILE, card_labels, card_profile, settle_match_cards
 
 
 class MLFeatureGenerator:
     
-    def __init__(self, data_manager=None):
-        pass
+    def __init__(self, data_manager=None, card_settlement_profile=PL_CARD_PROFILE):
+        self.card_settlement_profile = card_profile(card_settlement_profile)
     
     def _safe_get(self, data, key, default=0):
         val = data.get(key)
@@ -472,7 +473,15 @@ class MLFeatureGenerator:
             'corner_form_matches': n_with_data,
         }
 
-    def compute_card_form(self, team, matches, before_date, n_matches=8):
+    def _card_settlement(self, match, lineups=None):
+        if not match.get('match_lineups') and isinstance(lineups, dict):
+            event_id = match.get('event_id')
+            lineup = lineups.get(str(event_id)) or lineups.get(event_id)
+            if isinstance(lineup, dict):
+                match = {**match, 'match_lineups': lineup}
+        return settle_match_cards(match, self.card_settlement_profile)
+
+    def compute_card_form(self, team, matches, before_date, n_matches=8, lineups=None):
         team_matches = self._get_team_matches(team, matches, before_date)
         team_matches = sorted(team_matches, key=lambda x: x.get('date') or '', reverse=True)[:n_matches]
 
@@ -481,12 +490,11 @@ class MLFeatureGenerator:
 
         cards, n_with_data = 0, 0
         for m in team_matches:
-            hy = self._first_present(m, 'home_yellow_cards_calc', 'home_yellowcards')
-            ay = self._first_present(m, 'away_yellow_cards_calc', 'away_yellowcards')
-            if hy is None or ay is None:
+            settlement = self._card_settlement(m, lineups)
+            if settlement['total'] is None:
                 continue
             is_home = m.get('home_team') == team
-            cards += int(hy) if is_home else int(ay)
+            cards += settlement['home' if is_home else 'away']
             n_with_data += 1
 
         if n_with_data == 0:
@@ -1027,11 +1035,11 @@ class MLFeatureGenerator:
             features.get('away_corner_form_avg_for', 0)
         )
 
-        home_card_form = self.compute_card_form(home_team, recent_matches, match_date)
+        home_card_form = self.compute_card_form(home_team, recent_matches, match_date, lineups=lineups)
         for k, v in home_card_form.items():
             features[f'home_{k}'] = v
 
-        away_card_form = self.compute_card_form(away_team, recent_matches, match_date)
+        away_card_form = self.compute_card_form(away_team, recent_matches, match_date, lineups=lineups)
         for k, v in away_card_form.items():
             features[f'away_{k}'] = v
 
@@ -1239,17 +1247,7 @@ class MLFeatureGenerator:
             features['label_corners_over_8_5'] = None
             features['label_corners_over_10_5'] = None
 
-        home_yellows = self._first_present(match, 'home_yellow_cards_calc', 'home_yellowcards')
-        away_yellows = self._first_present(match, 'away_yellow_cards_calc', 'away_yellowcards')
-        if home_yellows is not None and away_yellows is not None:
-            total_cards = int(home_yellows) + int(away_yellows)
-            features['label_total_cards'] = total_cards
-            features['label_cards_over_3_5'] = 1 if total_cards > 3 else 0
-            features['label_cards_over_4_5'] = 1 if total_cards > 4 else 0
-        else:
-            features['label_total_cards'] = None
-            features['label_cards_over_3_5'] = None
-            features['label_cards_over_4_5'] = None
+        features.update(card_labels(self._card_settlement(match, lineups)))
 
         return features
     

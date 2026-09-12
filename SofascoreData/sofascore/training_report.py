@@ -115,6 +115,7 @@ def build_training_comparison(
     variant: str,
     dataset_summary: Dict,
 ) -> Dict:
+    from sofascore.card_settlement import CARD_PROFILE_FIELD, CARD_TARGETS, card_profile
     baseline_metrics = (baseline_manifest or {}).get("metrics_by_target", {})
     baseline_contract = (baseline_manifest or {}).get("metric_contract", {})
     targets = {}
@@ -128,7 +129,16 @@ def build_training_comparison(
             baseline_metrics.get(target, {}),
             baseline_contract,
         )
+        current_profile = card_profile(target_stats.get(CARD_PROFILE_FIELD))
+        baseline_profiles = (baseline_manifest or {}).get('metadata', {}).get('card_settlement_profiles', {})
+        baseline_profile = card_profile(baseline_profiles.get(target))
+        compatible = target not in CARD_TARGETS or current_profile == baseline_profile
+        if not compatible:
+            prepared_baseline = {}
         targets[target] = {
+            CARD_PROFILE_FIELD: current_profile,
+            'baseline_card_settlement_profile': baseline_profile,
+            'card_settlement_comparable': compatible,
             "validation": target_stats.get("validation"),
             "date_ranges": target_stats.get("date_ranges"),
             "feature_set": target_stats.get("feature_set"),
